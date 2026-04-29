@@ -1756,6 +1756,11 @@ const App = {
         workflows. The pre-flight checklist still gates arming
         regardless of confirmation settings.
       </p>
+      <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
+      <p>Reset operator confirmations and any auto-verify overrides.
+        Useful when starting a fresh session or when stale state has
+        accumulated.</p>
+      <button id="set-reset-confirmations" class="action small">Reset confirmations</button>
     `;
     this.modal.show({
       title: 'Settings',
@@ -1769,6 +1774,25 @@ const App = {
           document.getElementById('set-confirm-disarm').checked;
         localStorage.setItem('zerotxSettings', JSON.stringify(this.state.settings));
       },
+    });
+
+    // Reset button handler. Lives inside the modal so its lifecycle
+    // ends when the modal closes; rebound on each openSettings() call.
+    document.getElementById('set-reset-confirmations').addEventListener('click', () => {
+      this.state.confirmations = {};
+      this.state.overrides = {};
+      localStorage.removeItem('zerotxConfirmations');
+      localStorage.removeItem('zerotxOverrides');
+      this.renderChecklist();
+      this.renderArmButton();
+      // Visual feedback in-place; don't close the modal so the user
+      // can also save settings changes in the same dialog session.
+      const btn = document.getElementById('set-reset-confirmations');
+      btn.textContent = 'Reset ✓';
+      btn.disabled = true;
+      setTimeout(() => {
+        if (btn) { btn.textContent = 'Reset confirmations'; btn.disabled = false; }
+      }, 1500);
     });
   },
 
