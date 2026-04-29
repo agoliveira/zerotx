@@ -744,11 +744,16 @@ const App = {
     logsPaused: false,
     logsFilter: '',
     logsAutoScroll: true,
+    // auto-reconnect
+    userDisconnected: false,    // true when user clicked Disconnect; suppresses retry
+    reconnectAttempt: 0,        // exponential backoff counter
   },
 
   ws: null,
   uiTimer: null,
   logsTimer: null,
+  reconnectTimer: null,
+  healthTimer: null,
   activeTab: 'connection',
 
   init() {
@@ -805,6 +810,12 @@ const App = {
     if (!addr) return;
     this.state.address = addr;
     localStorage.setItem('zerotxAddress', addr);
+    this.state.userDisconnected = false;
+    // Clear any pending reconnect: this attempt supersedes it.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.setConnState('connecting');
 
     try {
@@ -828,27 +839,80 @@ const App = {
       this.ws = new WebSocket(`ws://${addr}/api/v1/stream`);
       this.ws.onopen = () => {
         this.setConnState('connected');
+        this.state.reconnectAttempt = 0;   // success: reset backoff
         this.renderHealth();
         this.renderModel();
         this.renderModelDetails();
         this.startLogsPolling();
+        this.startHealthRefresh();
       };
       this.ws.onmessage = (evt) => this.onFrame(evt.data);
       this.ws.onclose = () => {
         if (this.state.connection !== 'error') this.setConnState('disconnected');
         this.ws = null;
         this.stopLogsPolling();
+        this.stopHealthRefresh();
+        // Auto-reconnect if the close wasn't user-initiated.
+        if (!this.state.userDisconnected) {
+          this.scheduleReconnect();
+        }
       };
       this.ws.onerror = () => this.setConnState('error', 'WebSocket connection failed');
     } catch (e) {
       this.setConnState('error', e.message);
+      // HTTP fetch failed before WS even opened; still retry unless user disconnected.
+      if (!this.state.userDisconnected) {
+        this.scheduleReconnect();
+      }
     }
   },
 
   disconnect() {
+    this.state.userDisconnected = true;
+    this.state.reconnectAttempt = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) { this.ws.close(); this.ws = null; }
     this.stopLogsPolling();
+    this.stopHealthRefresh();
     this.setConnState('disconnected');
+  },
+
+  // Schedule a reconnect attempt with exponential backoff capped at 5s.
+  // Cleared by an explicit Disconnect click or a successful reconnect.
+  scheduleReconnect() {
+    const attempt = this.state.reconnectAttempt;
+    const delayMs = Math.min(500 * Math.pow(2, attempt), 5000);
+    this.state.reconnectAttempt = attempt + 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.state.userDisconnected) return;
+      this.connect();
+    }, delayMs);
+  },
+
+  // Refresh /health every 10s while connected so uptime stays current.
+  startHealthRefresh() {
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.healthTimer = setInterval(async () => {
+      if (this.state.connection !== 'connected') return;
+      try {
+        const r = await fetch(`http://${this.state.address}/api/v1/health`);
+        if (r.ok) {
+          this.state.health = await r.json();
+          this.renderHealth();
+        }
+      } catch (e) { /* non-fatal; ws.onclose will pick up the disconnect */ }
+    }, 10000);
+  },
+
+  stopHealthRefresh() {
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
+    }
   },
 
   onFrame(rawData) {
@@ -967,18 +1031,26 @@ const App = {
 
     // Mixes
     const mixBody = document.getElementById('mix-tbody');
-    mixBody.innerHTML = (d.mixes || []).map(m => `
+    mixBody.innerHTML = (d.mixes || []).map(m => {
+      // Fallback display: when YAML has no mix name, show the source
+      // wrapped in muted styling so it still reads at a glance. Keeps
+      // the "no name set" signal but gives the user something useful.
+      const nameCell = m.name
+        ? escapeHtml(m.name)
+        : `<span class="muted">${escapeHtml(m.source) || '-'}</span>`;
+      return `
       <tr>
         <td class="muted">${m.index}</td>
         <td>${m.ch}</td>
-        <td>${escapeHtml(m.name) || '<span class="muted">-</span>'}</td>
+        <td>${nameCell}</td>
         <td>${escapeHtml(m.source)}</td>
         <td class="num">${m.weight}</td>
         <td class="num">${m.offset}</td>
         <td class="muted">${escapeHtml(m.switch || '') || '-'}</td>
         <td class="muted">${escapeHtml(m.mltpx || '') || 'ADD'}</td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
 
     // Logic switches (rows tagged so per-frame renderer can flip Active dot).
     const logicBody = document.getElementById('logic-defs-tbody');

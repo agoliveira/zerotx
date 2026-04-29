@@ -235,6 +235,16 @@ func (l *Link) handshakeLoop(ctx context.Context) {
 			if l.isClosed() {
 				return
 			}
+			// Re-check completion after waking from the timer; the
+			// ack may have arrived between the previous loop iteration
+			// and the timer firing, in which case we should NOT send
+			// another redundant Hello.
+			l.hsMu.RLock()
+			done := l.hsOK || l.hsLegacy
+			l.hsMu.RUnlock()
+			if done {
+				return
+			}
 			if time.Now().After(deadline) {
 				// Timeout: firmware didn't respond. Most likely an older
 				// firmware that doesn't know about MsgHello. Proceed in

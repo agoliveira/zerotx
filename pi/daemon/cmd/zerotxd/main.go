@@ -30,7 +30,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.12.0-handshake"
+const version = "0.13.0-cosmetics"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -711,7 +711,7 @@ func buildModelDetails(m *model.ZeroTXModel, eng *logic.Engine, imgPath string) 
 		}
 		out.LogicSwitches = append(out.LogicSwitches, api.LogicSwitchDetail{
 			Name:     fmt.Sprintf("L%d", k+1),
-			Func:     ls.Func,
+			Func:     stripFuncPrefix(ls.Func),
 			Def:      ls.Def,
 			Andsw:    ls.Andsw,
 			Delay:    float64(ls.Delay) / 10.0,
@@ -760,9 +760,21 @@ func trimNulls(s string) string {
 	return strings.TrimRight(s, "\x00 \t")
 }
 
+// stripFuncPrefix removes the EdgeTX "FUNC_" prefix from logic switch
+// func names ("FUNC_VNEG" -> "VNEG"). Display polish; the underlying
+// YAML still contains the prefixed form.
+func stripFuncPrefix(s string) string {
+	return strings.TrimPrefix(s, "FUNC_")
+}
+
 // sensorUnitName converts EdgeTX UNIT_* enum values to display strings.
-// Source: EdgeTX firmware src/datastructs.h. Values past this list show
-// as "u<N>".
+// Source: EdgeTX firmware src/dataconstants.h, recent versions.
+//
+// Indices 0-30 are scalar units. Indices 31+ are "virtual" or formatter
+// types (cells, datetime, GPS, bitfield, text, flight mode) that don't
+// have a single character unit string — the sensor name itself
+// describes the value. We return "" for these so the GUI hides the
+// "(u<N>)" suffix that previously appeared.
 var sensorUnitNames = []string{
 	"",      // 0  UNIT_RAW
 	"V",     // 1  UNIT_VOLTS
@@ -781,20 +793,43 @@ var sensorUnitNames = []string{
 	"mAh",   // 14 UNIT_MAH
 	"W",     // 15 UNIT_WATTS
 	"mW",    // 16 UNIT_MILLIWATTS
-	"dBm",   // 17 UNIT_DBM
+	"dBm",   // 17 UNIT_DB (display as dBm; ELRS RSSI uses this)
 	"rpm",   // 18 UNIT_RPMS
 	"g",     // 19 UNIT_G
 	"°",     // 20 UNIT_DEGREE
 	"rad",   // 21 UNIT_RADIANS
 	"ml",    // 22 UNIT_MILLILITERS
 	"fl oz", // 23 UNIT_FLOZ
-	"hPa",   // 24 UNIT_HOURS (some EdgeTX builds have this elsewhere)
+	"hPa",   // 24 (hPa in some EdgeTX builds)
 	"min",   // 25 UNIT_MINUTES
 	"s",     // 26 UNIT_SECONDS
 	"#",     // 27 cells / count
 	"us",    // 28 UNIT_US
 	"ms",    // 29 UNIT_MS
 	"Hz",    // 30 UNIT_HZ
+
+	// 31+: virtual / formatter types with no single-character unit.
+	// Empty string → GUI omits the "(u<N>)" suffix entirely.
+	"", // 31 UNIT_CELLS
+	"", // 32 UNIT_DATETIME
+	"", // 33 UNIT_GPS
+	"", // 34 UNIT_BITFIELD
+	"", // 35 UNIT_TEXT
+	"", // 36 UNIT_GPS_LONGITUDE
+	"", // 37 UNIT_GPS_LATITUDE
+	"", // 38 UNIT_DATETIME_YEAR
+	"", // 39 UNIT_DATETIME_DAY_MONTH
+	"", // 40 UNIT_DATETIME_HOUR_MIN  (or GPS in some versions)
+	"", // 41 UNIT_DATETIME_SEC
+	"", // 42 UNIT_FLIGHT_MODE
+	"", // 43 reserved
+	"", // 44 reserved
+	"", // 45 reserved
+	"", // 46 reserved
+	"", // 47 reserved
+	"", // 48 reserved
+	"", // 49 reserved
+	"", // 50 reserved
 }
 
 func sensorUnitName(idx int) string {

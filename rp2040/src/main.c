@@ -20,7 +20,7 @@
 
 #define CRSF_BAUD       400000u
 
-#define FW_VERSION_STRING "zerotx-fw m1.4-handshake"
+#define FW_VERSION_STRING "zerotx-fw m1.5-cosmetics"
 
 static uint8_t s_tx_hb_seq = 0;
 static uint8_t s_tx_seq = 0;
@@ -76,13 +76,19 @@ static void handle_frame(const ipc_frame_t *f, uint64_t now_us) {
     case MSG_HELLO: {
         /* Respond with HelloAck carrying our own version string. The
          * daemon compares protocol versions and gates channel-intent
-         * emission accordingly. */
+         * emission accordingly. We log the handshake result only on
+         * the first hello to avoid noise from daemon retries that
+         * race with the ACK roundtrip. */
+        static bool logged = false;
         uint8_t remote_proto = (f->len >= 1) ? f->payload[0] : 0;
-        if (remote_proto != ZTX_PROTO_VERSION) {
-            ipc_log("hello: proto mismatch (daemon=%u, fw=%u)",
-                    (unsigned)remote_proto, (unsigned)ZTX_PROTO_VERSION);
-        } else {
-            ipc_log("hello: handshake ok proto=%u", (unsigned)ZTX_PROTO_VERSION);
+        if (!logged) {
+            if (remote_proto != ZTX_PROTO_VERSION) {
+                ipc_log("hello: proto mismatch (daemon=%u, fw=%u)",
+                        (unsigned)remote_proto, (unsigned)ZTX_PROTO_VERSION);
+            } else {
+                ipc_log("hello: handshake ok proto=%u", (unsigned)ZTX_PROTO_VERSION);
+            }
+            logged = true;
         }
         send_hello(MSG_HELLO_ACK);
         break;
