@@ -559,7 +559,10 @@ table.data-table {
 }
 .log-line .ts { color: var(--text-dim); margin-right: 8px; }
 .log-line.error { color: var(--err); }
+.log-line.crit  { color: var(--err); }
 .log-line.warn  { color: var(--warn); }
+.log-line.state { color: var(--info); }
+.log-line.ok    { color: var(--ok); }
 .logs-empty {
   color: var(--text-dim);
   font-style: italic;
@@ -1038,6 +1041,291 @@ button.action.primary.big:disabled {
 .muted.small, .small.muted { font-size: 11px; }
 h2.warn { color: var(--warn); }
 
+/* === Colored log lines (used in both HUD log and Logs tab) === */
+.log-line.crit  { color: var(--err); }
+.log-line.warn  { color: var(--warn); }
+.log-line.state { color: var(--info); }
+.log-line.ok    { color: var(--ok); }
+
+/* === HUD: full-window flight UI === */
+/* When armed, #app gets .hud-active and the chrome (sidebar + header)
+ * is hidden via CSS. The HUD overlay takes the whole window. */
+#app.hud-active > .app-header,
+#app.hud-active > nav.tabs,
+#app.hud-active > main.content {
+  display: none;
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-body);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+  z-index: 100;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.hud.hud-warn  { box-shadow: inset 0 0 0 4px var(--warn); }
+.hud.hud-crit  { box-shadow: inset 0 0 0 4px var(--err); }
+
+/* Top strip: state + mode + battery summary + clock */
+.hud-strip {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.hud-state {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--warn);
+  background: rgba(217, 153, 0, 0.14);
+  padding: 4px 12px;
+  border-radius: 3px;
+}
+.hud-mode {
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 600;
+}
+.hud-strip-spacer { flex: 1; }
+.hud-strip-bat,
+.hud-strip-pct,
+.hud-clock {
+  color: var(--text-main);
+  font-size: 14px;
+}
+.hud-clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+/* Three big tiles row */
+.hud-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+.hud-tile {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px;
+  font-family: var(--mono);
+}
+.hud-tile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.hud-tile-primary {
+  font-size: 38px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.hud-tile-primary .unit {
+  font-size: 18px;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 6px;
+}
+.hud-tile-secondary {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.hud-tile-row {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.hud-tile.warn .hud-tile-primary { color: var(--warn); }
+.hud-tile.crit .hud-tile-primary { color: var(--err); }
+.hud-tile.ok   .hud-tile-primary { color: var(--ok); }
+.hud-tile.stale {
+  border-color: var(--err);
+  opacity: 0.6;
+}
+.hud-tile-stale {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--err);
+  background: rgba(231, 60, 60, 0.15);
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+.hud-tile.muted .hud-tile-primary { color: var(--text-dim); }
+
+/* Alarms panel (only present when active alarms exist) */
+.hud-alarms {
+  background: var(--bg-surface);
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  padding: 10px 14px;
+  flex: 0 0 auto;
+}
+.hud-alarms-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.hud-alarms-title {
+  color: var(--err);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* Bottom row: log feed + big disarm button */
+.hud-bottom {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.hud-log {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hud-log .log-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-disarm {
+  background: var(--err);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.hud-disarm:hover { filter: brightness(1.12); }
+.hud-disarm:active { transform: translateY(1px); }
+
+.hud-no-telemetry {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* === Post-flight summary === */
+.postflight {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.postflight-window {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 720px;
+  max-width: 92vw;
+  max-height: 88vh;
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+.postflight-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.postflight-filename {
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+.postflight-body {
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px 32px;
+}
+.summary-item-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.summary-item-value {
+  font-family: var(--mono);
+  font-size: 18px;
+  color: var(--text-main);
+}
+.summary-item-secondary {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.summary-modes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.summary-modes .mode-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-elevated);
+  color: var(--info);
+  padding: 2px 8px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+.postflight-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.postflight-actions button {
+  min-width: 120px;
+  padding: 10px 20px;
+}
+
 </style>
 </head>
 <body>
@@ -1153,70 +1441,9 @@ h2.warn { color: var(--warn); }
         </div>
       </div>
 
-      <!-- Post-arm panels: replaces the pre-arm panels when flightArmed.
-           Provides at-a-glance live status while flying, until the
-           full flight-mode HUD lands in a future round. -->
-      <div id="pf-postarm" style="display:none">
-        <div class="panel alarms-panel" id="pf-alarms-panel" style="display:none">
-          <h2>Active alarms <button id="pf-alarms-ack-all" class="action small">Acknowledge all</button></h2>
-          <ul id="pf-alarms-list" class="alarms-list"></ul>
-        </div>
-
-        <div class="panel" id="pf-armed-telemetry-panel" style="display:none">
-          <h2>Telemetry <span id="pf-armed-telemetry-stale" class="stale-tag" style="display:none">stale</span></h2>
-          <div class="telemetry-grid">
-            <div class="tel-section" id="pf-tel-battery-section" style="display:none">
-              <h3>Battery <span class="tel-cells" id="pf-tel-cells"></span></h3>
-              <div class="tel-big" id="pf-tel-volts">-</div>
-              <div class="tel-detail">
-                <span id="pf-tel-amps">-</span> · <span id="pf-tel-percent">-</span> · <span id="pf-tel-mah">-</span>
-              </div>
-            </div>
-            <div class="tel-section" id="pf-tel-gps-section" style="display:none">
-              <h3>GPS</h3>
-              <div class="tel-big"><span id="pf-tel-sats">-</span> sats</div>
-              <div class="tel-detail">
-                <span id="pf-tel-coords">-</span><br>
-                alt <span id="pf-tel-alt">-</span> · spd <span id="pf-tel-spd">-</span> · hdg <span id="pf-tel-hdg">-</span>
-              </div>
-            </div>
-            <div class="tel-section" id="pf-tel-link-section" style="display:none">
-              <h3>Link</h3>
-              <div class="tel-big"><span id="pf-tel-rssi">-</span> dBm</div>
-              <div class="tel-detail">
-                LQ <span id="pf-tel-lq">-</span>% · SNR <span id="pf-tel-snr">-</span> · TX pwr <span id="pf-tel-pwr">-</span>
-              </div>
-            </div>
-            <div class="tel-section" id="pf-tel-mode-section" style="display:none">
-              <h3>Flight mode</h3>
-              <div class="tel-big" id="pf-tel-mode">-</div>
-            </div>
-          </div>
-          <div id="pf-armed-no-telemetry" class="muted small" style="display:none">
-            No telemetry data flowing. Operator is flying without telemetry,
-            or the radio link doesn't carry it. The flight controller is
-            still in command of failsafe.
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>Live channels</h2>
-          <div id="pf-armed-channels" class="armed-channels"></div>
-        </div>
-
-        <div class="panel">
-          <h2>Health</h2>
-          <div class="row"><span class="label">Joystick</span><span id="pf-armed-joystick" class="value">-</span></div>
-          <div class="row"><span class="label">Link</span><span id="pf-armed-link" class="value">-</span></div>
-          <div class="row"><span class="label">FPS</span><span id="pf-armed-fps" class="value">-</span></div>
-          <div class="row"><span class="label">Uptime</span><span id="pf-armed-uptime" class="value">-</span></div>
-        </div>
-
-        <div class="panel">
-          <h2>Recent log</h2>
-          <div id="pf-armed-logs" class="armed-logs"></div>
-        </div>
-      </div>
+      <!-- The post-arm view is now the HUD, which takes over the
+           full window. It's defined at the body level (outside the
+           tab system) so it can hide chrome cleanly. See #hud below. -->
     </section>
 
     <section id="tab-channels" class="tab">
@@ -1380,6 +1607,90 @@ h2.warn { color: var(--warn); }
 
   <!-- Modal overlay. Hidden by default; shown by App.modal.show(...).
        The same overlay handles confirm dialogs and the settings popover. -->
+  <!-- HUD: full-window flight UI. Hidden by default; #app gets the
+       hud-active class when armed which hides the sidebar/header
+       chrome and reveals this overlay. -->
+  <div id="hud" class="hud" style="display:none">
+    <div class="hud-strip">
+      <span class="hud-state" id="hud-state">ARMED</span>
+      <span class="hud-mode" id="hud-mode">-</span>
+      <span class="hud-strip-spacer"></span>
+      <span class="hud-strip-bat" id="hud-strip-bat">-</span>
+      <span class="hud-strip-pct" id="hud-strip-pct">-</span>
+      <span class="hud-clock" id="hud-clock">--:--</span>
+    </div>
+
+    <div class="hud-tiles">
+      <div class="hud-tile" id="hud-tile-bat">
+        <div class="hud-tile-stale" style="display:none">STALE</div>
+        <div class="hud-tile-label">Battery</div>
+        <div class="hud-tile-primary" id="hud-bat-volts">-</div>
+        <div class="hud-tile-secondary" id="hud-bat-cells">-</div>
+        <div class="hud-tile-row">
+          <span id="hud-bat-pct">-</span>
+          <span id="hud-bat-amps">-</span>
+        </div>
+      </div>
+      <div class="hud-tile" id="hud-tile-gps">
+        <div class="hud-tile-stale" style="display:none">STALE</div>
+        <div class="hud-tile-label">GPS</div>
+        <div class="hud-tile-primary"><span id="hud-gps-sats">-</span><span class="unit">sats</span></div>
+        <div class="hud-tile-secondary" id="hud-gps-coords">-</div>
+        <div class="hud-tile-row">
+          <span>alt <span id="hud-gps-alt">-</span></span>
+          <span>spd <span id="hud-gps-spd">-</span></span>
+          <span>hdg <span id="hud-gps-hdg">-</span></span>
+        </div>
+      </div>
+      <div class="hud-tile" id="hud-tile-link">
+        <div class="hud-tile-stale" style="display:none">STALE</div>
+        <div class="hud-tile-label">Link</div>
+        <div class="hud-tile-primary"><span id="hud-link-rssi">-</span><span class="unit">dBm</span></div>
+        <div class="hud-tile-secondary">LQ <span id="hud-link-lq">-</span>%</div>
+        <div class="hud-tile-row">
+          <span>SNR <span id="hud-link-snr">-</span></span>
+          <span>TX <span id="hud-link-pwr">-</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-alarms" id="hud-alarms" style="display:none">
+      <div class="hud-alarms-header">
+        <span class="hud-alarms-title">⚠ Alarms (<span id="hud-alarms-count">0</span>)</span>
+        <button id="hud-alarms-ack-all" class="action small">Acknowledge all</button>
+      </div>
+      <ul class="alarms-list" id="hud-alarms-list"></ul>
+    </div>
+
+    <div class="hud-bottom">
+      <div class="hud-log" id="hud-log"></div>
+      <button id="hud-disarm" class="hud-disarm">DISARM</button>
+    </div>
+
+    <div class="hud-no-telemetry" id="hud-no-telemetry" style="display:none">
+      No telemetry. Operator flying without telemetry, or link doesn't carry it.
+      FC is still in command of failsafe.
+    </div>
+  </div>
+
+  <!-- Post-flight summary: shown after disarm, before returning to
+       pre-flight. Same view also reachable from the Recordings tab
+       via per-row "summary" action. Click "Done" to dismiss. -->
+  <div id="postflight" class="postflight" style="display:none">
+    <div class="postflight-window">
+      <div class="postflight-title">
+        <span id="postflight-title-text">Flight summary</span>
+        <span class="postflight-filename muted small" id="postflight-filename"></span>
+      </div>
+      <div class="postflight-body" id="postflight-body">
+        <div class="muted small">Loading...</div>
+      </div>
+      <div class="postflight-actions">
+        <button id="postflight-done" class="action primary">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-backdrop" class="modal-backdrop" style="display:none">
     <div class="modal" id="modal-window">
       <div class="modal-title" id="modal-title"></div>
@@ -1543,7 +1854,9 @@ const App = {
     document.getElementById('pf-arm-btn').addEventListener('click', () => this.armFlight());
     document.getElementById('pf-disarm-btn').addEventListener('click', () => this.disarmFlight());
     document.getElementById('pf-settings-btn').addEventListener('click', () => this.openSettings());
-    document.getElementById('pf-alarms-ack-all').addEventListener('click', () => this.acknowledgeAllAlarms());
+    document.getElementById('hud-alarms-ack-all').addEventListener('click', () => this.acknowledgeAllAlarms());
+    document.getElementById('hud-disarm').addEventListener('click', () => this.disarmFlight());
+    document.getElementById('postflight-done').addEventListener('click', () => this.dismissPostflight());
     document.getElementById('recordings-refresh').addEventListener('click', () => this.refreshRecordings());
 
     // Modal: clicking the backdrop dismisses (cancels). The window
@@ -1877,6 +2190,134 @@ const App = {
     } catch (e) { /* non-fatal */ }
   },
 
+  // showLatestPostflight fetches the recordings list, picks the
+  // newest, and displays its summary in the post-flight overlay.
+  // Called after disarm. If no recordings exist (recorder disabled
+  // or just-saved file hasn't landed yet), we don't show the
+  // overlay — better silence than confusing UI.
+  async showLatestPostflight() {
+    try {
+      await this.refreshRecordings();
+      const recs = this.state.recordings || [];
+      if (recs.length === 0) return;
+      // Recordings list is newest-first per server.
+      this.showPostflightSummary(recs[0].name);
+    } catch (e) { /* non-fatal */ }
+  },
+
+  // showPostflightSummary fetches the summary for a named recording
+  // and displays the overlay. Same code path serves the auto-show
+  // on disarm and the user-driven "summarize this recording" action
+  // on the Recordings tab.
+  async showPostflightSummary(name) {
+    const overlay = document.getElementById('postflight');
+    const body = document.getElementById('postflight-body');
+    const fnEl = document.getElementById('postflight-filename');
+    overlay.style.display = '';
+    body.innerHTML = '<div class="muted small">Loading...</div>';
+    fnEl.textContent = name;
+    try {
+      const r = await fetch(
+        `http://${this.state.address}/api/v1/recordings/summary?name=${encodeURIComponent(name)}`);
+      if (!r.ok) {
+        body.innerHTML = `<div class="muted small">Could not load summary (${r.statusText})</div>`;
+        return;
+      }
+      const s = await r.json();
+      body.innerHTML = this.renderSummaryHTML(s);
+    } catch (e) {
+      body.innerHTML = `<div class="muted small">Network error: ${escapeHtml(e.message)}</div>`;
+    }
+  },
+
+  dismissPostflight() {
+    document.getElementById('postflight').style.display = 'none';
+  },
+
+  renderSummaryHTML(s) {
+    if (!s) return '<div class="muted small">No data.</div>';
+    const fmt = (v, suffix = '') =>
+      (v === null || v === undefined) ? '<span class="muted">-</span>' : (v + suffix);
+    const fmtFloat = (v, decimals, suffix = '') =>
+      (v === null || v === undefined) ? '<span class="muted">-</span>' : (v.toFixed(decimals) + suffix);
+
+    // Duration
+    const dur = s.durationSec || 0;
+    const min = Math.floor(dur / 60);
+    const sec = dur % 60;
+    const durText = `${min}m ${String(sec).padStart(2, '0')}s`;
+
+    // Battery used percentage of starting voltage (heuristic for at-a-glance value)
+    let batLine = '';
+    if (typeof s.batStartV === 'number' && typeof s.batEndV === 'number') {
+      const dv = (s.batStartV - s.batEndV).toFixed(2);
+      batLine = `${fmtFloat(s.batStartV, 2)}V → ${fmtFloat(s.batEndV, 2)}V (Δ ${dv}V)`;
+    } else if (typeof s.batStartV === 'number') {
+      batLine = `${fmtFloat(s.batStartV, 2)}V (only start)`;
+    }
+
+    const alarmCounts = s.alarmCounts || {};
+    const alarmText = (alarmCounts.critical || alarmCounts.warning)
+      ? `${alarmCounts.critical || 0} crit · ${alarmCounts.warning || 0} warn`
+      : '<span class="muted">none</span>';
+
+    const modes = s.flightModes || [];
+    const modeChips = modes.length === 0
+      ? '<span class="muted">—</span>'
+      : `<div class="summary-modes">${modes.map(m =>
+          `<span class="mode-chip">${escapeHtml(m)}</span>`).join('')}</div>`;
+
+    return `
+      <div class="summary-grid">
+        <div>
+          <div class="summary-item-label">Model</div>
+          <div class="summary-item-value">${escapeHtml(s.modelName || '-')}</div>
+        </div>
+        <div>
+          <div class="summary-item-label">Duration</div>
+          <div class="summary-item-value">${durText}</div>
+        </div>
+
+        <div>
+          <div class="summary-item-label">Battery</div>
+          <div class="summary-item-value">${batLine || '<span class="muted">no data</span>'}</div>
+          ${typeof s.batUsedMAh === 'number' || typeof s.batMaxA === 'number'
+            ? `<div class="summary-item-secondary">${fmt(s.batUsedMAh, ' mAh used')} · peak ${fmtFloat(s.batMaxA, 1, ' A')}</div>` : ''}
+        </div>
+        <div>
+          <div class="summary-item-label">GPS</div>
+          <div class="summary-item-value">
+            ${typeof s.gpsMaxAlt === 'number' ? s.gpsMaxAlt + ' m max' : '<span class="muted">no data</span>'}
+          </div>
+          ${typeof s.gpsMaxKmh === 'number'
+            ? `<div class="summary-item-secondary">${fmtFloat(s.gpsMaxKmh, 1, ' km/h max')}</div>` : ''}
+        </div>
+
+        <div>
+          <div class="summary-item-label">Link (worst)</div>
+          <div class="summary-item-value">
+            ${typeof s.linkMinRssi === 'number' ? s.linkMinRssi + ' dBm' : '<span class="muted">no data</span>'}
+          </div>
+          ${typeof s.linkMinLq === 'number'
+            ? `<div class="summary-item-secondary">LQ ${s.linkMinLq}%</div>` : ''}
+        </div>
+        <div>
+          <div class="summary-item-label">Alarms</div>
+          <div class="summary-item-value">${alarmText}</div>
+        </div>
+
+        <div>
+          <div class="summary-item-label">Flight modes</div>
+          <div>${modeChips}</div>
+        </div>
+        <div>
+          <div class="summary-item-label">Events / telemetry rows</div>
+          <div class="summary-item-value">${s.eventCount} / ${s.telemetryCount}</div>
+        </div>
+      </div>
+    `;
+  },
+
   async refreshRecordings() {
     if (this.state.connection !== 'connected') {
       this.state.recordings = [];
@@ -1911,8 +2352,16 @@ const App = {
         <span class="rec-name">${escapeHtml(r.name)}</span>
         <span class="rec-size">${sizeKB} KB</span>
         <span class="rec-time">${escapeHtml(time)}</span>
+        <button class="action small" data-rec-summary="${escapeHtml(r.name)}">Summary</button>
       </div>`;
     }).join('');
+    // Bind per-row summary buttons. Re-bound on each render; cheap.
+    list.querySelectorAll('[data-rec-summary]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const name = e.currentTarget.dataset.recSummary;
+        this.showPostflightSummary(name);
+      });
+    });
   },
 
   async refreshJoysticks() {
@@ -2050,6 +2499,13 @@ const App = {
         });
         if (r.ok) {
           this.state.flightArmed = false;
+          // Show post-flight summary for the just-saved recording. The
+          // daemon's auto-save fires a beat before this response, so
+          // there's a small race window — fetching the recordings list
+          // and picking the newest entry is more robust than guessing
+          // a filename. A short delay gives the daemon's VACUUM INTO
+          // time to land before we list.
+          setTimeout(() => this.showLatestPostflight(), 250);
         } else {
           const body = await r.json().catch(() => ({}));
           this.modal.alert('Disarm failed', body.error || r.statusText);
@@ -2433,8 +2889,20 @@ const App = {
 
   renderPreflight() {
     const armed = this.state.flightArmed;
+    const app = document.getElementById('app');
+    const hud = document.getElementById('hud');
     document.getElementById('pf-prearm').style.display = armed ? 'none' : '';
-    document.getElementById('pf-postarm').style.display = armed ? '' : 'none';
+
+    // HUD takeover: when armed, hide all chrome and show the HUD.
+    // When not armed, restore chrome and hide the HUD.
+    if (armed) {
+      app.classList.add('hud-active');
+      hud.style.display = '';
+    } else {
+      app.classList.remove('hud-active');
+      hud.style.display = 'none';
+      hud.classList.remove('hud-warn', 'hud-crit');
+    }
 
     this.renderJoystickPicker();
     this.renderModelPicker();
@@ -2490,87 +2958,161 @@ const App = {
     if (armed) this.renderArmedState();
   },
 
-  // renderArmedState populates the post-arm panels (live channels,
-  // health, recent log). Called on arm transition and on each WS frame
-  // while armed.
+  // renderArmedState is the HUD entry point. Called on arm transition
+  // and on each WebSocket frame while armed. Also driven by a 1Hz
+  // ticker for the wall clock.
   renderArmedState() {
-    const grid = document.getElementById('pf-armed-channels');
-    if (!grid) return;
-    const channels = this.state.lastFrame?.channels || [];
-    const md = this.state.modelDetails;
-    const channelNames = (md?.mixes || []).reduce((acc, m) => {
-      if (!acc[m.ch]) acc[m.ch] = m.name || m.source || `CH${m.ch}`;
-      return acc;
-    }, {});
-
-    if (grid.children.length !== channels.length) {
-      grid.innerHTML = '';
-      for (let i = 0; i < channels.length; i++) {
-        const tile = document.createElement('div');
-        tile.className = 'ch-tile';
-        tile.innerHTML = `
-          <div class="ch-name">CH${i+1} ${channelNames[i+1] ? '· ' + escapeHtml(channelNames[i+1]) : ''}</div>
-          <div class="ch-value">-</div>
-          <div class="ch-bar"><div class="ch-bar-fill"></div></div>
-        `;
-        grid.appendChild(tile);
-      }
-    }
-    for (let i = 0; i < channels.length; i++) {
-      const tile = grid.children[i];
-      if (!tile) continue;
-      const raw = channels[i];           // CRSF raw 172..1811
-      const pct = Math.max(0, Math.min(100, ((raw - 172) / (1811 - 172)) * 100));
-      tile.querySelector('.ch-value').textContent = String(raw);
-      tile.querySelector('.ch-bar-fill').style.width = pct.toFixed(1) + '%';
-    }
-
-    // Health
-    const h = this.state.health;
-    const pf = this.state.preflight;
-    const js = pf?.joystick?.selected;
-    document.getElementById('pf-armed-joystick').textContent =
-      js ? `${js.name}${js.connected ? '' : ' (disconnected!)'}` : 'none';
-    document.getElementById('pf-armed-link').textContent = pf?.groundStation?.linkState || '-';
-    if (h?.uptime) document.getElementById('pf-armed-uptime').textContent = h.uptime;
-    // FPS is already live in the header; mirror it here.
-    const fpsEl = document.getElementById('val-fps');
-    if (fpsEl) document.getElementById('pf-armed-fps').textContent = fpsEl.textContent;
-
-    // Recent logs: snapshot from full log buffer, last 10 lines.
-    const logs = (this.state.logs || []).slice(-10);
-    const logsEl = document.getElementById('pf-armed-logs');
-    logsEl.innerHTML = logs.map(l => {
-      const t = new Date(l.time).toLocaleTimeString();
-      return `<div class="log-line">${escapeHtml(t)} ${escapeHtml(l.msg)}</div>`;
-    }).join('') || '<div class="log-line muted">no entries</div>';
-
-    this.renderTelemetryPanel();
+    if (!this.state.flightArmed) return;
+    this.renderHUDTiles();
     this.renderActiveAlarms();
+    this.renderHUDLog();
+    this.renderHUDStripAndClock();
   },
 
-  // renderActiveAlarms shows currently-scheduled repeating alarms.
-  // Each item has a per-alarm dismiss button; the panel header has
-  // an "Acknowledge all" button. Hidden pre-arm (operator's
-  // confirmations checklist takes that screen real estate). Disarm
-  // auto-acks on the daemon side, so the panel will simply empty
-  // out when the user clicks DISARM.
-  renderActiveAlarms() {
-    const panel = document.getElementById('pf-alarms-panel');
-    if (!panel) return;
-    if (!this.state.flightArmed) {
-      panel.style.display = 'none';
-      return;
+  // renderHUDTiles populates the three big tiles (battery, GPS, link)
+  // from the telemetry snapshot. Per-tile visibility: tiles for sensors
+  // that haven't produced data are dimmed but not hidden — the absence
+  // is itself information ("we never got GPS this flight").
+  renderHUDTiles() {
+    const t = this.state.telemetry;
+    const haveAny = !!(t && t.haveAny);
+
+    document.getElementById('hud-no-telemetry').style.display =
+      haveAny ? 'none' : '';
+
+    const setTileMode = (id, mode) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.remove('warn', 'crit', 'ok', 'stale', 'muted');
+      if (mode) el.classList.add(mode);
+      const staleEl = el.querySelector('.hud-tile-stale');
+      if (staleEl) staleEl.style.display = (mode === 'stale') ? '' : 'none';
+    };
+
+    // === Battery ===
+    if (t && t.battery) {
+      const d = t.battery.data || {};
+      const stale = !!t.battery.stale;
+      const v = d.volts;
+      const cells = d.cellCount || 0;
+      const vc = d.voltsCell;
+
+      document.getElementById('hud-bat-volts').textContent =
+        typeof v === 'number' ? v.toFixed(2) + ' V' : '-';
+      document.getElementById('hud-bat-cells').textContent =
+        cells > 0 && typeof vc === 'number'
+          ? `${cells}S · ${vc.toFixed(2)} V/cell` : '';
+      document.getElementById('hud-bat-pct').textContent =
+        typeof d.percent === 'number' ? d.percent + '%' : '-';
+      document.getElementById('hud-bat-amps').textContent =
+        typeof d.amps === 'number' ? d.amps.toFixed(1) + ' A' : '-';
+
+      // Color thresholds (LiPo defaults; per-cell). Critical alarm
+      // would reinforce these via the audio path but the visual
+      // thresholds are independent.
+      let mode = 'ok';
+      if (stale) mode = 'stale';
+      else if (typeof vc === 'number') {
+        if (vc < 3.5) mode = 'crit';
+        else if (vc < 3.7) mode = 'warn';
+        else mode = 'ok';
+      } else mode = 'muted';
+      setTileMode('hud-tile-bat', mode);
+    } else {
+      document.getElementById('hud-bat-volts').textContent = '-';
+      document.getElementById('hud-bat-cells').textContent = '';
+      document.getElementById('hud-bat-pct').textContent = '-';
+      document.getElementById('hud-bat-amps').textContent = '-';
+      setTileMode('hud-tile-bat', 'muted');
     }
+
+    // === GPS ===
+    if (t && t.gps) {
+      const d = t.gps.data || {};
+      const stale = !!t.gps.stale;
+      const sats = typeof d.sats === 'number' ? d.sats : 0;
+
+      document.getElementById('hud-gps-sats').textContent =
+        typeof d.sats === 'number' ? d.sats : '-';
+      const lat = typeof d.latDeg === 'number' ? d.latDeg.toFixed(5) : '?';
+      const lon = typeof d.lonDeg === 'number' ? d.lonDeg.toFixed(5) : '?';
+      document.getElementById('hud-gps-coords').textContent = `${lat}, ${lon}`;
+      document.getElementById('hud-gps-alt').textContent =
+        typeof d.altMeters === 'number' ? d.altMeters + 'm' : '-';
+      document.getElementById('hud-gps-spd').textContent =
+        typeof d.groundKmh === 'number' ? d.groundKmh.toFixed(1) + ' km/h' : '-';
+      document.getElementById('hud-gps-hdg').textContent =
+        typeof d.headingDeg === 'number' ? d.headingDeg.toFixed(0) + '°' : '-';
+
+      let mode = 'ok';
+      if (stale) mode = 'stale';
+      else if (sats < 4) mode = 'crit';
+      else if (sats < 6) mode = 'warn';
+      else mode = 'ok';
+      setTileMode('hud-tile-gps', mode);
+    } else {
+      document.getElementById('hud-gps-sats').textContent = '-';
+      document.getElementById('hud-gps-coords').textContent = '-';
+      setTileMode('hud-tile-gps', 'muted');
+    }
+
+    // === Link ===
+    if (t && t.link) {
+      const d = t.link.data || {};
+      const stale = !!t.link.stale;
+      const rssi = typeof d.uplinkRssiDbm === 'number' ? d.uplinkRssiDbm : null;
+      const lq = typeof d.uplinkLq === 'number' ? d.uplinkLq : null;
+
+      document.getElementById('hud-link-rssi').textContent = rssi !== null ? rssi : '-';
+      document.getElementById('hud-link-lq').textContent = lq !== null ? lq : '-';
+      document.getElementById('hud-link-snr').textContent =
+        typeof d.uplinkSnr === 'number' ? d.uplinkSnr : '-';
+      document.getElementById('hud-link-pwr').textContent =
+        typeof d.txPowerIdx === 'number' ? d.txPowerIdx : '-';
+
+      // Color thresholds: LQ is the more reliable single indicator.
+      // Below 70% means the link is degraded; below 50% means we're
+      // probably losing packets.
+      let mode = 'ok';
+      if (stale) mode = 'stale';
+      else if (lq !== null) {
+        if (lq < 50) mode = 'crit';
+        else if (lq < 70) mode = 'warn';
+        else mode = 'ok';
+      } else mode = 'muted';
+      setTileMode('hud-tile-link', mode);
+    } else {
+      document.getElementById('hud-link-rssi').textContent = '-';
+      document.getElementById('hud-link-lq').textContent = '-';
+      setTileMode('hud-tile-link', 'muted');
+    }
+  },
+
+  // renderActiveAlarms populates the HUD alarms panel. Hidden when
+  // no alarms are active. The whole HUD also picks up a red/amber
+  // border tint based on the highest-priority alarm.
+  renderActiveAlarms() {
+    const panel = document.getElementById('hud-alarms');
+    if (!panel) return;
+
     const alarms = (this.state.audio && this.state.audio.activeAlarms) || [];
+    const hud = document.getElementById('hud');
+    hud.classList.remove('hud-warn', 'hud-crit');
+
     if (alarms.length === 0) {
       panel.style.display = 'none';
       return;
     }
     panel.style.display = '';
-    const list = document.getElementById('pf-alarms-list');
+    document.getElementById('hud-alarms-count').textContent = alarms.length;
+
+    const list = document.getElementById('hud-alarms-list');
     list.innerHTML = '';
+    let hasCrit = false, hasWarn = false;
     for (const a of alarms) {
+      if (a.level === 'critical') hasCrit = true;
+      else if (a.level === 'warning') hasWarn = true;
+
       const li = document.createElement('li');
       li.className = a.level === 'critical' ? 'crit' : 'warn';
       const cycleText = a.maxCycles > 0
@@ -2583,114 +3125,59 @@ const App = {
       `;
       list.appendChild(li);
     }
-    // Bind dismiss buttons. Re-bound on every render; cheap enough.
     list.querySelectorAll('.alarm-dismiss').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const name = e.currentTarget.dataset.name;
         this.acknowledgeAlarm(name);
       });
     });
+
+    if (hasCrit) hud.classList.add('hud-crit');
+    else if (hasWarn) hud.classList.add('hud-warn');
   },
 
-  // renderTelemetryPanel populates the post-arm telemetry panel from
-  // the latest snapshot. Per-section visibility: each sub-section is
-  // shown only when that sensor has produced at least one frame, so
-  // craft without GPS don't see an empty GPS card.
-  //
-  // When no telemetry has ever been received, the whole panel shows
-  // a "flying without telemetry" notice instead of the grid.
-  renderTelemetryPanel() {
-    const panel = document.getElementById('pf-armed-telemetry-panel');
-    if (!panel) return;
-    panel.style.display = '';
+  // renderHUDLog renders the 8 most recent log lines, color-classified
+  // by content. Newest at the bottom.
+  renderHUDLog() {
+    const el = document.getElementById('hud-log');
+    if (!el) return;
+    const logs = (this.state.logs || []).slice(-8);
+    el.innerHTML = logs.map(l => {
+      const t = new Date(l.time).toLocaleTimeString();
+      const cls = classifyLogLine(l.msg || '');
+      return `<div class="log-line ${cls}">${escapeHtml(t)} ${escapeHtml(l.msg || '')}</div>`;
+    }).join('') || '<div class="log-line muted">no entries</div>';
+  },
 
+  // renderHUDStripAndClock updates the top-strip values and the
+  // wall clock. Called every frame for the strip; clock is also
+  // refreshed by a 30s ticker.
+  renderHUDStripAndClock() {
     const t = this.state.telemetry;
-    const noteEl = document.getElementById('pf-armed-no-telemetry');
-    const sections = ['battery', 'gps', 'link', 'mode'];
-    const haveAny = !!(t && t.haveAny);
-
-    if (!haveAny) {
-      noteEl.style.display = '';
-      for (const s of sections) {
-        document.getElementById(`pf-tel-${s}-section`).style.display = 'none';
-      }
-      document.getElementById('pf-armed-telemetry-stale').style.display = 'none';
-      return;
-    }
-    noteEl.style.display = 'none';
-
-    // Battery
-    const batEl = document.getElementById('pf-tel-battery-section');
-    if (t.battery) {
-      batEl.style.display = '';
-      const d = t.battery.data || {};
-      document.getElementById('pf-tel-volts').textContent =
-        typeof d.volts === 'number' ? d.volts.toFixed(2) + ' V' : '-';
-      document.getElementById('pf-tel-amps').textContent =
-        typeof d.amps === 'number' ? d.amps.toFixed(1) + ' A' : '-';
-      document.getElementById('pf-tel-percent').textContent =
-        typeof d.percent === 'number' ? d.percent + '%' : '-';
-      document.getElementById('pf-tel-mah').textContent =
-        typeof d.usedMAh === 'number' ? d.usedMAh + ' mAh' : '-';
-      const cells = d.cellCount;
-      const vc = d.voltsCell;
-      document.getElementById('pf-tel-cells').textContent =
-        cells > 0 ? `${cells}S · ${vc.toFixed(2)}V/cell` : '';
+    const fmEl = document.getElementById('hud-mode');
+    if (t && t.flightMode) {
+      fmEl.textContent = t.flightMode.data?.mode || '-';
     } else {
-      batEl.style.display = 'none';
+      fmEl.textContent = '-';
     }
 
-    // GPS
-    const gpsEl = document.getElementById('pf-tel-gps-section');
-    if (t.gps) {
-      gpsEl.style.display = '';
-      const d = t.gps.data || {};
-      document.getElementById('pf-tel-sats').textContent =
-        typeof d.sats === 'number' ? d.sats : '-';
-      const lat = typeof d.latDeg === 'number' ? d.latDeg.toFixed(6) : '?';
-      const lon = typeof d.lonDeg === 'number' ? d.lonDeg.toFixed(6) : '?';
-      document.getElementById('pf-tel-coords').textContent = `${lat}, ${lon}`;
-      document.getElementById('pf-tel-alt').textContent =
-        typeof d.altMeters === 'number' ? d.altMeters + ' m' : '-';
-      document.getElementById('pf-tel-spd').textContent =
-        typeof d.groundKmh === 'number' ? d.groundKmh.toFixed(1) + ' km/h' : '-';
-      document.getElementById('pf-tel-hdg').textContent =
-        typeof d.headingDeg === 'number' ? d.headingDeg.toFixed(0) + '°' : '-';
+    if (t && t.battery && t.battery.data) {
+      const d = t.battery.data;
+      document.getElementById('hud-strip-bat').textContent =
+        (typeof d.voltsCell === 'number' ? d.voltsCell.toFixed(2) + ' V/cell' : '');
+      document.getElementById('hud-strip-pct').textContent =
+        (typeof d.percent === 'number' ? d.percent + '%' : '');
     } else {
-      gpsEl.style.display = 'none';
+      document.getElementById('hud-strip-bat').textContent = '';
+      document.getElementById('hud-strip-pct').textContent = '';
     }
 
-    // Link
-    const linkEl = document.getElementById('pf-tel-link-section');
-    if (t.link) {
-      linkEl.style.display = '';
-      const d = t.link.data || {};
-      document.getElementById('pf-tel-rssi').textContent =
-        typeof d.uplinkRssiDbm === 'number' ? d.uplinkRssiDbm : '-';
-      document.getElementById('pf-tel-lq').textContent =
-        typeof d.uplinkLq === 'number' ? d.uplinkLq : '-';
-      document.getElementById('pf-tel-snr').textContent =
-        typeof d.uplinkSnr === 'number' ? d.uplinkSnr : '-';
-      document.getElementById('pf-tel-pwr').textContent =
-        typeof d.txPowerIdx === 'number' ? d.txPowerIdx : '-';
-    } else {
-      linkEl.style.display = 'none';
-    }
-
-    // Flight mode
-    const modeEl = document.getElementById('pf-tel-mode-section');
-    if (t.flightMode) {
-      modeEl.style.display = '';
-      document.getElementById('pf-tel-mode').textContent = t.flightMode.data?.mode || '-';
-    } else {
-      modeEl.style.display = 'none';
-    }
-
-    // Aggregate stale: any non-stale sensor → not stale overall.
-    const anyStale = ['battery', 'gps', 'link', 'flightMode'].some(k =>
-      t[k] && t[k].stale);
-    document.getElementById('pf-armed-telemetry-stale').style.display =
-      anyStale ? 'inline-block' : 'none';
+    // Clock — minute resolution is enough; updated every frame is
+    // wasteful so a 30s timer also calls this method.
+    const now = new Date();
+    document.getElementById('hud-clock').textContent =
+      String(now.getHours()).padStart(2, '0') + ':' +
+      String(now.getMinutes()).padStart(2, '0');
   },
 
   // renderArmButton enables the Ready-to-fly button only when every
@@ -3130,11 +3617,24 @@ function escapeHtml(s) {
 // classifyLogLine: heuristic colouring for log entries. Picks up common
 // keywords; not authoritative, just helpful at a glance.
 function classifyLogLine(msg) {
-  const m = msg.toLowerCase();
-  if (m.includes('error') || m.includes('panic') || m.includes('fatal') || m.includes('failed')) {
-    return 'error';
+  const m = (msg || '').toLowerCase();
+  if (m.includes('failsafe') || m.includes('panic') || m.includes('fatal')
+      || m.includes('error') || m.includes('failed')
+      || m.includes('link lost') || m.includes(' crit')) {
+    return 'crit';
   }
-  if (m.includes('warn')) return 'warn';
+  if (m.includes('warn') || m.includes('low ') || m.includes(' low')
+      || m.includes('weak') || m.includes('stale')) {
+    return 'warn';
+  }
+  if (m.includes('armed') || m.includes('disarm')
+      || m.includes('mode change') || m.includes('model loaded')
+      || m.includes('handshake') || m.includes('connected')) {
+    return 'state';
+  }
+  if (m.includes('saved') || m.includes('lock acquired') || m.includes(' ok ')) {
+    return 'ok';
+  }
   return '';
 }
 

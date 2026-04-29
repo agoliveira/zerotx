@@ -511,6 +511,180 @@ type Recording struct {
 	ModTime string `json:"modTime"`
 }
 
+// Summary is a post-flight summary of a saved recording. Computed on
+// demand by opening the SQLite file, running aggregate queries, and
+// returning the result. Cheap enough to compute live (single-digit
+// milliseconds for typical flights); we don't cache.
+type Summary struct {
+	Name           string   `json:"name"`
+	ModelName      string   `json:"modelName"`
+	StartedAt      string   `json:"startedAt"`
+	EndedAt        string   `json:"endedAt"`
+	DurationSec    int      `json:"durationSec"`
+	EventCount     int      `json:"eventCount"`
+	TelemetryCount int      `json:"telemetryCount"`
+
+	// Battery
+	BatStartV      *float64 `json:"batStartV,omitempty"`
+	BatEndV        *float64 `json:"batEndV,omitempty"`
+	BatMaxA        *float64 `json:"batMaxA,omitempty"`
+	BatUsedMAh     *int     `json:"batUsedMAh,omitempty"`
+
+	// GPS
+	GpsMaxAlt      *int     `json:"gpsMaxAlt,omitempty"`
+	GpsMaxKmh      *float64 `json:"gpsMaxKmh,omitempty"`
+
+	// Link
+	LinkMinRSSI    *int     `json:"linkMinRssi,omitempty"`
+	LinkMinLQ      *int     `json:"linkMinLq,omitempty"`
+
+	// Modes seen during the flight (in order of first appearance).
+	FlightModes    []string `json:"flightModes,omitempty"`
+
+	// Alarms by level.
+	AlarmCounts    map[string]int `json:"alarmCounts,omitempty"`
+}
+
+// Summarize opens the saved recording at path read-only and computes
+// a Summary. Returns an error if the file is missing or unreadable;
+// missing fields in the recording (e.g. no GPS at all) appear as nil
+// pointers in the result rather than failing.
+func Summarize(path string) (*Summary, error) {
+	// Open read-only via DSN flag. modernc.org/sqlite supports
+	// query parameters in the DSN.
+	db, err := sql.Open("sqlite", path+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	defer db.Close()
+
+	s := &Summary{
+		Name:        filepath.Base(path),
+		AlarmCounts: map[string]int{},
+	}
+
+	// Session metadata: started_at, ended_at, model_name. Take the
+	// first (only, in our model) session row.
+	var endedAt sql.NullString
+	if err := db.QueryRow(
+		`SELECT model_name, started_at, COALESCE(ended_at, '') FROM sessions LIMIT 1`,
+	).Scan(&s.ModelName, &s.StartedAt, &endedAt); err != nil {
+		// No session row at all — empty file. Return what we have.
+		return s, nil
+	}
+	s.EndedAt = endedAt.String
+	if s.StartedAt != "" && s.EndedAt != "" {
+		t1, e1 := time.Parse(time.RFC3339Nano, s.StartedAt)
+		t2, e2 := time.Parse(time.RFC3339Nano, s.EndedAt)
+		if e1 == nil && e2 == nil {
+			s.DurationSec = int(t2.Sub(t1).Seconds())
+		}
+	}
+
+	// Counts. Cheap.
+	db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&s.EventCount)
+	db.QueryRow(`SELECT COUNT(*) FROM telemetry`).Scan(&s.TelemetryCount)
+
+	// Battery: starting (first non-null), ending (last non-null),
+	// peak current (max), used capacity (max, since it's monotonic
+	// or near it).
+	if v, ok := nullableFloat(db, `SELECT bat_volts FROM telemetry WHERE bat_volts IS NOT NULL ORDER BY ts_us ASC LIMIT 1`); ok {
+		s.BatStartV = &v
+	}
+	if v, ok := nullableFloat(db, `SELECT bat_volts FROM telemetry WHERE bat_volts IS NOT NULL ORDER BY ts_us DESC LIMIT 1`); ok {
+		s.BatEndV = &v
+	}
+	if v, ok := nullableFloat(db, `SELECT MAX(bat_amps) FROM telemetry WHERE bat_amps IS NOT NULL`); ok {
+		s.BatMaxA = &v
+	}
+	if v, ok := nullableInt(db, `SELECT MAX(bat_mah) FROM telemetry WHERE bat_mah IS NOT NULL`); ok {
+		s.BatUsedMAh = &v
+	}
+
+	// GPS: max altitude, max speed.
+	if v, ok := nullableInt(db, `SELECT MAX(gps_alt) FROM telemetry WHERE gps_alt IS NOT NULL`); ok {
+		s.GpsMaxAlt = &v
+	}
+	if v, ok := nullableFloat(db, `SELECT MAX(gps_kmh) FROM telemetry WHERE gps_kmh IS NOT NULL`); ok {
+		s.GpsMaxKmh = &v
+	}
+
+	// Link: worst RSSI (closest to zero, since negative dBm), worst LQ.
+	// CRSF RSSI is negative dBm; "worst" = closest to zero, so MAX.
+	// LQ is a percentage; "worst" = lowest value, so MIN.
+	if v, ok := nullableInt(db, `SELECT MAX(link_rssi) FROM telemetry WHERE link_rssi IS NOT NULL`); ok {
+		s.LinkMinRSSI = &v
+	}
+	if v, ok := nullableInt(db, `SELECT MIN(link_lq) FROM telemetry WHERE link_lq IS NOT NULL`); ok {
+		s.LinkMinLQ = &v
+	}
+
+	// Flight modes seen, in order of first appearance.
+	if rows, err := db.Query(`
+		SELECT fm_mode, MIN(ts_us) AS first_seen
+		FROM telemetry
+		WHERE fm_mode IS NOT NULL AND fm_mode != ''
+		GROUP BY fm_mode
+		ORDER BY first_seen ASC
+	`); err == nil {
+		for rows.Next() {
+			var mode string
+			var firstSeen int64
+			if err := rows.Scan(&mode, &firstSeen); err == nil {
+				s.FlightModes = append(s.FlightModes, mode)
+			}
+		}
+		rows.Close()
+	}
+
+	// Alarm counts by level. Alarms are events with kind='audio' and
+	// level in (warning, critical). We could narrow further but the
+	// simplest sensible aggregate is: how many warnings, how many
+	// criticals fired during the flight.
+	if rows, err := db.Query(`
+		SELECT level, COUNT(*) FROM events
+		WHERE kind = 'audio' AND level IN ('warning','critical')
+		GROUP BY level
+	`); err == nil {
+		for rows.Next() {
+			var level string
+			var count int
+			if err := rows.Scan(&level, &count); err == nil {
+				s.AlarmCounts[level] = count
+			}
+		}
+		rows.Close()
+	}
+
+	return s, nil
+}
+
+// nullableFloat runs a single-column query and returns the float
+// value plus ok=true if non-null, or (0, false) on null/error.
+func nullableFloat(db *sql.DB, query string) (float64, bool) {
+	var v sql.NullFloat64
+	if err := db.QueryRow(query).Scan(&v); err != nil {
+		return 0, false
+	}
+	if !v.Valid {
+		return 0, false
+	}
+	return v.Float64, true
+}
+
+// nullableInt runs a single-column query and returns the int value
+// plus ok=true if non-null, or (0, false) on null/error.
+func nullableInt(db *sql.DB, query string) (int, bool) {
+	var v sql.NullInt64
+	if err := db.QueryRow(query).Scan(&v); err != nil {
+		return 0, false
+	}
+	if !v.Valid {
+		return 0, false
+	}
+	return int(v.Int64), true
+}
+
 // Close stops the recorder. Any active session is NOT saved (that's
 // intentional: Close is for daemon shutdown, where assuming flight is
 // over isn't safe — the operator may have killed the daemon mid-flight

@@ -33,7 +33,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.18.0-recordings"
+const version = "0.19.0-hud"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -305,7 +305,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, telemetryState, rec, port, *modelImage, *modelFlag, logBuf, version, time.Now())
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now())
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -549,6 +549,7 @@ func buildAPIProviders(
 	port string,
 	modelImagePath string,
 	modelDefaultPath string,
+	recordingsDir string,
 	logBuf *logbuf.Buffer,
 	version string,
 	startedAt time.Time,
@@ -730,6 +731,16 @@ func buildAPIProviders(
 				})
 			}
 			return out, nil
+		},
+		Summarize: func(name string) (interface{}, error) {
+			// Reject anything that looks like a path traversal. The
+			// name parameter is just a filename basename; if the
+			// caller is trying to walk the filesystem, refuse.
+			if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+				return nil, fmt.Errorf("invalid recording name")
+			}
+			path := filepath.Join(recordingsDir, name)
+			return recorder.Summarize(path)
 		},
 
 		Version:    version,

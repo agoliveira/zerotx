@@ -238,6 +238,46 @@ should script that separately.
 Cleanup keeps the 10 most recent recordings; older files are deleted
 on each save. Configurable via `-keep-recordings`.
 
+## HUD (post-arm flight UI)
+
+When the operator arms the flight, the GUI takes over the full window
+with a dedicated flight UI. The pre-flight tab, sidebar, and header
+chrome are hidden via a CSS class swap on the root container; the HUD
+overlay becomes visible.
+
+**The HUD is purely a display.** It reads from the same WebSocket
+stream as every other tab. There is no separate flight data path. If
+the WebSocket disconnects mid-flight, the daemon keeps emitting
+channel intents to the RP2040 unaffected — only the GUI's view of the
+state goes stale.
+
+Three large tiles (battery, GPS, link) show critical state with
+color-coded primary numbers:
+
+- Green: nominal
+- Amber: warning (per-cell V 3.5–3.7, GPS sats 4–5, link LQ 50–69%)
+- Red: critical (per-cell V < 3.5, GPS sats < 4, link LQ < 50%)
+- Stale: when the sensor's data hasn't been refreshed within the
+  staleness window, the tile dims and a "STALE" badge appears
+
+When at least one warning alarm is active, the entire HUD gets an
+amber border. When at least one critical alarm is active, the border
+goes red. This is a peripheral signal independent of the alarms
+panel itself, so it's visible even when the operator isn't looking
+directly at the screen.
+
+The DISARM button is intentionally large and unmissable. It honors
+the `confirmDisarm` setting: if confirmation is enabled, a modal
+appears; if disabled, one tap disarms immediately. The big-button
+design assumes operators may be using the radio in one hand while
+tapping with the other; precision tap targets are unsafe at the field.
+
+On disarm, the post-flight summary overlay appears showing aggregate
+stats from the just-saved recording. The operator dismisses it with
+the "Done" button to return to the pre-flight tab. The same summary
+view is reachable later via the per-row "Summary" action in the
+Recordings tab.
+
 ## Things deliberately NOT done
 
 - **No automatic model swap mid-flight.** The model is loaded in pre-flight

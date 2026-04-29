@@ -291,6 +291,12 @@ type Providers struct {
 	// (newest first). Empty when recording is disabled.
 	Recordings func() ([]Recording, error)
 
+	// Summarize opens a saved recording (by file basename) and
+	// returns aggregate stats. Returns an error if the file is
+	// missing or unreadable; nil pointers within the summary mean
+	// "no data of that kind in this recording".
+	Summarize func(name string) (interface{}, error)
+
 	Version string
 	Uptime  func() time.Duration
 }

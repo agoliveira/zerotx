@@ -62,6 +62,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
 	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
+	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
 	mux.HandleFunc("/api/v1/model/unload", s.handleModelUnload)
 	mux.HandleFunc("/api/v1/models", s.handleModels)
@@ -311,6 +312,27 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 		recs = []Recording{}
 	}
 	writeJSON(w, http.StatusOK, recs)
+}
+
+// handleRecordingSummary returns aggregate stats for a saved
+// recording. Query parameter ?name=<basename> selects the file.
+// 404 if the file is missing; 400 if name is empty.
+func (s *Server) handleRecordingSummary(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if s.providers.Summarize == nil {
+		http.Error(w, "summarize not configured", http.StatusServiceUnavailable)
+		return
+	}
+	out, err := s.providers.Summarize(name)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleModelLoad parses a JSON body {"path": "..."} and asks the
