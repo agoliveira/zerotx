@@ -30,6 +30,29 @@ say "Compiling"
 make -j"$(nproc)"
 
 UF2=$(find . -maxdepth 2 -name '*.uf2' | head -1)
+ELF=$(find . -maxdepth 2 -name '*.elf' | head -1)
+
+if [[ -z "$UF2" && -n "$ELF" ]]; then
+  # Pico SDK quirk: pico_add_extra_outputs is a POST_BUILD hook on the
+  # executable target. If the .elf is up-to-date but the .uf2 was moved
+  # or deleted (e.g. you copied it onto an RP2040 last time), make won't
+  # regenerate it. Use picotool from the build's _deps directory to
+  # synthesize the .uf2 from the .elf without rebuilding the world.
+  say "uf2 missing despite up-to-date elf; regenerating via picotool"
+  PICOTOOL=$(find _deps -name 'picotool' -type f -executable 2>/dev/null | head -1)
+  if [[ -z "$PICOTOOL" ]]; then
+    PICOTOOL=$(command -v picotool || true)
+  fi
+  if [[ -z "$PICOTOOL" ]]; then
+    warn "picotool not found, cannot regenerate .uf2"
+  else
+    out_dir=$(dirname "$ELF")
+    out_uf2="${out_dir}/$(basename "$ELF" .elf).uf2"
+    "$PICOTOOL" uf2 convert "$ELF" "$out_uf2" -t elf
+    UF2="$out_uf2"
+  fi
+fi
+
 if [[ -n "$UF2" ]]; then
   say "Built: $REPO_ROOT/rp2040/build/$(basename "$UF2")"
 else
