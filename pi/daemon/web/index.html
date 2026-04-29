@@ -821,6 +821,54 @@ table.data-table {
 }
 .armed-logs .log-line { padding: 1px 0; }
 
+/* Telemetry panel (post-arm) */
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.tel-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+.tel-section .tel-big {
+  font-family: var(--mono);
+  font-size: 22px;
+  color: var(--text-main);
+  line-height: 1.1;
+}
+.tel-section .tel-detail {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.tel-cells {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 4px;
+}
+.stale-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--warn);
+  background: rgba(217, 153, 0, 0.15);
+  padding: 2px 6px;
+  border-radius: 2px;
+  margin-left: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
 /* === Modal overlay === */
 .modal-backdrop {
   position: fixed;
@@ -1024,6 +1072,43 @@ h2.warn { color: var(--warn); }
            Provides at-a-glance live status while flying, until the
            full flight-mode HUD lands in a future round. -->
       <div id="pf-postarm" style="display:none">
+        <div class="panel" id="pf-armed-telemetry-panel" style="display:none">
+          <h2>Telemetry <span id="pf-armed-telemetry-stale" class="stale-tag" style="display:none">stale</span></h2>
+          <div class="telemetry-grid">
+            <div class="tel-section" id="pf-tel-battery-section" style="display:none">
+              <h3>Battery <span class="tel-cells" id="pf-tel-cells"></span></h3>
+              <div class="tel-big" id="pf-tel-volts">-</div>
+              <div class="tel-detail">
+                <span id="pf-tel-amps">-</span> · <span id="pf-tel-percent">-</span> · <span id="pf-tel-mah">-</span>
+              </div>
+            </div>
+            <div class="tel-section" id="pf-tel-gps-section" style="display:none">
+              <h3>GPS</h3>
+              <div class="tel-big"><span id="pf-tel-sats">-</span> sats</div>
+              <div class="tel-detail">
+                <span id="pf-tel-coords">-</span><br>
+                alt <span id="pf-tel-alt">-</span> · spd <span id="pf-tel-spd">-</span> · hdg <span id="pf-tel-hdg">-</span>
+              </div>
+            </div>
+            <div class="tel-section" id="pf-tel-link-section" style="display:none">
+              <h3>Link</h3>
+              <div class="tel-big"><span id="pf-tel-rssi">-</span> dBm</div>
+              <div class="tel-detail">
+                LQ <span id="pf-tel-lq">-</span>% · SNR <span id="pf-tel-snr">-</span> · TX pwr <span id="pf-tel-pwr">-</span>
+              </div>
+            </div>
+            <div class="tel-section" id="pf-tel-mode-section" style="display:none">
+              <h3>Flight mode</h3>
+              <div class="tel-big" id="pf-tel-mode">-</div>
+            </div>
+          </div>
+          <div id="pf-armed-no-telemetry" class="muted small" style="display:none">
+            No telemetry data flowing. Operator is flying without telemetry,
+            or the radio link doesn't carry it. The flight controller is
+            still in command of failsafe.
+          </div>
+        </div>
+
         <div class="panel">
           <h2>Live channels</h2>
           <div id="pf-armed-channels" class="armed-channels"></div>
@@ -1272,6 +1357,11 @@ const App = {
     ),
     // armed-state runtime data (not persisted).
     armedRecentLogs: [],
+    // telemetry: latest snapshot from /api/v1/telemetry. Populated on
+    // connect (one-shot) and continuously via the WebSocket stream.
+    // Null when telemetry has never been received (operator may be
+    // flying without telemetry, or link doesn't carry it).
+    telemetry: null,
   },
 
   ws: null,
@@ -1486,6 +1576,27 @@ const App = {
     this.state.lastFrameTime = now;
     this.state.fpsWindow.push(now);
     if (this.state.fpsWindow.length > 10) this.state.fpsWindow.shift();
+    // Capture telemetry from the stream (daemon pushes it every tick).
+    // Empty object same handling as the REST endpoint above.
+    if (frame.telemetry !== undefined) {
+      const t = frame.telemetry;
+      const newT = (t && Object.keys(t).length > 0) ? t : null;
+      const wasNull = this.state.telemetry === null;
+      const isNull = newT === null;
+      this.state.telemetry = newT;
+      // While pre-arm, telemetry changes can flip auto-fb checks. We
+      // throttle to once per second to avoid re-rendering on every
+      // frame; the daemon pushes at 10Hz and the GUI doesn't need to.
+      if (!this.state.flightArmed && this.activeTab === 'preflight') {
+        const now = Date.now();
+        if (!this._lastChecklistRender || now - this._lastChecklistRender > 1000
+            || wasNull !== isNull) {
+          this._lastChecklistRender = now;
+          this.renderChecklist();
+          this.renderArmButton();
+        }
+      }
+    }
     this.renderActiveTab(frame);
   },
 
@@ -1572,6 +1683,15 @@ const App = {
     try {
       const r = await fetch(`http://${this.state.address}/api/v1/preflight`);
       if (r.ok) this.state.preflight = await r.json();
+    } catch (e) { /* non-fatal */ }
+    try {
+      const r = await fetch(`http://${this.state.address}/api/v1/telemetry`);
+      if (r.ok) {
+        const t = await r.json();
+        // Empty object means no telemetry has ever been received.
+        // Distinguish from "telemetry exists but is empty snapshot."
+        this.state.telemetry = (t && Object.keys(t).length > 0) ? t : null;
+      }
     } catch (e) { /* non-fatal */ }
     await Promise.all([this.refreshJoysticks(), this.refreshModels()]);
     this.renderPreflight();
@@ -2010,21 +2130,52 @@ const App = {
   },
 
   // checkItemStatus inspects the current preflight + telemetry state to
-  // decide whether an auto-verifiable item is actually verified. Today
-  // the daemon doesn't parse the FC telemetry stream, so all auto-fb
-  // items return verified=null (= fall back to manual). When the
-  // telemetry pipeline lands, this method gets richer.
+  // decide whether an auto-verifiable item is actually verified.
+  //
+  // Returns:
+  //   { mode: 'manual' }                   - hand-tick only
+  //   { mode: 'auto-fb', verified: true }  - telemetry says yes
+  //   { mode: 'auto-fb', verified: false } - telemetry says no (override available)
+  //   { mode: 'auto-fb', verified: null }  - no telemetry source; falls back to manual
+  //
+  // The fallback case is the design pattern for "fly without telemetry":
+  // when nothing is providing data, the operator manually confirms.
   checkItemStatus(item) {
     if (item.mode === 'manual') return { mode: 'manual' };
-    // Hooks that *could* return real verification when data is available.
-    // For now, no telemetry, all return null (fall through to manual).
+    const t = this.state.telemetry;
+    const haveAny = !!(t && t.haveAny);
+
     switch (item.id) {
-      case 'battery':
-        // Future: voltage > threshold from FC telemetry sensor
-        return { mode: 'auto-fb', verified: null };
-      case 'gps':
-        // Future: GPS sat count >= 6 from telemetry
-        return { mode: 'auto-fb', verified: null };
+      case 'battery': {
+        if (!t || !t.battery) {
+          // No battery telemetry. If telemetry is flowing for OTHER
+          // sensors, treat this as "telemetry says no battery sensor".
+          // If nothing is flowing at all, fall back to manual.
+          return { mode: 'auto-fb', verified: haveAny ? false : null };
+        }
+        if (t.battery.stale) {
+          return { mode: 'auto-fb', verified: false };
+        }
+        // Pass when voltage > 0 (sensor responding with a real reading).
+        // We deliberately don't validate against per-cell thresholds
+        // here — that's an in-flight warning concern, not a pre-flight
+        // gate. A 6S pack at 3.5V/cell is fine to take off with.
+        const v = t.battery.data && t.battery.data.volts;
+        return { mode: 'auto-fb', verified: typeof v === 'number' && v > 0.5 };
+      }
+      case 'gps': {
+        if (!t || !t.gps) {
+          return { mode: 'auto-fb', verified: haveAny ? false : null };
+        }
+        if (t.gps.stale) {
+          return { mode: 'auto-fb', verified: false };
+        }
+        // Industry-standard 6 satellites for "GPS ready". For
+        // indoor/non-GPS flying, the operator can override this item
+        // (see the override button in renderChecklist).
+        const sats = t.gps.data && t.gps.data.sats;
+        return { mode: 'auto-fb', verified: typeof sats === 'number' && sats >= 6 };
+      }
       default:
         return { mode: 'manual' };
     }
@@ -2143,6 +2294,109 @@ const App = {
       const t = new Date(l.time).toLocaleTimeString();
       return `<div class="log-line">${escapeHtml(t)} ${escapeHtml(l.msg)}</div>`;
     }).join('') || '<div class="log-line muted">no entries</div>';
+
+    this.renderTelemetryPanel();
+  },
+
+  // renderTelemetryPanel populates the post-arm telemetry panel from
+  // the latest snapshot. Per-section visibility: each sub-section is
+  // shown only when that sensor has produced at least one frame, so
+  // craft without GPS don't see an empty GPS card.
+  //
+  // When no telemetry has ever been received, the whole panel shows
+  // a "flying without telemetry" notice instead of the grid.
+  renderTelemetryPanel() {
+    const panel = document.getElementById('pf-armed-telemetry-panel');
+    if (!panel) return;
+    panel.style.display = '';
+
+    const t = this.state.telemetry;
+    const noteEl = document.getElementById('pf-armed-no-telemetry');
+    const sections = ['battery', 'gps', 'link', 'mode'];
+    const haveAny = !!(t && t.haveAny);
+
+    if (!haveAny) {
+      noteEl.style.display = '';
+      for (const s of sections) {
+        document.getElementById(`pf-tel-${s}-section`).style.display = 'none';
+      }
+      document.getElementById('pf-armed-telemetry-stale').style.display = 'none';
+      return;
+    }
+    noteEl.style.display = 'none';
+
+    // Battery
+    const batEl = document.getElementById('pf-tel-battery-section');
+    if (t.battery) {
+      batEl.style.display = '';
+      const d = t.battery.data || {};
+      document.getElementById('pf-tel-volts').textContent =
+        typeof d.volts === 'number' ? d.volts.toFixed(2) + ' V' : '-';
+      document.getElementById('pf-tel-amps').textContent =
+        typeof d.amps === 'number' ? d.amps.toFixed(1) + ' A' : '-';
+      document.getElementById('pf-tel-percent').textContent =
+        typeof d.percent === 'number' ? d.percent + '%' : '-';
+      document.getElementById('pf-tel-mah').textContent =
+        typeof d.usedMAh === 'number' ? d.usedMAh + ' mAh' : '-';
+      const cells = d.cellCount;
+      const vc = d.voltsCell;
+      document.getElementById('pf-tel-cells').textContent =
+        cells > 0 ? `${cells}S · ${vc.toFixed(2)}V/cell` : '';
+    } else {
+      batEl.style.display = 'none';
+    }
+
+    // GPS
+    const gpsEl = document.getElementById('pf-tel-gps-section');
+    if (t.gps) {
+      gpsEl.style.display = '';
+      const d = t.gps.data || {};
+      document.getElementById('pf-tel-sats').textContent =
+        typeof d.sats === 'number' ? d.sats : '-';
+      const lat = typeof d.latDeg === 'number' ? d.latDeg.toFixed(6) : '?';
+      const lon = typeof d.lonDeg === 'number' ? d.lonDeg.toFixed(6) : '?';
+      document.getElementById('pf-tel-coords').textContent = `${lat}, ${lon}`;
+      document.getElementById('pf-tel-alt').textContent =
+        typeof d.altMeters === 'number' ? d.altMeters + ' m' : '-';
+      document.getElementById('pf-tel-spd').textContent =
+        typeof d.groundKmh === 'number' ? d.groundKmh.toFixed(1) + ' km/h' : '-';
+      document.getElementById('pf-tel-hdg').textContent =
+        typeof d.headingDeg === 'number' ? d.headingDeg.toFixed(0) + '°' : '-';
+    } else {
+      gpsEl.style.display = 'none';
+    }
+
+    // Link
+    const linkEl = document.getElementById('pf-tel-link-section');
+    if (t.link) {
+      linkEl.style.display = '';
+      const d = t.link.data || {};
+      document.getElementById('pf-tel-rssi').textContent =
+        typeof d.uplinkRssiDbm === 'number' ? d.uplinkRssiDbm : '-';
+      document.getElementById('pf-tel-lq').textContent =
+        typeof d.uplinkLq === 'number' ? d.uplinkLq : '-';
+      document.getElementById('pf-tel-snr').textContent =
+        typeof d.uplinkSnr === 'number' ? d.uplinkSnr : '-';
+      document.getElementById('pf-tel-pwr').textContent =
+        typeof d.txPowerIdx === 'number' ? d.txPowerIdx : '-';
+    } else {
+      linkEl.style.display = 'none';
+    }
+
+    // Flight mode
+    const modeEl = document.getElementById('pf-tel-mode-section');
+    if (t.flightMode) {
+      modeEl.style.display = '';
+      document.getElementById('pf-tel-mode').textContent = t.flightMode.data?.mode || '-';
+    } else {
+      modeEl.style.display = 'none';
+    }
+
+    // Aggregate stale: any non-stale sensor → not stale overall.
+    const anyStale = ['battery', 'gps', 'link', 'flightMode'].some(k =>
+      t[k] && t[k].stale);
+    document.getElementById('pf-armed-telemetry-stale').style.display =
+      anyStale ? 'inline-block' : 'none';
   },
 
   // renderArmButton enables the Ready-to-fly button only when every

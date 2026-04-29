@@ -32,7 +32,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.16.0-telemetry"
+const version = "0.16.1-telemetry-gui"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
