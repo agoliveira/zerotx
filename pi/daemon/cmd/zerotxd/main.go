@@ -30,7 +30,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.11.1-m4.1-preflight-daemon-reattach"
+const version = "0.12.0-handshake"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -145,6 +145,7 @@ func main() {
 		log.Fatalf("open link: %v", err)
 	}
 	defer link.Close()
+	link.LocalVersion = "zerotxd " + version
 	link.OnLog = func(s string) { log.Printf("[mcu] %s", s) }
 	link.OnFrame = func(f ipc.Frame) {
 		// Heartbeats are routine and noisy under -v; counted in MCU logs anyway.

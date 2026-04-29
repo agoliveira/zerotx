@@ -15,8 +15,18 @@ const (
 	MsgChannelIntent byte = 0x01 // Pi -> MCU, 32 bytes (16 * uint16 LE)
 	MsgInputState    byte = 0x02 // MCU -> Pi, empty in M1
 	MsgHeartbeat     byte = 0x03 // both, 1 byte seq
-	MsgLog           byte = 0x14 // MCU -> Pi, ASCII string
+
+	MsgHello    byte = 0x10 // both, [proto:1][reserved:3][version_str:N]
+	MsgHelloAck byte = 0x11 // both, same payload as MsgHello
+
+	MsgLog byte = 0x14 // MCU -> Pi, ASCII string
 )
+
+// ProtoVersion is the wire-format protocol version. Bumped only when the
+// frame format or message semantics change in an incompatible way. Both
+// the daemon and the RP2040 firmware must agree on this value at link
+// open time; mismatches gate channel intent emission.
+const ProtoVersion uint8 = 1
 
 // Sizing limits (must agree with the firmware).
 const (

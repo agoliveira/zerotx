@@ -19,8 +19,28 @@
 #define MSG_INPUT_STATE     0x02  /* MCU -> Pi, empty in M1 */
 #define MSG_HEARTBEAT       0x03  /* both, 1 byte seq */
 
+/* Handshake messages.
+ *
+ * On link open, either side may send MSG_HELLO carrying its protocol
+ * version and a human-readable version string. The other side responds
+ * with MSG_HELLO_ACK in the same format. If the protocol versions
+ * match, the daemon lifts its channel-intent gate and normal traffic
+ * flows. If they mismatch, the daemon refuses to send channel intents;
+ * the MCU watchdog eventually times out and FC failsafe takes over.
+ *
+ * Payload layout: [proto:1][reserved:3 zeros][version_str:N]
+ */
+#define MSG_HELLO           0x10
+#define MSG_HELLO_ACK       0x11
+
 /* Slow-path messages */
 #define MSG_LOG             0x14  /* MCU -> Pi, ASCII string */
+
+/* Wire-format protocol version. Bumped only when frame format or
+ * message semantics change in an incompatible way. Both sides must
+ * agree on this at link open time.
+ */
+#define ZTX_PROTO_VERSION   1u
 
 /* Sizing limits */
 #define ZTX_MAX_PAYLOAD     256
