@@ -32,6 +32,7 @@ type State struct {
 	Panel     panel.Snapshot     `json:"panel"`
 	Joystick  *JoystickSnapshot  `json:"joystick,omitempty"`
 	Link      LinkSnapshot       `json:"link"`
+	Telemetry interface{}        `json:"telemetry,omitempty"`
 }
 
 // JoystickSnapshot exposes normalized axis values and button states. nil
@@ -253,6 +254,12 @@ type Providers struct {
 	// refinement.
 	SetFlightArmed func(armed bool)
 
+	// Telemetry returns the current FC telemetry snapshot (typed in
+	// the daemon's internal/telemetry package). Returns nil when no
+	// telemetry has ever been received. The api package treats the
+	// value as opaque JSON to avoid an import cycle.
+	Telemetry func() interface{}
+
 	Version string
 	Uptime  func() time.Duration
 }
@@ -264,7 +271,7 @@ func (p *Providers) snapshot() State {
 	for i, v := range ch {
 		channels[i] = v
 	}
-	return State{
+	out := State{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Channels:  channels,
 		Logic:     p.Logic(),
@@ -272,4 +279,8 @@ func (p *Providers) snapshot() State {
 		Joystick:  p.Joystick(),
 		Link:      p.Link(),
 	}
+	if p.Telemetry != nil {
+		out.Telemetry = p.Telemetry()
+	}
+	return out
 }

@@ -23,11 +23,17 @@ type Link struct {
 	port serial.Port
 
 	// OnFrame is invoked for every parsed frame except MsgLog (which goes to
-	// OnLog instead) and the handshake messages (which are handled
-	// internally). Set before calling Run.
+	// OnLog instead), MsgTelemetry (which goes to OnTelemetry instead) and
+	// the handshake messages (which are handled internally). Set before
+	// calling Run.
 	OnFrame func(Frame)
 	// OnLog receives MCU log strings. If nil, MCU logs go to stdlib log.
 	OnLog func(string)
+	// OnTelemetry receives raw CRSF telemetry payloads forwarded by the
+	// MCU: [crsf_addr:1][crsf_type:1][crsf_payload:N]. The daemon's
+	// telemetry package decodes these into typed sensor data. If nil,
+	// telemetry frames are silently dropped.
+	OnTelemetry func([]byte)
 
 	// LocalVersion is the daemon's human-readable version string sent in
 	// the MsgHello payload. Optional; if empty, "" is sent.
@@ -145,6 +151,11 @@ func (l *Link) dispatch(f Frame) {
 	case MsgHelloAck:
 		proto, ver := parseHelloPayload(f.Payload)
 		l.recordHandshakeResult(proto, ver)
+		return
+	case MsgTelemetry:
+		if l.OnTelemetry != nil {
+			l.OnTelemetry(f.Payload)
+		}
 		return
 	}
 	if l.OnFrame != nil {

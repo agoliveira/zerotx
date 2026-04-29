@@ -57,6 +57,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.HandleFunc("/api/v1/logs", s.handleLogs)
 	mux.HandleFunc("/api/v1/preflight", s.handlePreflight)
+	mux.HandleFunc("/api/v1/telemetry", s.handleTelemetry)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
 	mux.HandleFunc("/api/v1/model/unload", s.handleModelUnload)
 	mux.HandleFunc("/api/v1/models", s.handleModels)
@@ -205,6 +206,22 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.providers.Preflight())
+}
+
+// handleTelemetry returns the current FC telemetry snapshot. Empty
+// object when no telemetry has ever been received (operator may be
+// flying without telemetry, or the link hasn't carried any yet).
+func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	if s.providers.Telemetry == nil {
+		writeJSON(w, http.StatusOK, struct{}{})
+		return
+	}
+	t := s.providers.Telemetry()
+	if t == nil {
+		writeJSON(w, http.StatusOK, struct{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 // handleModelLoad parses a JSON body {"path": "..."} and asks the

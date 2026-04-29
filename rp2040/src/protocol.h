@@ -33,14 +33,31 @@
 #define MSG_HELLO           0x10
 #define MSG_HELLO_ACK       0x11
 
+/* Telemetry frame from FC (via ELRS, via UART RX) forwarded to the
+ * daemon. Payload layout:
+ *   [addr:1][type:1][crsf_payload:N]
+ *
+ * The daemon parses the CRSF type byte and dispatches to a per-frame
+ * decoder. The MCU does NOT parse telemetry contents — keeping it dumb
+ * means new sensor types are added in Go without firmware changes.
+ *
+ * Stale-detection and per-sensor caching live in the daemon. The MCU
+ * forwards every well-formed CRSF frame as it arrives. */
+#define MSG_TELEMETRY       0x12
+
 /* Slow-path messages */
 #define MSG_LOG             0x14  /* MCU -> Pi, ASCII string */
 
 /* Wire-format protocol version. Bumped only when frame format or
  * message semantics change in an incompatible way. Both sides must
  * agree on this at link open time.
+ *
+ * v2: adds MSG_TELEMETRY (0x12) carrying raw CRSF telemetry frames.
+ *     Backward compatible at the IPC parser level (unknown messages
+ *     are silently dropped) but the GUI features that depend on
+ *     telemetry require a daemon and firmware that both speak v2.
  */
-#define ZTX_PROTO_VERSION   1u
+#define ZTX_PROTO_VERSION   2u
 
 /* Sizing limits */
 #define ZTX_MAX_PAYLOAD     256

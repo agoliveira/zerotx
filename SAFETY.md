@@ -120,6 +120,34 @@ This rule is advisory in the current implementation: the daemon trusts the
 GUI/operator to set `flightArmed` correctly. Future work will tie this to
 telemetry-confirmed arming state from the FC.
 
+## Telemetry
+
+The RP2040 firmware reads CRSF telemetry frames from the ELRS module
+(UART RX), validates the CRC, and forwards them as `MSG_TELEMETRY` IPC
+messages to the daemon. The daemon's `internal/telemetry` package
+parses GPS, Battery, Link, and Flight Mode frames into typed state.
+
+The MCU does not parse telemetry payloads — only CRC validation and
+framing. New sensor types are added entirely in Go without firmware
+changes.
+
+The telemetry path is **purely advisory** — never on the flight-critical
+path. Telemetry parsing runs on the IPC dispatcher goroutine and can
+fail or stall without affecting channel intent emission. The daemon
+runs identically with no telemetry at all (operator chose to fly
+without it, or the radio link doesn't carry it). Auto-verifiable
+checklist items fall back to manual confirmations when no telemetry
+is available.
+
+Per-sensor stale windows: GPS 2s, Battery 5s, Link 1s, Flight Mode 30s.
+Stale data is still served (last-known often beats nothing) with a
+`stale: true` flag for the GUI to interpret.
+
+Cell count is detected heuristically from initial battery voltage
+(`ceil(volts / 4.2)`) on first telemetry frame and cached for the
+session. Wrong for partially discharged packs at first connection —
+documented limitation, not a bug.
+
 ## Audio
 
 PLAY_TRACK and PLAY_SOUND custom functions in the model are evaluated

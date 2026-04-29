@@ -20,13 +20,28 @@
 
 #define CRSF_BAUD       400000u
 
-#define FW_VERSION_STRING "zerotx-fw m1.5-cosmetics"
+#define FW_VERSION_STRING "zerotx-fw m1.6-telemetry"
 
 static uint8_t s_tx_hb_seq = 0;
 static uint8_t s_tx_seq = 0;
 
 static void usb_write_byte(uint8_t b) {
     putchar_raw((char)b);
+}
+
+/* Forward CRSF telemetry frames to the daemon. The IPC payload is
+ *   [addr:1][type:1][crsf_payload:N]
+ * The daemon does all parsing; firmware just CRC-validates and forwards. */
+static void on_crsf_telemetry(uint8_t addr, uint8_t type,
+                              const uint8_t *payload, size_t payload_len) {
+    uint8_t out[CRSF_RX_MAX];
+    if (payload_len > sizeof(out) - 2) return; /* paranoia */
+    out[0] = addr;
+    out[1] = type;
+    if (payload_len > 0) {
+        for (size_t i = 0; i < payload_len; i++) out[2 + i] = payload[i];
+    }
+    ipc_send(MSG_TELEMETRY, s_tx_seq++, out, (uint16_t)(payload_len + 2));
 }
 
 /* Build a Hello/HelloAck payload: [proto:1][reserved:3 zeros][version:N].
@@ -139,6 +154,11 @@ int main(void) {
                 handle_frame(&f, now);
             }
         }
+
+        /* Drain any incoming CRSF telemetry from the ELRS module. Each
+         * complete, CRC-valid frame is forwarded over IPC for the
+         * daemon to parse. */
+        crsf_rx_poll(on_crsf_telemetry);
 
         state_tick(now);
 

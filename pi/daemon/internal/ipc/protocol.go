@@ -19,6 +19,14 @@ const (
 	MsgHello    byte = 0x10 // both, [proto:1][reserved:3][version_str:N]
 	MsgHelloAck byte = 0x11 // both, same payload as MsgHello
 
+	// MsgTelemetry: MCU -> Pi. The MCU receives CRSF telemetry frames
+	// from the ELRS module and forwards them as-is to the daemon for
+	// parsing. Payload layout:
+	//   [crsf_addr:1][crsf_type:1][crsf_payload:N]
+	// The daemon's internal/telemetry package decodes these into typed
+	// sensor data. Unknown frame types are logged once and ignored.
+	MsgTelemetry byte = 0x12
+
 	MsgLog byte = 0x14 // MCU -> Pi, ASCII string
 )
 
@@ -26,7 +34,13 @@ const (
 // frame format or message semantics change in an incompatible way. Both
 // the daemon and the RP2040 firmware must agree on this value at link
 // open time; mismatches gate channel intent emission.
-const ProtoVersion uint8 = 1
+//
+// v2 (current): adds MsgTelemetry. New firmware against old daemon is
+// backward-compatible at the IPC parser level (unknown messages are
+// dropped by the parser); old firmware against new daemon means no
+// telemetry data, but the daemon still works (auto-checks fall back
+// to manual confirmations).
+const ProtoVersion uint8 = 2
 
 // Sizing limits (must agree with the firmware).
 const (

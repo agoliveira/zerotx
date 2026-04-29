@@ -23,6 +23,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/api"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logic"
@@ -31,7 +32,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.15.2-reset-confirmations"
+const version = "0.16.0-telemetry"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -160,6 +161,15 @@ func main() {
 			log.Printf("[mcu] frame type=%#02x seq=%d payload=%d bytes", f.Type, f.Seq, len(f.Payload))
 		}
 	}
+
+	// Telemetry: decode CRSF frames forwarded by the MCU into a typed
+	// snapshot. The state lives for the lifetime of the daemon; on
+	// model unload it's reset so cell-count detection re-runs against
+	// the next pack.
+	telemetryState := telemetry.New(log.Printf)
+	link.OnTelemetry = func(payload []byte) {
+		telemetryState.Feed(payload)
+	}
 	log.Printf("link open on %s", port)
 
 	// Panel (optional). NullPanel by default; replaced if a flag is set.
@@ -240,7 +250,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, port, *modelImage, *modelFlag, logBuf, version, time.Now())
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, telemetryState, port, *modelImage, *modelFlag, logBuf, version, time.Now())
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -479,6 +489,7 @@ func buildAPIProviders(
 	pnl panel.Panel,
 	jsHolder *joystickHolder,
 	player audio.Player,
+	telemState *telemetry.State,
 	port string,
 	modelImagePath string,
 	modelDefaultPath string,
@@ -611,6 +622,10 @@ func buildAPIProviders(
 		},
 		ListModels: listModels,
 		SetFlightArmed: jsHolder.SetFlightArmed,
+		Telemetry: func() interface{} {
+			return telemState.Snapshot()
+		},
+
 		Version:    version,
 		Uptime:     func() time.Duration { return time.Since(startedAt) },
 	}
