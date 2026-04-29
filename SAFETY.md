@@ -120,6 +120,29 @@ This rule is advisory in the current implementation: the daemon trusts the
 GUI/operator to set `flightArmed` correctly. Future work will tie this to
 telemetry-confirmed arming state from the FC.
 
+## Audio
+
+PLAY_TRACK and PLAY_SOUND custom functions in the model are evaluated
+on rising-edge transitions and emit events on the CF processor's Audio
+channel. A per-stack drain goroutine forwards events to a Player which
+shells out to `paplay` (PulseAudio/PipeWire) or `aplay` (ALSA), playing
+samples one at a time from a configurable directory.
+
+The audio path is **purely advisory** — never on the flight-critical
+path. Audio playback runs on its own goroutine, the queue is bounded
+(default 16 events) with overflow drops logged but not retried, and
+each playback has a 30s timeout in case the audio backend wedges. None
+of this can affect channel intent emission to the RP2040.
+
+Samples are looked up at `<sounds-dir>/<lang>/<name>.<ext>` with a
+fallback to `<sounds-dir>/<name>.<ext>` for language-neutral sounds.
+Default extensions tried are `.wav`, `.ogg`, `.mp3`. EdgeTX SD-card
+layouts work directly without modification.
+
+If no audio backend is available (no paplay or aplay on PATH), the
+daemon logs a warning at startup and uses a NullPlayer that drops all
+events. Daemon stays useful but silent.
+
 ## Things deliberately NOT done
 
 - **No automatic model swap mid-flight.** The model is loaded in pre-flight

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/api"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
@@ -30,7 +31,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.13.0-cosmetics"
+const version = "0.14.0-audio"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -51,6 +52,9 @@ func main() {
 	modelImage := flag.String("model-image", "", "path to model bitmap file (BMP/PNG/JPG); shown in Model tab if set")
 	panelFile := flag.String("panel-file", "", "GCS panel state YAML; live-reloaded on edit")
 	panelStdin := flag.Bool("panel-stdin", false, "read panel commands from stdin (mutually exclusive with -panel-file)")
+	soundsDir := flag.String("sounds-dir", os.ExpandEnv("$HOME/fpv/Edgetx/sd/SOUNDS"), "audio sample directory (EdgeTX-compatible layout)")
+	soundsLang := flag.String("sounds-lang", "en", "language subdirectory under -sounds-dir (e.g. en, pt)")
+	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -185,13 +189,28 @@ func main() {
 	}
 	jsState := jsHolder.JoystickState()
 
+	// Audio player. Created before any Stack is built so model load
+	// goes straight into a working drain. Null player when -no-audio
+	// or when no playback backend is found on the system.
+	var player audio.Player
+	if *noAudio {
+		log.Println("audio: disabled (-no-audio)")
+		player = &audio.NullPlayer{}
+	} else {
+		player = audio.New(audio.Config{
+			SoundsDir: *soundsDir,
+			Lang:      *soundsLang,
+		})
+	}
+	defer player.Close()
+
 	// stack holder. nil => IDLE (no CRSF emission). The tick loop reads
 	// this atomically each tick; the API server writes it via load/unload.
 	holder := &stackHolder{}
 
 	// If a model was provided at startup, build its Stack and go READY.
 	if ztxModel != nil {
-		s, err := BuildStack(ztxModel, jsState, pnl)
+		s, err := BuildStack(ztxModel, jsState, pnl, player)
 		if err != nil {
 			log.Fatalf("build stack: %v", err)
 		}
@@ -221,7 +240,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, port, *modelImage, *modelFlag, logBuf, version, time.Now())
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, port, *modelImage, *modelFlag, logBuf, version, time.Now())
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -459,6 +478,7 @@ func buildAPIProviders(
 	holder *stackHolder,
 	pnl panel.Panel,
 	jsHolder *joystickHolder,
+	player audio.Player,
 	port string,
 	modelImagePath string,
 	modelDefaultPath string,
@@ -537,7 +557,7 @@ func buildAPIProviders(
 			return buildPreflight(holder, jsHolder, port, modelDefaultPath)
 		},
 		LoadModel: func(path string) error {
-			return loadModel(holder, jsHolder.JoystickState(), pnl, path)
+			return loadModel(holder, jsHolder.JoystickState(), pnl, player, path)
 		},
 		UnloadModel: func() {
 			if s := holder.Load(); s != nil {
@@ -599,12 +619,12 @@ func buildAPIProviders(
 // loadModel parses a YAML at the given path and atomically swaps in
 // the new Stack. Returns an error without touching the active stack if
 // parsing or building fails.
-func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Panel, path string) error {
+func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Panel, player audio.Player, path string) error {
 	m, err := model.LoadZeroTX(path)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", path, err)
 	}
-	s, err := BuildStack(m, jsState, pnl)
+	s, err := BuildStack(m, jsState, pnl, player)
 	if err != nil {
 		return fmt.Errorf("build stack for %s: %w", path, err)
 	}

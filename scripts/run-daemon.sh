@@ -8,6 +8,8 @@
 #   ZTX_MODEL         default: configs/big_talon_zerotx.yml
 #   ZTX_MODEL_IMAGE   default: ~/fpv/Edgetx/sd/IMAGES/talong.png (skipped if missing)
 #   ZTX_JOYSTICK      default: Thrustmaster
+#   ZTX_SOUNDS_DIR    default: ~/fpv/Edgetx/sd/SOUNDS
+#   ZTX_SOUNDS_LANG   default: en
 #
 # Anything passed on the command line after --idle (or directly) is
 # forwarded to zerotxd, so you can layer e.g. -v on top.
@@ -35,6 +37,8 @@ fi
 MODEL="${ZTX_MODEL:-configs/big_talon_zerotx.yml}"
 JOYSTICK="${ZTX_JOYSTICK:-Thrustmaster}"
 MODEL_IMAGE="${ZTX_MODEL_IMAGE:-$HOME/fpv/Edgetx/sd/IMAGES/talong.png}"
+SOUNDS_DIR="${ZTX_SOUNDS_DIR:-$HOME/fpv/Edgetx/sd/SOUNDS}"
+SOUNDS_LANG="${ZTX_SOUNDS_LANG:-en}"
 
 [[ -f "$MODEL" ]] || die "Model not found: $MODEL"
 
@@ -45,11 +49,13 @@ else
   warn "Model image not found at $MODEL_IMAGE, running without bitmap"
 fi
 
-say "Starting daemon (model=$MODEL, joystick=$JOYSTICK, api=$API)"
+say "Starting daemon (model=$MODEL, joystick=$JOYSTICK, api=$API, sounds=$SOUNDS_DIR/$SOUNDS_LANG)"
 exec "$BIN" \
   -api "$API" \
   -model "$MODEL" \
   -joystick-name "$JOYSTICK" \
   -panel-stdin \
+  -sounds-dir "$SOUNDS_DIR" \
+  -sounds-lang "$SOUNDS_LANG" \
   "${img_arg[@]}" \
   "$@"
