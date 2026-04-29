@@ -31,7 +31,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.15.0-preflight-gui"
+const version = "0.15.1-preflight-polish"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any

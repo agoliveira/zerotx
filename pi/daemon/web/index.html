@@ -586,30 +586,88 @@ table.data-table {
 }
 
 /* === Pre-flight tab === */
-.preflight-banner .banner-state {
+/* Hero panel: status banner + arm/disarm action all in one. The
+   container is the visual anchor of the page. When ready, the panel
+   visually transforms into a "click here" target by the action button
+   filling the bottom edge in green. When armed, the same panel
+   recolors to amber/red and exposes a disarm action. */
+.preflight-hero {
+  position: relative;
+  padding: 24px 24px 16px;
+  border-left: 3px solid var(--text-dim);
+  transition: border-color 0.2s, background 0.2s;
+}
+.preflight-hero.idle  { border-left-color: var(--text-dim); }
+.preflight-hero.ready { border-left-color: var(--ok); }
+.preflight-hero.armed { border-left-color: var(--warn); background: rgba(217, 153, 0, 0.06); }
+
+.preflight-hero .hero-cog {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 3px;
+}
+.preflight-hero .hero-cog:hover { color: var(--text-main); background: var(--bg-elevated); }
+.preflight-hero .hero-state {
   display: flex;
   align-items: baseline;
   gap: 12px;
   margin-bottom: 4px;
 }
-.preflight-banner .banner-label {
+.preflight-hero .hero-label {
   color: var(--text-dim);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.preflight-banner .banner-value {
+.preflight-hero .hero-value {
   font-size: 22px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--text-dim);
 }
-.preflight-banner .banner-summary {
+.preflight-hero.idle  .hero-value { color: var(--text-dim); }
+.preflight-hero.ready .hero-value { color: var(--ok); }
+.preflight-hero.armed .hero-value { color: var(--warn); }
+.preflight-hero .hero-summary {
   color: var(--text-muted);
   font-size: 13px;
+  margin-bottom: 16px;
 }
-.preflight-banner.idle .banner-value { color: var(--text-dim); }
-.preflight-banner.ready .banner-value { color: var(--ok); }
-.preflight-banner.armed .banner-value { color: var(--warn); }
+
+.preflight-hero .hero-action {
+  width: 100%;
+  padding: 20px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s, transform 0.05s;
+}
+.preflight-hero .hero-action:active:not(:disabled) { transform: translateY(1px); }
+.preflight-hero .hero-action.arm {
+  background: var(--ok);
+  color: #fff;
+}
+.preflight-hero .hero-action.arm:hover:not(:disabled) { background: #4fc34d; }
+.preflight-hero .hero-action.arm:disabled {
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+.preflight-hero .hero-action.disarm {
+  background: var(--err);
+  color: #fff;
+}
+.preflight-hero .hero-action.disarm:hover { background: #ee5454; }
 
 .check-mark {
   display: inline-block;
@@ -634,6 +692,8 @@ table.data-table {
   flex-shrink: 0;
 }
 .row .value { color: var(--text-main); }
+.row .value.warn { color: var(--warn); }
+.row .value.muted { color: var(--text-dim); }
 .row select, .row input[type=text] {
   flex: 1;
   background: var(--bg-body);
@@ -655,16 +715,45 @@ table.data-table {
   display: flex;
   align-items: center;
   gap: 10px;
-  cursor: pointer;
   user-select: none;
 }
-.checklist li:hover { color: var(--text-main); }
+.checklist li label { cursor: pointer; flex: 1; }
+.checklist li:hover label { color: var(--text-main); }
 .checklist input[type=checkbox] {
   width: 18px;
   height: 18px;
   accent-color: var(--accent);
   cursor: pointer;
+  flex-shrink: 0;
 }
+.checklist .auto-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-family: var(--mono);
+  background: var(--bg-elevated);
+  color: var(--info);
+  padding: 1px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.checklist .verified-mark {
+  font-size: 14px;
+  color: var(--ok);
+  width: 18px;
+  text-align: center;
+}
+.checklist .override-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.checklist .override-btn:hover { color: var(--text-main); border-color: var(--text-muted); }
 
 .preflight-warnings ul {
   list-style: none;
@@ -680,6 +769,122 @@ table.data-table {
   content: "⚠ ";
   margin-right: 4px;
 }
+
+/* Armed-state panels: live channel grid, log feed, etc. */
+.armed-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+.armed-channels .ch-tile {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.armed-channels .ch-tile .ch-name {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.armed-channels .ch-tile .ch-value {
+  color: var(--text-main);
+  font-size: 16px;
+  margin-top: 2px;
+}
+.armed-channels .ch-tile .ch-bar {
+  height: 3px;
+  background: var(--bg-body);
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.armed-channels .ch-tile .ch-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 50%;
+  transition: width 0.05s linear;
+}
+.armed-logs {
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-body);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  color: var(--text-muted);
+}
+.armed-logs .log-line { padding: 1px 0; }
+
+/* === Modal overlay === */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 360px;
+  max-width: 520px;
+  padding: 20px 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-main);
+}
+.modal-body {
+  color: var(--text-muted);
+  margin-bottom: 18px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.modal-body p { margin-bottom: 8px; }
+.modal-body .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  cursor: pointer;
+  user-select: none;
+}
+.modal-body .checkbox-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+.modal-body .checkbox-row label { cursor: pointer; }
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.modal-actions button {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+.modal-actions .modal-cancel {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.modal-actions .modal-confirm.ok { background: var(--ok); color: #fff; }
+.modal-actions .modal-confirm.warn { background: var(--warn); color: #fff; }
+.modal-actions .modal-confirm.err { background: var(--err); color: #fff; }
+.modal-actions .modal-confirm:hover { filter: brightness(1.15); }
+.modal-actions button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 button.action.big {
   padding: 16px 24px;
@@ -737,71 +942,105 @@ h2.warn { color: var(--warn); }
   <main class="content">
 
     <section id="tab-preflight" class="tab active">
-      <div class="panel preflight-banner">
-        <div class="banner-state">
-          <span class="banner-label">Status</span>
-          <span class="banner-value" id="pf-state-value">disconnected</span>
+      <!-- Hero panel: doubles as status banner pre-arm and as the
+           giant ARM button when ready. Post-arm it morphs into a
+           "currently flying" status header. The cog opens settings. -->
+      <div class="panel preflight-hero" id="pf-hero">
+        <button class="hero-cog" id="pf-settings-btn" title="Pre-flight settings">⚙</button>
+        <div class="hero-state">
+          <span class="hero-label">Status</span>
+          <span class="hero-value" id="pf-state-value">disconnected</span>
         </div>
-        <div class="banner-summary" id="pf-state-summary">Connect to a ZeroTX core to begin.</div>
-      </div>
-
-      <div class="panel">
-        <h2><span class="check-mark" id="pf-check-joystick">○</span> Joystick</h2>
-        <div class="row">
-          <span class="label">Active</span>
-          <span id="pf-joystick-current" class="value">none</span>
-        </div>
-        <div class="row">
-          <span class="label">Select</span>
-          <select id="pf-joystick-select" disabled>
-            <option value="">(connect first)</option>
-          </select>
-          <button id="pf-joystick-refresh" class="action small" disabled>Refresh</button>
-          <button id="pf-joystick-release" class="action small" disabled>Release</button>
-        </div>
-        <div id="pf-joystick-detail" class="muted small"></div>
-      </div>
-
-      <div class="panel">
-        <h2><span class="check-mark" id="pf-check-model">○</span> Model</h2>
-        <div class="row">
-          <span class="label">Loaded</span>
-          <span id="pf-model-current" class="value">none</span>
-        </div>
-        <div class="row">
-          <span class="label">Select</span>
-          <select id="pf-model-select" disabled>
-            <option value="">(connect first)</option>
-          </select>
-          <input type="text" id="pf-model-dir" value="configs" placeholder="model directory">
-          <button id="pf-model-refresh" class="action small" disabled>Refresh</button>
-          <button id="pf-model-unload" class="action small" disabled>Unload</button>
-        </div>
-        <div id="pf-model-detail" class="muted small"></div>
-      </div>
-
-      <div class="panel">
-        <h2><span class="check-mark" id="pf-check-link">○</span> Ground station link</h2>
-        <div class="row"><span class="label">Port</span><span id="pf-link-port" class="value">-</span></div>
-        <div class="row"><span class="label">State</span><span id="pf-link-state" class="value">-</span></div>
-        <div class="row"><span class="label">Firmware</span><span id="pf-link-fw" class="value">-</span></div>
-      </div>
-
-      <div class="panel preflight-warnings" id="pf-warnings-panel" style="display:none">
-        <h2 class="warn">Warnings</h2>
-        <ul id="pf-warnings-list"></ul>
-      </div>
-
-      <div class="panel">
-        <h2>Operator confirmations</h2>
-        <p class="muted small">Tick each item once you've confirmed it physically. These are advisory only — the core does not verify them.</p>
-        <ul id="pf-checklist" class="checklist"></ul>
-      </div>
-
-      <div class="panel">
-        <button id="pf-arm-btn" class="action primary big" disabled>Ready to fly</button>
-        <button id="pf-disarm-btn" class="action big" style="display:none">Disarm</button>
+        <div class="hero-summary" id="pf-state-summary">Connect to a ZeroTX core to begin.</div>
+        <button id="pf-arm-btn" class="hero-action arm" disabled style="display:none">ARM FLIGHT</button>
+        <button id="pf-disarm-btn" class="hero-action disarm" style="display:none">DISARM</button>
         <div id="pf-arm-blockers" class="muted small"></div>
+      </div>
+
+      <!-- Pre-arm panels: joystick, model, link, warnings, checklist.
+           Hidden when armed; the post-arm panels take over. -->
+      <div id="pf-prearm">
+        <div class="panel">
+          <h2><span class="check-mark" id="pf-check-joystick">○</span> Joystick</h2>
+          <div class="row">
+            <span class="label">Active</span>
+            <span id="pf-joystick-current" class="value">none</span>
+          </div>
+          <div class="row">
+            <span class="label">Select</span>
+            <select id="pf-joystick-select" disabled>
+              <option value="">(connect first)</option>
+            </select>
+            <button id="pf-joystick-refresh" class="action small" disabled>Refresh</button>
+            <button id="pf-joystick-release" class="action small" disabled>Release</button>
+          </div>
+          <div id="pf-joystick-detail" class="muted small"></div>
+        </div>
+
+        <div class="panel">
+          <h2><span class="check-mark" id="pf-check-model">○</span> Model</h2>
+          <div class="row">
+            <span class="label">Loaded</span>
+            <span id="pf-model-current" class="value">none</span>
+          </div>
+          <div class="row">
+            <span class="label">Select</span>
+            <select id="pf-model-select" disabled>
+              <option value="">(connect first)</option>
+            </select>
+            <input type="text" id="pf-model-dir" value="configs" placeholder="model directory">
+            <button id="pf-model-refresh" class="action small" disabled>Refresh</button>
+            <button id="pf-model-unload" class="action small" disabled>Unload</button>
+          </div>
+          <div id="pf-model-detail" class="muted small"></div>
+        </div>
+
+        <div class="panel">
+          <h2><span class="check-mark" id="pf-check-link">○</span> Ground station link</h2>
+          <div class="row"><span class="label">Port</span><span id="pf-link-port" class="value">-</span></div>
+          <div class="row"><span class="label">State</span><span id="pf-link-state" class="value">-</span></div>
+          <div class="row"><span class="label">Firmware</span><span id="pf-link-fw" class="value">-</span></div>
+        </div>
+
+        <div class="panel preflight-warnings" id="pf-warnings-panel" style="display:none">
+          <h2 class="warn">Warnings</h2>
+          <ul id="pf-warnings-list"></ul>
+        </div>
+
+        <div class="panel">
+          <h2>Operator confirmations</h2>
+          <p class="muted small">
+            Tick each item once you've confirmed it physically. These are
+            advisory only — the core does not verify most of them. Items
+            with the <span class="auto-badge">auto</span> tag are checked
+            against telemetry where possible; you can override with the
+            adjacent button.
+          </p>
+          <ul id="pf-checklist" class="checklist"></ul>
+        </div>
+      </div>
+
+      <!-- Post-arm panels: replaces the pre-arm panels when flightArmed.
+           Provides at-a-glance live status while flying, until the
+           full flight-mode HUD lands in a future round. -->
+      <div id="pf-postarm" style="display:none">
+        <div class="panel">
+          <h2>Live channels</h2>
+          <div id="pf-armed-channels" class="armed-channels"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Health</h2>
+          <div class="row"><span class="label">Joystick</span><span id="pf-armed-joystick" class="value">-</span></div>
+          <div class="row"><span class="label">Link</span><span id="pf-armed-link" class="value">-</span></div>
+          <div class="row"><span class="label">FPS</span><span id="pf-armed-fps" class="value">-</span></div>
+          <div class="row"><span class="label">Uptime</span><span id="pf-armed-uptime" class="value">-</span></div>
+        </div>
+
+        <div class="panel">
+          <h2>Recent log</h2>
+          <div id="pf-armed-logs" class="armed-logs"></div>
+        </div>
       </div>
     </section>
 
@@ -944,6 +1183,16 @@ h2.warn { color: var(--warn); }
     </section>
 
   </main>
+
+  <!-- Modal overlay. Hidden by default; shown by App.modal.show(...).
+       The same overlay handles confirm dialogs and the settings popover. -->
+  <div id="modal-backdrop" class="modal-backdrop" style="display:none">
+    <div class="modal" id="modal-window">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -954,26 +1203,32 @@ const CRSF_MID = 992;
 const CRSF_MAX = 1811;
 
 // PREFLIGHT_CHECKLIST defines the operator confirmations on the
-// pre-flight tab. These are advisory only — the core does not verify
-// them, but every box must be ticked before the "Ready to fly" button
-// unlocks. The list is intentionally comprehensive; pilots tick the
-// items they care about and ignore the rest by leaving them un-ticked
-// (they'll then need to acknowledge the warning when arming).
+// pre-flight tab. Each item has a `mode`:
 //
-// Reorder, prune, or add items at will. localStorage persists the
-// tick state across page loads under the key zerotxConfirmations.
+//   manual      - operator must tick by hand
+//   auto        - core verifies via telemetry; operator sees a green
+//                 check, no manual click needed (overridable)
+//   auto-fb     - "auto with fallback": tries to verify via telemetry,
+//                 falls back to manual if not available
+//
+// Most items are manual today because the daemon doesn't yet parse the
+// CRSF telemetry stream from the FC. As that pipeline lands, items
+// flip to auto-fb without the GUI needing to know the difference.
+//
+// localStorage persists the tick state under the key zerotxConfirmations.
+// Future: per-model checklists pulled from the model YAML.
 const PREFLIGHT_CHECKLIST = [
-  { id: 'battery',     label: 'Battery installed and secured' },
-  { id: 'props',       label: 'Propellers / control surfaces checked' },
-  { id: 'cg',          label: 'Centre of gravity verified' },
-  { id: 'failsafe',    label: 'Failsafe configured on flight controller' },
-  { id: 'gps',         label: 'GPS lock acquired (if applicable)' },
-  { id: 'rangecheck',  label: 'Range check completed' },
-  { id: 'video',       label: 'Video link confirmed' },
-  { id: 'audio',       label: 'Audio output confirmed' },
-  { id: 'arena',       label: 'Flight area clear of people and obstacles' },
-  { id: 'weather',     label: 'Weather and wind acceptable' },
-  { id: 'recording',   label: 'Recording started (optional)' },
+  { id: 'battery',     label: 'Battery installed and secured',          mode: 'auto-fb' },
+  { id: 'props',       label: 'Propellers / control surfaces checked',  mode: 'manual' },
+  { id: 'cg',          label: 'Centre of gravity verified',             mode: 'manual' },
+  { id: 'failsafe',    label: 'Failsafe configured on flight controller', mode: 'manual' },
+  { id: 'gps',         label: 'GPS lock acquired (if applicable)',       mode: 'auto-fb' },
+  { id: 'rangecheck',  label: 'Range check completed',                  mode: 'manual' },
+  { id: 'video',       label: 'Video link confirmed',                   mode: 'manual' },
+  { id: 'audio',       label: 'Audio output confirmed',                 mode: 'manual' },
+  { id: 'arena',       label: 'Flight area clear of people and obstacles', mode: 'manual' },
+  { id: 'weather',     label: 'Weather and wind acceptable',            mode: 'manual' },
+  { id: 'recording',   label: 'Recording started (optional)',           mode: 'manual' },
 ];
 
 const App = {
@@ -1005,6 +1260,18 @@ const App = {
     modelDir: localStorage.getItem('zerotxModelDir') || 'configs',
     // confirmations: persisted across sessions (the *armed* state is not).
     confirmations: JSON.parse(localStorage.getItem('zerotxConfirmations') || '{}'),
+    // overrides: per-checklist-item flag set when the operator manually
+    // overrides an auto-verified item that didn't auto-pass. Keeps
+    // override decisions explicit and auditable.
+    overrides: JSON.parse(localStorage.getItem('zerotxOverrides') || '{}'),
+    // operator settings: confirm dialogs for arm/disarm. Default both
+    // to true (safety). Autotakeoff workflows can disable arm-confirm.
+    settings: Object.assign(
+      { confirmArm: true, confirmDisarm: true },
+      JSON.parse(localStorage.getItem('zerotxSettings') || '{}')
+    ),
+    // armed-state runtime data (not persisted).
+    armedRecentLogs: [],
   },
 
   ws: null,
@@ -1070,6 +1337,20 @@ const App = {
 
     document.getElementById('pf-arm-btn').addEventListener('click', () => this.armFlight());
     document.getElementById('pf-disarm-btn').addEventListener('click', () => this.disarmFlight());
+    document.getElementById('pf-settings-btn').addEventListener('click', () => this.openSettings());
+
+    // Modal: clicking the backdrop dismisses (cancels). The window
+    // itself doesn't bubble click, so clicks inside don't dismiss.
+    const backdrop = document.getElementById('modal-backdrop');
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) this.modal.cancel();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (this.modal.isOpen()) {
+        if (e.key === 'Escape') this.modal.cancel();
+        else if (e.key === 'Enter') this.modal.confirm();
+      }
+    });
 
     // Render checklist initially (also re-rendered when render runs).
     this.renderChecklist();
@@ -1326,9 +1607,9 @@ const App = {
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        alert(`Failed to select joystick: ${body.error || r.statusText}`);
+        this.modal.alert('Joystick selection failed', body.error || r.statusText);
       }
-    } catch (e) { alert(`Network error: ${e.message}`); }
+    } catch (e) { this.modal.alert('Network error', e.message); }
     await this.refreshPreflight();
   },
 
@@ -1337,9 +1618,9 @@ const App = {
       const r = await fetch(`http://${this.state.address}/api/v1/joystick/release`, { method: 'POST' });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        alert(`Failed to release joystick: ${body.error || r.statusText}`);
+        this.modal.alert('Joystick release failed', body.error || r.statusText);
       }
-    } catch (e) { alert(`Network error: ${e.message}`); }
+    } catch (e) { this.modal.alert('Network error', e.message); }
     await this.refreshPreflight();
   },
 
@@ -1353,7 +1634,7 @@ const App = {
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        alert(`Failed to load model: ${body.error || r.statusText}`);
+        this.modal.alert('Model load failed', body.error || r.statusText);
       } else {
         // Model details panel needs to be re-fetched after load.
         try {
@@ -1364,7 +1645,7 @@ const App = {
           }
         } catch (e) { /* non-fatal */ }
       }
-    } catch (e) { alert(`Network error: ${e.message}`); }
+    } catch (e) { this.modal.alert('Network error', e.message); }
     await this.refreshPreflight();
   },
 
@@ -1373,55 +1654,194 @@ const App = {
       const r = await fetch(`http://${this.state.address}/api/v1/model/unload`, { method: 'POST' });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        alert(`Failed to unload model: ${body.error || r.statusText}`);
+        this.modal.alert('Model unload failed', body.error || r.statusText);
       }
-    } catch (e) { alert(`Network error: ${e.message}`); }
+    } catch (e) { this.modal.alert('Network error', e.message); }
     await this.refreshPreflight();
   },
 
   async armFlight() {
-    // All-green check is enforced by the button being disabled when
-    // anything is missing. Add an explicit confirmation prompt anyway
-    // because arming is the deliberate-pause moment that prevents
-    // accidents, even when the conditions all look right.
-    const ok = window.confirm(
-      'ARM FLIGHT?\n\n' +
-      'Once armed, the joystick selection is locked. The flight controller ' +
-      'is now responsible for translating channel intents into actual flight.\n\n' +
-      'Confirm everything is ready and the airplane is in a safe position.'
-    );
-    if (!ok) return;
-    try {
-      const r = await fetch(`http://${this.state.address}/api/v1/flight/arm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ armed: true }),
-      });
-      if (r.ok) {
-        this.state.flightArmed = true;
-      } else {
-        const body = await r.json().catch(() => ({}));
-        alert(`Arm failed: ${body.error || r.statusText}`);
+    // The all-green check is enforced by the button being disabled when
+    // anything is missing. The confirm dialog is a deliberate-pause
+    // moment; users running auto-takeoff can disable it via settings.
+    const proceed = async () => {
+      try {
+        const r = await fetch(`http://${this.state.address}/api/v1/flight/arm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ armed: true }),
+        });
+        if (r.ok) {
+          this.state.flightArmed = true;
+          // Snapshot recent logs at arm-time as the seed for the
+          // armed-state log feed.
+          this.state.armedRecentLogs = (this.state.logs || []).slice(-10);
+        } else {
+          const body = await r.json().catch(() => ({}));
+          this.modal.alert('Arm failed', body.error || r.statusText);
+        }
+      } catch (e) {
+        this.modal.alert('Network error', e.message);
       }
-    } catch (e) { alert(`Network error: ${e.message}`); }
-    this.renderPreflight();
+      this.renderPreflight();
+    };
+
+    if (!this.state.settings.confirmArm) {
+      proceed();
+      return;
+    }
+    this.modal.confirmAction({
+      title: 'ARM FLIGHT?',
+      body: 'Once armed, the joystick selection is locked. The flight ' +
+            'controller is now responsible for translating channel ' +
+            'intents into actual flight. Confirm everything is ready ' +
+            'and the airplane is in a safe position.',
+      confirmText: 'ARM',
+      confirmStyle: 'warn',
+      onConfirm: proceed,
+    });
   },
 
   async disarmFlight() {
-    try {
-      const r = await fetch(`http://${this.state.address}/api/v1/flight/arm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ armed: false }),
-      });
-      if (r.ok) {
-        this.state.flightArmed = false;
-      } else {
-        const body = await r.json().catch(() => ({}));
-        alert(`Disarm failed: ${body.error || r.statusText}`);
+    const proceed = async () => {
+      try {
+        const r = await fetch(`http://${this.state.address}/api/v1/flight/arm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ armed: false }),
+        });
+        if (r.ok) {
+          this.state.flightArmed = false;
+        } else {
+          const body = await r.json().catch(() => ({}));
+          this.modal.alert('Disarm failed', body.error || r.statusText);
+        }
+      } catch (e) {
+        this.modal.alert('Network error', e.message);
       }
-    } catch (e) { alert(`Network error: ${e.message}`); }
-    this.renderPreflight();
+      this.renderPreflight();
+    };
+
+    if (!this.state.settings.confirmDisarm) {
+      proceed();
+      return;
+    }
+    this.modal.confirmAction({
+      title: 'DISARM?',
+      body: 'Disarming releases the flight-locked state. If the airplane ' +
+            'is still in the air, the flight controller will continue ' +
+            'flying based on whatever it last received; failsafe will ' +
+            'engage when the link drops.',
+      confirmText: 'DISARM',
+      confirmStyle: 'err',
+      onConfirm: proceed,
+    });
+  },
+
+  // === Settings popover ===
+
+  openSettings() {
+    const html = `
+      <p>Configure pre-flight behaviour. Settings persist across sessions.</p>
+      <div class="checkbox-row">
+        <input type="checkbox" id="set-confirm-arm" ${this.state.settings.confirmArm ? 'checked' : ''}>
+        <label for="set-confirm-arm">Require confirmation to arm flight</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="set-confirm-disarm" ${this.state.settings.confirmDisarm ? 'checked' : ''}>
+        <label for="set-confirm-disarm">Require confirmation to disarm</label>
+      </div>
+      <p class="muted small">
+        Disabling arm-confirmation is appropriate for auto-takeoff
+        workflows. The pre-flight checklist still gates arming
+        regardless of confirmation settings.
+      </p>
+    `;
+    this.modal.show({
+      title: 'Settings',
+      bodyHTML: html,
+      confirmText: 'Save',
+      confirmStyle: 'ok',
+      onConfirm: () => {
+        this.state.settings.confirmArm =
+          document.getElementById('set-confirm-arm').checked;
+        this.state.settings.confirmDisarm =
+          document.getElementById('set-confirm-disarm').checked;
+        localStorage.setItem('zerotxSettings', JSON.stringify(this.state.settings));
+      },
+    });
+  },
+
+  // === Modal infrastructure ===
+
+  modal: {
+    _open: false,
+    _onConfirm: null,
+    _onCancel: null,
+
+    isOpen() { return this._open; },
+
+    show({ title, body, bodyHTML, confirmText = 'OK', cancelText = 'Cancel',
+           confirmStyle = 'ok', onConfirm = null, onCancel = null,
+           hideCancel = false }) {
+      const backdrop = document.getElementById('modal-backdrop');
+      document.getElementById('modal-title').textContent = title || '';
+      const bodyEl = document.getElementById('modal-body');
+      if (bodyHTML !== undefined) bodyEl.innerHTML = bodyHTML;
+      else bodyEl.textContent = body || '';
+
+      const actions = document.getElementById('modal-actions');
+      actions.innerHTML = '';
+      if (!hideCancel) {
+        const c = document.createElement('button');
+        c.className = 'modal-cancel';
+        c.textContent = cancelText;
+        c.addEventListener('click', () => this.cancel());
+        actions.appendChild(c);
+      }
+      const ok = document.createElement('button');
+      ok.className = 'modal-confirm ' + confirmStyle;
+      ok.textContent = confirmText;
+      ok.addEventListener('click', () => this.confirm());
+      actions.appendChild(ok);
+
+      this._onConfirm = onConfirm;
+      this._onCancel = onCancel;
+      this._open = true;
+      backdrop.style.display = 'flex';
+      // Focus the confirm button so Enter immediately works.
+      setTimeout(() => ok.focus(), 0);
+    },
+
+    confirm() {
+      if (!this._open) return;
+      const fn = this._onConfirm;
+      this._close();
+      if (fn) fn();
+    },
+    cancel() {
+      if (!this._open) return;
+      const fn = this._onCancel;
+      this._close();
+      if (fn) fn();
+    },
+    _close() {
+      this._open = false;
+      this._onConfirm = null;
+      this._onCancel = null;
+      document.getElementById('modal-backdrop').style.display = 'none';
+    },
+
+    // Sugar: confirmAction({title, body, ...}) is a confirm-style modal
+    // with the standard cancel button.
+    confirmAction(opts) {
+      this.show(Object.assign({ confirmText: 'OK', cancelText: 'Cancel' }, opts));
+    },
+
+    // Sugar: alert(title, body) is a single-button informational modal.
+    alert(title, body) {
+      this.show({ title, body, confirmText: 'OK', hideCancel: true });
+    },
   },
 
   renderJoystickPicker() {
@@ -1485,32 +1905,118 @@ const App = {
     const armed = this.state.flightArmed;
     for (const item of PREFLIGHT_CHECKLIST) {
       const li = document.createElement('li');
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.id = `pf-cb-${item.id}`;
-      cb.checked = !!this.state.confirmations[item.id];
-      cb.disabled = armed;
-      cb.addEventListener('change', () => {
-        this.state.confirmations[item.id] = cb.checked;
-        localStorage.setItem('zerotxConfirmations', JSON.stringify(this.state.confirmations));
-        this.renderArmButton();
-      });
-      const label = document.createElement('label');
-      label.htmlFor = cb.id;
-      label.textContent = item.label;
-      li.appendChild(cb);
-      li.appendChild(label);
+
+      // Auto-verify state for the item. Returns one of:
+      //   { mode: 'manual' }                         - hand-tick only
+      //   { mode: 'auto', verified: bool }           - telemetry says
+      //   { mode: 'auto-fb', verified: bool|null }   - try, fall back
+      //
+      // null verified means "no telemetry source available, falls back
+      // to manual." This is the current default for almost everything
+      // until the daemon's telemetry pipeline lands.
+      const v = this.checkItemStatus(item);
+
+      if (v.mode === 'auto' || (v.mode === 'auto-fb' && v.verified === true)) {
+        // Telemetry-verified: show green check, no manual click. The
+        // confirmations[id] state still reflects "ready to arm" so
+        // we sync it from the telemetry result.
+        this.state.confirmations[item.id] = !!v.verified;
+
+        const mark = document.createElement('span');
+        mark.className = 'verified-mark';
+        mark.textContent = v.verified ? '✓' : '✗';
+        mark.style.color = v.verified ? 'var(--ok)' : 'var(--err)';
+        li.appendChild(mark);
+
+        const label = document.createElement('span');
+        label.style.flex = '1';
+        label.textContent = item.label;
+        li.appendChild(label);
+
+        const badge = document.createElement('span');
+        badge.className = 'auto-badge';
+        badge.textContent = 'auto';
+        li.appendChild(badge);
+
+        if (!v.verified && !armed) {
+          // Override: operator says "trust me, this is fine"
+          const btn = document.createElement('button');
+          btn.className = 'override-btn';
+          btn.textContent = this.state.overrides[item.id] ? 'overridden' : 'override';
+          btn.addEventListener('click', () => {
+            this.state.overrides[item.id] = !this.state.overrides[item.id];
+            this.state.confirmations[item.id] = !!this.state.overrides[item.id];
+            localStorage.setItem('zerotxOverrides', JSON.stringify(this.state.overrides));
+            localStorage.setItem('zerotxConfirmations', JSON.stringify(this.state.confirmations));
+            this.renderChecklist();
+            this.renderArmButton();
+          });
+          li.appendChild(btn);
+        }
+      } else {
+        // Manual: standard checkbox.
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = `pf-cb-${item.id}`;
+        cb.checked = !!this.state.confirmations[item.id];
+        cb.disabled = armed;
+        cb.addEventListener('change', () => {
+          this.state.confirmations[item.id] = cb.checked;
+          localStorage.setItem('zerotxConfirmations', JSON.stringify(this.state.confirmations));
+          this.renderArmButton();
+        });
+        const label = document.createElement('label');
+        label.htmlFor = cb.id;
+        label.textContent = item.label;
+        li.appendChild(cb);
+        li.appendChild(label);
+
+        if (item.mode === 'auto-fb') {
+          const badge = document.createElement('span');
+          badge.className = 'auto-badge';
+          badge.style.opacity = '0.5';
+          badge.textContent = 'auto-fb';
+          badge.title = 'Auto-verify falls back to manual: no telemetry source available yet.';
+          li.appendChild(badge);
+        }
+      }
+
       list.appendChild(li);
     }
   },
 
+  // checkItemStatus inspects the current preflight + telemetry state to
+  // decide whether an auto-verifiable item is actually verified. Today
+  // the daemon doesn't parse the FC telemetry stream, so all auto-fb
+  // items return verified=null (= fall back to manual). When the
+  // telemetry pipeline lands, this method gets richer.
+  checkItemStatus(item) {
+    if (item.mode === 'manual') return { mode: 'manual' };
+    // Hooks that *could* return real verification when data is available.
+    // For now, no telemetry, all return null (fall through to manual).
+    switch (item.id) {
+      case 'battery':
+        // Future: voltage > threshold from FC telemetry sensor
+        return { mode: 'auto-fb', verified: null };
+      case 'gps':
+        // Future: GPS sat count >= 6 from telemetry
+        return { mode: 'auto-fb', verified: null };
+      default:
+        return { mode: 'manual' };
+    }
+  },
+
   renderPreflight() {
+    const armed = this.state.flightArmed;
+    document.getElementById('pf-prearm').style.display = armed ? 'none' : '';
+    document.getElementById('pf-postarm').style.display = armed ? '' : 'none';
+
     this.renderJoystickPicker();
     this.renderModelPicker();
     this.renderChecklist();
 
     const pf = this.state.preflight;
-    const banner = document.querySelector('.preflight-banner');
+    const hero = document.getElementById('pf-hero');
     const stateValue = document.getElementById('pf-state-value');
     const stateSummary = document.getElementById('pf-state-summary');
 
@@ -1539,30 +2045,86 @@ const App = {
     warnList.innerHTML = warnings.map(w =>
       `<li>${escapeHtml(w.message || w.code || JSON.stringify(w))}</li>`).join('');
 
-    // Banner
-    if (this.state.flightArmed) {
-      banner.classList.remove('idle', 'ready');
-      banner.classList.add('armed');
+    // Hero state
+    hero.classList.remove('idle', 'ready', 'armed');
+    if (armed) {
+      hero.classList.add('armed');
       stateValue.textContent = 'ARMED';
       stateSummary.textContent = 'Flight is armed. Joystick and model are locked.';
     } else if (modelOK && jsOK && linkActive) {
-      banner.classList.remove('idle', 'armed');
-      banner.classList.add('ready');
+      hero.classList.add('ready');
       stateValue.textContent = 'READY';
-      stateSummary.textContent = 'All checks green. Confirm operator items, then arm flight.';
+      stateSummary.textContent = 'All systems green. Confirm operator items, then ARM FLIGHT.';
     } else {
-      banner.classList.remove('ready', 'armed');
-      banner.classList.add('idle');
+      hero.classList.add('idle');
       stateValue.textContent = pf ? 'IDLE' : 'connected';
       stateSummary.textContent = 'Configure joystick and model below to prepare for flight.';
     }
 
     this.renderArmButton();
+    if (armed) this.renderArmedState();
+  },
+
+  // renderArmedState populates the post-arm panels (live channels,
+  // health, recent log). Called on arm transition and on each WS frame
+  // while armed.
+  renderArmedState() {
+    const grid = document.getElementById('pf-armed-channels');
+    if (!grid) return;
+    const channels = this.state.lastFrame?.channels || [];
+    const md = this.state.modelDetails;
+    const channelNames = (md?.mixes || []).reduce((acc, m) => {
+      if (!acc[m.ch]) acc[m.ch] = m.name || m.source || `CH${m.ch}`;
+      return acc;
+    }, {});
+
+    if (grid.children.length !== channels.length) {
+      grid.innerHTML = '';
+      for (let i = 0; i < channels.length; i++) {
+        const tile = document.createElement('div');
+        tile.className = 'ch-tile';
+        tile.innerHTML = `
+          <div class="ch-name">CH${i+1} ${channelNames[i+1] ? '· ' + escapeHtml(channelNames[i+1]) : ''}</div>
+          <div class="ch-value">-</div>
+          <div class="ch-bar"><div class="ch-bar-fill"></div></div>
+        `;
+        grid.appendChild(tile);
+      }
+    }
+    for (let i = 0; i < channels.length; i++) {
+      const tile = grid.children[i];
+      if (!tile) continue;
+      const raw = channels[i];           // CRSF raw 172..1811
+      const pct = Math.max(0, Math.min(100, ((raw - 172) / (1811 - 172)) * 100));
+      tile.querySelector('.ch-value').textContent = String(raw);
+      tile.querySelector('.ch-bar-fill').style.width = pct.toFixed(1) + '%';
+    }
+
+    // Health
+    const h = this.state.health;
+    const pf = this.state.preflight;
+    const js = pf?.joystick?.selected;
+    document.getElementById('pf-armed-joystick').textContent =
+      js ? `${js.name}${js.connected ? '' : ' (disconnected!)'}` : 'none';
+    document.getElementById('pf-armed-link').textContent = pf?.groundStation?.linkState || '-';
+    if (h?.uptime) document.getElementById('pf-armed-uptime').textContent = h.uptime;
+    // FPS is already live in the header; mirror it here.
+    const fpsEl = document.getElementById('val-fps');
+    if (fpsEl) document.getElementById('pf-armed-fps').textContent = fpsEl.textContent;
+
+    // Recent logs: snapshot from full log buffer, last 10 lines.
+    const logs = (this.state.logs || []).slice(-10);
+    const logsEl = document.getElementById('pf-armed-logs');
+    logsEl.innerHTML = logs.map(l => {
+      const t = new Date(l.time).toLocaleTimeString();
+      return `<div class="log-line">${escapeHtml(t)} ${escapeHtml(l.msg)}</div>`;
+    }).join('') || '<div class="log-line muted">no entries</div>';
   },
 
   // renderArmButton enables the Ready-to-fly button only when every
   // gate is green: model loaded, joystick connected, link active,
-  // and every operator confirmation ticked.
+  // and every operator confirmation ticked. The button itself lives
+  // inside the hero panel; it's the deliberate-action target.
   renderArmButton() {
     const armBtn = document.getElementById('pf-arm-btn');
     const disarmBtn = document.getElementById('pf-disarm-btn');
@@ -1802,6 +2364,8 @@ const App = {
         const port = document.getElementById('pf-link-port');
         if (port) port.textContent = frame.link.port;
       }
+      // While armed, refresh the live channel grid and health every frame.
+      if (this.state.flightArmed) this.renderArmedState();
     },
 
     channels(frame) {
