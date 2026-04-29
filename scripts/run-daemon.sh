@@ -6,7 +6,7 @@
 # Override defaults via env vars:
 #   ZTX_API           default: 127.0.0.1:8080
 #   ZTX_MODEL         default: configs/big_talon_zerotx.yml
-#   ZTX_MODEL_IMAGE   default: ~/fpv/Edgetx/sd/IMAGE/talong.png (skipped if missing)
+#   ZTX_MODEL_IMAGE   default: ~/fpv/Edgetx/sd/IMAGES/talong.png (skipped if missing)
 #   ZTX_JOYSTICK      default: Thrustmaster
 #
 # Anything passed on the command line after --idle (or directly) is
@@ -34,7 +34,7 @@ fi
 
 MODEL="${ZTX_MODEL:-configs/big_talon_zerotx.yml}"
 JOYSTICK="${ZTX_JOYSTICK:-Thrustmaster}"
-MODEL_IMAGE="${ZTX_MODEL_IMAGE:-$HOME/fpv/Edgetx/sd/IMAGE/talong.png}"
+MODEL_IMAGE="${ZTX_MODEL_IMAGE:-$HOME/fpv/Edgetx/sd/IMAGES/talong.png}"
 
 [[ -f "$MODEL" ]] || die "Model not found: $MODEL"
 
