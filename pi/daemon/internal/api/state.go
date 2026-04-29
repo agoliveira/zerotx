@@ -1,0 +1,275 @@
+// Package api exposes daemon state via HTTP (one-shot reads) and
+// WebSocket (continuous push) on localhost. The API is read-only; clients
+// observe state but cannot mutate it. Future write paths (e.g. load
+// model, edit panel state remotely) will need explicit M4+ design work
+// around auth, validation, and safety.
+//
+// Routes:
+//
+//	GET  /api/v1/health           daemon liveness + link state
+//	GET  /api/v1/model            current model summary
+//	GET  /api/v1/state            full state snapshot
+//	WS   /api/v1/stream           continuous state push at 10Hz
+//
+// All routes bind to 127.0.0.1 by default. The daemon is not intended
+// to expose itself on the network without explicit operator action.
+package api
+
+import (
+	"time"
+
+	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
+)
+
+// State is the JSON payload pushed to /stream and returned by /state.
+// Fields use lowercase JSON keys; missing/inactive sources have nil or
+// zero-value fields so the client can render gracefully.
+type State struct {
+	Timestamp string             `json:"ts"`
+	Channels  []uint16           `json:"channels"`
+	Logic     map[string]bool    `json:"logic,omitempty"`
+	Panel     panel.Snapshot     `json:"panel"`
+	Joystick  *JoystickSnapshot  `json:"joystick,omitempty"`
+	Link      LinkSnapshot       `json:"link"`
+}
+
+// JoystickSnapshot exposes normalized axis values and button states. nil
+// when no joystick is connected.
+type JoystickSnapshot struct {
+	Name    string    `json:"name"`
+	Axes    []float64 `json:"axes"`    // [-1.0, 1.0]
+	Buttons []bool    `json:"buttons"`
+}
+
+// LinkSnapshot describes the RP2040 USB-CDC link state.
+type LinkSnapshot struct {
+	State         string `json:"state"`                   // "active", "stale", "down"
+	Port          string `json:"port,omitempty"`
+	LastHeartbeat string `json:"lastHeartbeat,omitempty"` // RFC3339 or empty
+}
+
+// ModelSummary is returned by /model. Lightweight — just enough to label
+// what's loaded.
+type ModelSummary struct {
+	Name      string `json:"name"`
+	Mixes     int    `json:"mixes"`
+	Logic     int    `json:"logic"`
+	CustomFn  int    `json:"customFn"`
+	Sensors   int    `json:"sensors"`
+	Available bool   `json:"available"` // false if no model loaded
+}
+
+// ModelDetails is returned by /model/details. Heavy payload describing
+// the parsed EdgeTX model in full. Fetched once on connect by the GUI.
+type ModelDetails struct {
+	Available     bool                `json:"available"`
+	Name          string              `json:"name"`
+	Bitmap        string              `json:"bitmap"`        // YAML-declared filename, e.g. "bigtalon"
+	HasBitmap     bool                `json:"hasBitmap"`     // server has a file ready to serve
+	Mixes         []MixDetail         `json:"mixes"`
+	LogicSwitches []LogicSwitchDetail `json:"logicSwitches"`
+	CustomFns     []CustomFnDetail    `json:"customFns"`
+	Sensors       []SensorDetail      `json:"sensors"`
+}
+
+// MixDetail mirrors one entry in EdgeTX's mixData. Multiple mixes can
+// target the same channel; ordering is preserved from the YAML.
+type MixDetail struct {
+	Index     int    `json:"index"`
+	Ch        int    `json:"ch"`     // 1-based for human display
+	Name      string `json:"name"`
+	Source    string `json:"source"`
+	Weight    int    `json:"weight"`
+	Offset    int    `json:"offset"`
+	Switch    string `json:"switch"`
+	Mltpx     string `json:"mltpx"`  // ADD / MULTIPLY / REPLACE
+	DelayUp   int    `json:"delayUp"`
+	DelayDown int    `json:"delayDown"`
+}
+
+// LogicSwitchDetail describes one logical switch (L1, L2, ...).
+type LogicSwitchDetail struct {
+	Name     string  `json:"name"`
+	Func     string  `json:"func"`
+	Def      string  `json:"def"`      // raw, e.g. "I0,-99"
+	Andsw    string  `json:"andsw"`
+	Delay    float64 `json:"delay"`    // seconds
+	Duration float64 `json:"duration"` // seconds
+	Active   bool    `json:"active"`   // current state from logic engine
+}
+
+// CustomFnDetail describes one custom function (CF1, CF2, ...).
+type CustomFnDetail struct {
+	ID     int    `json:"id"`
+	Switch string `json:"switch"`
+	Func   string `json:"func"` // OVERRIDE_CHANNEL, PLAY_TRACK, etc.
+	Def    string `json:"def"`  // raw, with null bytes stripped
+}
+
+// SensorDetail describes a telemetry sensor.
+type SensorDetail struct {
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	Unit  string `json:"unit"` // resolved from EdgeTX unit code
+}
+
+// HealthResponse is returned by /health.
+type HealthResponse struct {
+	Version       string `json:"version"`
+	Uptime        string `json:"uptime"`
+	LinkState     string `json:"linkState"`
+	ModelLoaded   bool   `json:"modelLoaded"`
+	JoystickOpen  bool   `json:"joystickOpen"`
+}
+
+// LogEntry is a single captured log line.
+type LogEntry struct {
+	Time string `json:"ts"`  // RFC3339Nano
+	Msg  string `json:"msg"`
+}
+
+// LogsResponse is returned by GET /api/v1/logs.
+type LogsResponse struct {
+	Entries []LogEntry `json:"entries"`
+}
+
+// === Pre-flight ===
+
+// Preflight is returned by GET /api/v1/preflight. It's the aggregate
+// readiness snapshot the GUI consumes to render the pre-flight checklist.
+type Preflight struct {
+	State         string             `json:"state"`         // "idle" or "ready"
+	Ready         bool               `json:"ready"`         // all blockers cleared
+	Blockers      []string           `json:"blockers"`      // human-readable reasons not ready
+	GroundStation PreflightGS        `json:"groundStation"`
+	Joystick      PreflightJoystickG `json:"joystick"`
+	Model         PreflightModelG    `json:"model"`
+}
+
+// PreflightGS holds always-available daemon facts.
+type PreflightGS struct {
+	LinkPort  string `json:"linkPort"`
+	LinkState string `json:"linkState"`
+}
+
+// PreflightJoystickG holds joystick selection state. Selected is nil
+// when no joystick is open.
+type PreflightJoystickG struct {
+	Selected *PreflightJoystick `json:"selected"`
+}
+
+// PreflightJoystick describes a selected joystick.
+type PreflightJoystick struct {
+	Name      string `json:"name"`
+	Axes      int    `json:"axes"`
+	Buttons   int    `json:"buttons"`
+	Connected bool   `json:"connected"`
+}
+
+// PreflightModelG holds model selection state. Loaded is nil when the
+// daemon is in IDLE.
+type PreflightModelG struct {
+	Loaded *PreflightModel `json:"loaded"`
+}
+
+// PreflightModel describes a loaded model.
+type PreflightModel struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Mixes    int    `json:"mixes"`
+	Logic    int    `json:"logic"`
+	CustomFn int    `json:"customFn"`
+	Sensors  int    `json:"sensors"`
+}
+
+// LoadModelRequest is the JSON body for POST /api/v1/model/load.
+type LoadModelRequest struct {
+	Path string `json:"path"`
+}
+
+// === Joystick / model directory ===
+
+// JoystickDevice is one entry in the GET /api/v1/joysticks response.
+type JoystickDevice struct {
+	Index   int    `json:"index"`
+	Name    string `json:"name"`
+	Axes    int    `json:"axes"`
+	Buttons int    `json:"buttons"`
+	Hats    int    `json:"hats"`
+	GUID    string `json:"guid"`
+}
+
+// SelectJoystickRequest is the body for POST /api/v1/joystick/select.
+// Index identifies the SDL device. Emergency must be true to swap while
+// the daemon is in armed-for-flight state; the GUI exposes this only
+// behind an explicit confirm dialog.
+type SelectJoystickRequest struct {
+	Index     int  `json:"index"`
+	Emergency bool `json:"emergency"`
+}
+
+// ModelFile is one entry in the GET /api/v1/models response.
+type ModelFile struct {
+	Path string `json:"path"` // absolute or as given via dir param
+	File string `json:"file"` // basename
+	Name string `json:"name"` // parsed model name (best-effort; "" if parse failed)
+}
+
+// ArmRequest is the body for POST /api/v1/flight/arm.
+type ArmRequest struct {
+	Armed bool `json:"armed"`
+}
+
+// Providers is the set of sources the API server pulls from. All fields
+// must be non-nil; pass no-op implementations for unavailable sources.
+type Providers struct {
+	Channels       func() [ipc.Channels]uint16
+	Logic          func() map[string]bool
+	Panel          func() panel.Snapshot
+	Joystick       func() *JoystickSnapshot // returns nil if not connected
+	Link           func() LinkSnapshot
+	Model          func() ModelSummary
+	ModelDetails   func() ModelDetails
+	ModelImagePath func() string
+	Logs           func(since time.Time) []LogEntry
+	Preflight      func() Preflight
+	LoadModel      func(path string) error
+	UnloadModel    func()
+
+	// Joystick selection.
+	Joysticks      func() []JoystickDevice
+	SelectJoystick func(index int, emergency bool) error
+	ReleaseJoystick func() error
+
+	// Models directory listing.
+	ListModels func(dir string) ([]ModelFile, error)
+
+	// SetFlightArmed flips the daemon's "committed to a flight" state.
+	// While armed, joystick swaps are rejected unless emergency=true.
+	// The GUI flips this on the pre-flight tab when the operator clicks
+	// "Ready to fly", and back off after landing/disarm in the post-flight
+	// flow. Auto-detection from the model's arm logic switch is a future
+	// refinement.
+	SetFlightArmed func(armed bool)
+
+	Version string
+	Uptime  func() time.Duration
+}
+
+// snapshot assembles the current State from the providers.
+func (p *Providers) snapshot() State {
+	ch := p.Channels()
+	channels := make([]uint16, len(ch))
+	for i, v := range ch {
+		channels[i] = v
+	}
+	return State{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Channels:  channels,
+		Logic:     p.Logic(),
+		Panel:     p.Panel(),
+		Joystick:  p.Joystick(),
+		Link:      p.Link(),
+	}
+}

@@ -1,0 +1,30 @@
+# Go build artifacts
+pi/daemon/bin/
+pi/daemon/zerotxd
+pi/daemon/*.test
+pi/daemon/*.out
+go.work
+go.work.sum
+
+# RP2040 build
+rp2040/build/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local config (don't commit private model files etc)
+*.local.yml
+*.local.yaml
+/local/
+
+# Telemetry / flight logs
+/flights/
+
+# Tarballs from earlier transfer workflow
+*.tar.gz
+*.tgz

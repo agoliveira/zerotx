@@ -1,0 +1,53 @@
+# Example ZeroTX model file.
+#
+# The zerotx: section binds abstract EdgeTX source names (Thr, Ail, SE, 6POS,
+# etc) to physical inputs ZeroTX can read. The edgetx: section contains the
+# imported EdgeTX model verbatim (truncated here for readability; the full
+# import tool produces a complete copy).
+#
+# See pi/daemon/testdata/big_talon.yml for a complete EdgeTX model file you
+# can import with:
+#
+#   go run ./cmd/zerotx-inspect pi/daemon/testdata/big_talon.yml
+#
+# Future M2 drops add a CLI command to wrap an EdgeTX file under zerotx: with
+# empty bindings ready to fill.
+
+zerotx:
+  notes: "Big Talon - HOTAS X primary, GCS panel switches"
+
+  source_bindings:
+    # Stick channels (HOTAS X axis indices, will be confirmed when SDL2 enumerates)
+    Thr:    { device: "Thrustmaster T.16000M", axis: 2 }
+    Ail:    { device: "Thrustmaster T.16000M", axis: 0 }
+    Ele:    { device: "Thrustmaster T.16000M", axis: 1 }
+    Rud:    { device: "Thrustmaster T.16000M", axis: 5 }
+
+    # Switches (will live on the RP2040 GCS panel; placeholder here)
+    SA:     { device: "GCS", switch: 0, kind: "3pos" }
+    SB:     { device: "GCS", switch: 1, kind: "3pos" }
+    SC:     { device: "GCS", switch: 2, kind: "3pos" }
+    SE:     { device: "GCS", switch: 3, kind: "3pos" }
+    SG:     { device: "GCS", switch: 4, kind: "3pos" }
+
+    # Arm safety switch (momentary, spring return)
+    SF:     { device: "HOTAS X", button: 0, kind: "momentary" }
+
+    # 6-position rotary
+    "6POS": { device: "GCS", selector: 0 }
+
+edgetx:
+  semver: 2.9.1
+  header:
+    name: Example
+  # ... full EdgeTX content goes here after import ...
+  inputNames:
+    0: { val: Thr }
+    1: { val: Ail }
+    2: { val: Ele }
+    3: { val: Rud }
+  mixData:
+    - { destCh: 0, srcRaw: I0, weight: 100 }
+    - { destCh: 1, srcRaw: I1, weight: 100 }
+    - { destCh: 2, srcRaw: I2, weight: 100 }
+    - { destCh: 3, srcRaw: I3, weight: 100 }

@@ -1,0 +1,20 @@
+# Example GCS panel state for the Big Talon model.
+# Edit any value and save; zerotxd picks up changes within 500 ms.
+#
+# Switch positions for 3-pos toggles: 0=up, 1=mid, 2=down
+# 2-pos switches:                     0=off, 1=on
+# 6POS selector:                      0..15
+
+switches:
+  SA: 0
+  SB: 0
+  SC: 0
+  SE: 0    # flight mode: 0=Horizon, 1=Acro, 2=Manual
+  SF: 0    # arm helper: 0=safe (disarm condition), 2=arm precondition
+  SG: 0    # 0=cruise, 1=beep, 2=RTH
+  SH: 0    # arm trigger (momentary): 0=released, 1=pressed
+
+selectors:
+  6POS: 0  # auto-tune position
+
+buttons: {}

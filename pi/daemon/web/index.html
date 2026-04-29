@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1a1d21">
+<title>ZeroTX</title>
+<style>
+:root {
+  --bg-body: #1a1d21;
+  --bg-surface: #252830;
+  --bg-elevated: #2d3038;
+  --border: #3a3d45;
+  --border-light: #4a4d55;
+  --text-main: #e0e0e0;
+  --text-muted: #909090;
+  --text-dim: #606060;
+  --accent: #ff9933;
+  --accent-dim: #b36b1f;
+  --ok: #42b341;
+  --warn: #d99900;
+  --err: #e73c3c;
+  --idle: #6e6e6e;
+  --info: #4a9fdb;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg-body);
+  color: var(--text-main);
+  font: 14px system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { display: flex; height: 100vh; }
+
+/* === Sidebar === */
+nav.tabs {
+  width: 140px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+nav.tabs button {
+  background: transparent;
+  border: 0;
+  border-left: 3px solid transparent;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  outline: none;
+}
+nav.tabs button:hover { background: var(--bg-elevated); color: var(--text-main); }
+nav.tabs button.active {
+  background: var(--bg-elevated);
+  color: var(--accent);
+  border-left-color: var(--accent);
+}
+
+main.content { flex: 1; overflow-y: auto; padding: 24px; }
+main.content > section.tab { display: none; }
+main.content > section.tab.active { display: block; }
+
+/* === Panels === */
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.panel h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.panel h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* === Forms === */
+.panel label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+input[type="text"], input[type="number"] {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font: inherit;
+  font-family: var(--mono);
+  width: 100%;
+  outline: none;
+}
+input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accent); }
+input[disabled] { opacity: 0.5; }
+
+.button-row { display: flex; gap: 8px; margin-top: 12px; }
+button.action {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  padding: 10px 20px;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  min-width: 120px;
+}
+button.action:hover:not(:disabled) { background: var(--bg-surface); border-color: var(--accent); }
+button.action.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1d21;
+  font-weight: 600;
+}
+button.action.primary:hover:not(:disabled) { filter: brightness(1.15); }
+button.action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* === Status rows === */
+.status-row {
+  display: grid;
+  grid-template-columns: 24px 140px 1fr;
+  align-items: center;
+  padding: 6px 0;
+  gap: 12px;
+}
+.status-row.sub { padding: 4px 0; }
+.indicator {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--idle);
+  transition: background 0.2s;
+  margin-left: 6px;
+}
+.indicator.ok    { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
+.indicator.warn  { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.indicator.err   { background: var(--err); }
+.indicator.idle  { background: var(--idle); }
+.status-name  { color: var(--text-muted); font-size: 13px; }
+.status-value { color: var(--text-main);  font-family: var(--mono); font-size: 13px; word-break: break-word; }
+
+/* === Channels tab === */
+.channel-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 70px;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+}
+.channel-label  { color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
+.channel-bar {
+  position: relative;
+  height: 18px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.channel-fill {
+  position: absolute;
+  top: 0; bottom: 0;
+  background: var(--accent);
+  transition: left 0.08s, width 0.08s;
+}
+.channel-mid {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.25);
+  pointer-events: none;
+}
+.channel-value {
+  color: var(--text-main);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+/* === Logic tab === */
+.logic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.logic-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 16px;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.logic-card.on  { border-color: var(--ok);   background: rgba(66, 179, 65, 0.08); }
+.logic-card.off { border-color: var(--border); }
+.logic-name {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+.logic-state {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.logic-card.on .logic-state { color: var(--ok); }
+
+/* === Panel tab === */
+.panel-section { margin-bottom: 16px; }
+.panel-section h3 { margin-bottom: 8px; }
+.panel-empty {
+  font-style: italic;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.panel-item-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  padding: 4px 0;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.panel-item-name { color: var(--text-muted); }
+.panel-item-value { color: var(--text-main); }
+
+/* === Joystick tab === */
+.joystick-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 800px) {
+  .joystick-layout { grid-template-columns: 1fr; }
+}
+.stick-pad {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-width: 280px;
+  margin: 0 auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+.stick-pad::before, .stick-pad::after {
+  content: '';
+  position: absolute;
+  background: var(--border);
+}
+.stick-pad::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+.stick-pad::after  { top: 50%; left: 0; right: 0; height: 1px; }
+.stick-dot {
+  position: absolute;
+  width: 18px; height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  left: 50%; top: 50%;
+  transition: left 0.05s, top 0.05s;
+  box-shadow: 0 0 8px rgba(255, 153, 51, 0.6);
+}
+
+.slider-vertical {
+  position: relative;
+  width: 30px;
+  height: 280px;
+  margin: 0 auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.slider-vertical .thumb {
+  position: absolute;
+  left: -3px; right: -3px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: top 0.05s;
+  box-shadow: 0 0 6px rgba(255, 153, 51, 0.5);
+}
+
+.slider-horizontal {
+  position: relative;
+  height: 30px;
+  width: 100%;
+  max-width: 280px;
+  margin: 12px auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.slider-horizontal .thumb {
+  position: absolute;
+  top: -3px; bottom: -3px;
+  width: 8px;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: left 0.05s;
+  box-shadow: 0 0 6px rgba(255, 153, 51, 0.5);
+}
+
+.axis-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.axis-row {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 0;
+}
+.axis-row .name  { color: var(--text-muted); }
+.axis-row .value { color: var(--text-main); text-align: right; }
+
+.button-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  gap: 6px;
+}
+.btn-cell {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 4px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.btn-cell.pressed {
+  background: rgba(255, 153, 51, 0.2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tab-subtitle {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.tab-subtitle .meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* === Model tab === */
+.model-header {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.model-image-container {
+  flex: 0 0 200px;
+  height: 120px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.model-image-container img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.image-placeholder {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 0 8px;
+}
+h2.model-name {
+  font-size: 18px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-main);
+  margin-bottom: 6px;
+}
+.muted-line {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.data-table th {
+  text-align: left;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+.data-table td.muted { color: var(--text-muted); }
+.data-table td.num   { text-align: right; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table .dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.data-table .dot.on { background: var(--ok); box-shadow: 0 0 4px var(--ok); }
+
+.sensor-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.sensor-item {
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.sensor-name { color: var(--text-main); }
+.sensor-unit { color: var(--text-muted); font-size: 11px; }
+
+/* === Logs tab === */
+.logs-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.logs-controls input { flex: 1; min-width: 200px; }
+.logs-controls button.action { min-width: 100px; padding: 8px 16px; }
+.logs-controls .meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+.logs-viewer {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  height: 65vh;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.log-line {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-main);
+  padding: 1px 0;
+}
+.log-line .ts { color: var(--text-dim); margin-right: 8px; }
+.log-line.error { color: var(--err); }
+.log-line.warn  { color: var(--warn); }
+.logs-empty {
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 20px;
+  text-align: center;
+}
+
+.stub {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 16px;
+  font-style: italic;
+}
+
+.app-footer {
+  margin-top: auto;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <nav class="tabs">
+    <button data-tab="connection" class="active">Connection</button>
+    <button data-tab="channels">Channels</button>
+    <button data-tab="logic">Logic</button>
+    <button data-tab="panel">Panel</button>
+    <button data-tab="joystick">Joystick</button>
+    <button data-tab="model">Model</button>
+    <button data-tab="logs">Logs</button>
+    <button data-tab="settings">Settings</button>
+    <div class="app-footer">ZeroTX GUI</div>
+  </nav>
+
+  <main class="content">
+
+    <section id="tab-connection" class="tab active">
+      <div class="panel">
+        <label for="input-address">Daemon address</label>
+        <input type="text" id="input-address" value="127.0.0.1:8080" autocomplete="off" spellcheck="false">
+        <div class="button-row">
+          <button id="btn-connect" class="action primary">Connect</button>
+          <button id="btn-disconnect" class="action" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Status</h2>
+        <div class="status-row"><span class="indicator idle" id="ind-ws"></span><span class="status-name">WebSocket</span><span class="status-value" id="val-ws">disconnected</span></div>
+        <div class="status-row"><span class="indicator idle" id="ind-daemon"></span><span class="status-name">Daemon</span><span class="status-value" id="val-daemon">-</span></div>
+        <div class="status-row sub"><span></span><span class="status-name">Uptime</span><span class="status-value" id="val-uptime">-</span></div>
+        <div class="status-row"><span class="indicator idle" id="ind-link"></span><span class="status-name">Link</span><span class="status-value" id="val-link">-</span></div>
+        <div class="status-row sub"><span></span><span class="status-name">Port</span><span class="status-value" id="val-port">-</span></div>
+        <div class="status-row"><span class="indicator idle" id="ind-model"></span><span class="status-name">Model</span><span class="status-value" id="val-model">-</span></div>
+        <div class="status-row sub"><span></span><span class="status-name">Mixes</span><span class="status-value" id="val-mixes">-</span></div>
+        <div class="status-row sub"><span></span><span class="status-name">Logic</span><span class="status-value" id="val-logic">-</span></div>
+        <div class="status-row sub"><span></span><span class="status-name">Custom Fns</span><span class="status-value" id="val-cfs">-</span></div>
+        <div class="status-row sub"><span></span><span class="status-name">Sensors</span><span class="status-value" id="val-sensors">-</span></div>
+        <div class="status-row"><span class="indicator idle" id="ind-joystick"></span><span class="status-name">Joystick</span><span class="status-value" id="val-joystick">-</span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Stream stats</h2>
+        <div class="status-row"><span></span><span class="status-name">Last frame</span><span class="status-value" id="val-frameage">-</span></div>
+        <div class="status-row"><span></span><span class="status-name">Frames/sec</span><span class="status-value" id="val-fps">-</span></div>
+        <div class="status-row"><span></span><span class="status-name">Total frames</span><span class="status-value" id="val-total">0</span></div>
+      </div>
+    </section>
+
+    <section id="tab-channels" class="tab">
+      <div class="panel">
+        <div class="tab-subtitle">
+          <h2>Channels</h2>
+          <span class="meta">CRSF range: 172 .. 992 .. 1811</span>
+        </div>
+        <div id="channel-list"></div>
+      </div>
+    </section>
+
+    <section id="tab-logic" class="tab">
+      <div class="panel">
+        <div class="tab-subtitle">
+          <h2>Logic switches</h2>
+          <span class="meta" id="logic-meta">-</span>
+        </div>
+        <div class="logic-grid" id="logic-grid"></div>
+      </div>
+    </section>
+
+    <section id="tab-panel" class="tab">
+      <div class="panel">
+        <div class="tab-subtitle">
+          <h2>GCS panel state</h2>
+          <span class="meta">read-only mirror of daemon's panel state</span>
+        </div>
+        <div class="panel-section">
+          <h3>Switches</h3>
+          <div id="panel-switches"></div>
+        </div>
+        <div class="panel-section">
+          <h3>Selectors</h3>
+          <div id="panel-selectors"></div>
+        </div>
+        <div class="panel-section">
+          <h3>Buttons</h3>
+          <div id="panel-buttons"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-joystick" class="tab">
+      <div class="panel">
+        <div class="tab-subtitle">
+          <h2>Joystick</h2>
+          <span class="meta" id="joystick-meta">-</span>
+        </div>
+        <div class="joystick-layout">
+          <div>
+            <h3>Stick (axes 0 / 1)</h3>
+            <div class="stick-pad"><div class="stick-dot" id="js-stick-dot"></div></div>
+            <h3 style="margin-top: 16px;">Rudder (axis 3)</h3>
+            <div class="slider-horizontal"><div class="thumb" id="js-slider-rud"></div></div>
+          </div>
+          <div>
+            <h3>Throttle (axis 2)</h3>
+            <div class="slider-vertical"><div class="thumb" id="js-slider-thr"></div></div>
+          </div>
+        </div>
+        <div class="panel-section" style="margin-top: 16px;">
+          <h3>All axes</h3>
+          <div class="axis-list" id="js-axis-list"></div>
+        </div>
+        <div class="panel-section">
+          <h3>Buttons</h3>
+          <div class="button-grid" id="js-button-grid"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-model" class="tab">
+      <div class="panel">
+        <div class="model-header">
+          <div class="model-image-container">
+            <img id="model-image" alt="model bitmap" style="display:none;">
+            <div id="model-image-placeholder" class="image-placeholder">no image</div>
+          </div>
+          <div>
+            <h2 class="model-name" id="model-name">-</h2>
+            <div class="muted-line">bitmap: <span id="model-bitmap-name">-</span></div>
+            <div class="muted-line" id="model-summary-line">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Mixes</h2>
+        <table class="data-table">
+          <thead><tr>
+            <th>#</th><th>CH</th><th>Name</th><th>Source</th>
+            <th class="num">Weight</th><th class="num">Offset</th>
+            <th>Switch</th><th>Mix</th>
+          </tr></thead>
+          <tbody id="mix-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Logic switches</h2>
+        <table class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Func</th><th>Def</th><th>Andsw</th>
+            <th class="num">Delay</th><th class="num">Duration</th><th>Active</th>
+          </tr></thead>
+          <tbody id="logic-defs-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Custom functions</h2>
+        <table class="data-table">
+          <thead><tr>
+            <th>#</th><th>Switch</th><th>Function</th><th>Def</th>
+          </tr></thead>
+          <tbody id="cf-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Sensors</h2>
+        <div id="sensor-list" class="sensor-list"></div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab">
+      <div class="panel">
+        <div class="logs-controls">
+          <input type="text" id="logs-filter" placeholder="filter (substring match)" autocomplete="off" spellcheck="false">
+          <button id="btn-logs-pause" class="action">Pause</button>
+          <button id="btn-logs-clear" class="action">Clear view</button>
+          <span class="meta" id="logs-meta">-</span>
+        </div>
+        <div class="logs-viewer" id="logs-viewer">
+          <div class="logs-empty">no logs yet</div>
+        </div>
+      </div>
+    </section>
+    <section id="tab-settings" class="tab"><div class="stub">Settings: M3.8</div></section>
+
+  </main>
+</div>
+
+<script>
+'use strict';
+
+const CRSF_MIN = 172;
+const CRSF_MID = 992;
+const CRSF_MAX = 1811;
+
+const App = {
+  state: {
+    connection: 'disconnected',
+    address: localStorage.getItem('zerotxAddress') || '127.0.0.1:8080',
+    health: null,
+    model: null,
+    modelDetails: null,
+    lastFrame: null,
+    framesReceived: 0,
+    lastFrameTime: 0,
+    fpsWindow: [],
+    lastConnMsg: '',
+    // logs
+    logs: [],
+    logsLastSince: '',
+    logsPaused: false,
+    logsFilter: '',
+    logsAutoScroll: true,
+  },
+
+  ws: null,
+  uiTimer: null,
+  logsTimer: null,
+  activeTab: 'connection',
+
+  init() {
+    document.getElementById('input-address').value = this.state.address;
+    this.bindUI();
+    this.renderConnState();
+    this.uiTimer = setInterval(() => this.renderStreamStats(), 250);
+  },
+
+  bindUI() {
+    document.querySelectorAll('nav.tabs button').forEach(btn => {
+      btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
+    });
+    document.getElementById('btn-connect').addEventListener('click', () => this.connect());
+    document.getElementById('btn-disconnect').addEventListener('click', () => this.disconnect());
+    document.getElementById('input-address').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.connect();
+    });
+
+    // Logs tab controls
+    document.getElementById('logs-filter').addEventListener('input', (e) => {
+      this.state.logsFilter = e.target.value;
+      if (this.activeTab === 'logs') this.renderLogs();
+    });
+    document.getElementById('btn-logs-pause').addEventListener('click', () => {
+      this.state.logsPaused = !this.state.logsPaused;
+      document.getElementById('btn-logs-pause').textContent =
+        this.state.logsPaused ? 'Resume' : 'Pause';
+    });
+    document.getElementById('btn-logs-clear').addEventListener('click', () => {
+      this.state.logs = [];
+      // Don't reset logsLastSince; we don't want to re-fetch old buffer.
+      if (this.activeTab === 'logs') this.renderLogs();
+    });
+    const viewer = document.getElementById('logs-viewer');
+    viewer.addEventListener('scroll', () => {
+      // If user scrolled near the bottom, keep auto-scrolling. Otherwise pause it.
+      const atBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 8;
+      this.state.logsAutoScroll = atBottom;
+    });
+  },
+
+  switchTab(name) {
+    this.activeTab = name;
+    document.querySelectorAll('nav.tabs button').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === name));
+    document.querySelectorAll('main.content > section.tab').forEach(s =>
+      s.classList.toggle('active', s.id === `tab-${name}`));
+    if (this.state.lastFrame) this.renderActiveTab(this.state.lastFrame);
+  },
+
+  async connect() {
+    const addr = document.getElementById('input-address').value.trim();
+    if (!addr) return;
+    this.state.address = addr;
+    localStorage.setItem('zerotxAddress', addr);
+    this.setConnState('connecting');
+
+    try {
+      const healthResp = await fetch(`http://${addr}/api/v1/health`);
+      if (!healthResp.ok) throw new Error(`/health returned ${healthResp.status}`);
+      this.state.health = await healthResp.json();
+
+      const modelResp = await fetch(`http://${addr}/api/v1/model`);
+      if (!modelResp.ok) throw new Error(`/model returned ${modelResp.status}`);
+      this.state.model = await modelResp.json();
+
+      // Heavy details (mixes, logic defs, CFs, sensors). Best-effort —
+      // older daemons might not have this endpoint.
+      try {
+        const dResp = await fetch(`http://${addr}/api/v1/model/details`);
+        if (dResp.ok) {
+          this.state.modelDetails = await dResp.json();
+        }
+      } catch (e) { /* non-fatal */ }
+
+      this.ws = new WebSocket(`ws://${addr}/api/v1/stream`);
+      this.ws.onopen = () => {
+        this.setConnState('connected');
+        this.renderHealth();
+        this.renderModel();
+        this.renderModelDetails();
+        this.startLogsPolling();
+      };
+      this.ws.onmessage = (evt) => this.onFrame(evt.data);
+      this.ws.onclose = () => {
+        if (this.state.connection !== 'error') this.setConnState('disconnected');
+        this.ws = null;
+        this.stopLogsPolling();
+      };
+      this.ws.onerror = () => this.setConnState('error', 'WebSocket connection failed');
+    } catch (e) {
+      this.setConnState('error', e.message);
+    }
+  },
+
+  disconnect() {
+    if (this.ws) { this.ws.close(); this.ws = null; }
+    this.stopLogsPolling();
+    this.setConnState('disconnected');
+  },
+
+  onFrame(rawData) {
+    let frame;
+    try { frame = JSON.parse(rawData); }
+    catch (e) { console.error('bad frame JSON:', e); return; }
+    this.state.lastFrame = frame;
+    this.state.framesReceived++;
+    const now = Date.now();
+    this.state.lastFrameTime = now;
+    this.state.fpsWindow.push(now);
+    if (this.state.fpsWindow.length > 10) this.state.fpsWindow.shift();
+    this.renderActiveTab(frame);
+  },
+
+  renderActiveTab(frame) {
+    const r = this.tabRenderers[this.activeTab];
+    if (r) r.call(this, frame);
+  },
+
+  setConnState(state, msg) {
+    this.state.connection = state;
+    this.state.lastConnMsg = msg || '';
+    this.renderConnState();
+  },
+
+  renderConnState() {
+    const val = document.getElementById('val-ws');
+    const btnConnect = document.getElementById('btn-connect');
+    const btnDisconnect = document.getElementById('btn-disconnect');
+    const inputAddr = document.getElementById('input-address');
+    switch (this.state.connection) {
+      case 'disconnected':
+        this.setIndicator('ind-ws', 'idle');
+        val.textContent = 'disconnected';
+        btnConnect.disabled = false; btnDisconnect.disabled = true; inputAddr.disabled = false;
+        break;
+      case 'connecting':
+        this.setIndicator('ind-ws', 'warn');
+        val.textContent = 'connecting...';
+        btnConnect.disabled = true; btnDisconnect.disabled = true; inputAddr.disabled = true;
+        break;
+      case 'connected':
+        this.setIndicator('ind-ws', 'ok');
+        val.textContent = 'connected';
+        btnConnect.disabled = true; btnDisconnect.disabled = false; inputAddr.disabled = true;
+        break;
+      case 'error':
+        this.setIndicator('ind-ws', 'err');
+        val.textContent = this.state.lastConnMsg ? `error: ${this.state.lastConnMsg}` : 'error';
+        btnConnect.disabled = false; btnDisconnect.disabled = true; inputAddr.disabled = false;
+        break;
+    }
+  },
+
+  renderHealth() {
+    const h = this.state.health;
+    if (!h) return;
+    document.getElementById('val-daemon').textContent = h.version || '-';
+    this.setIndicator('ind-daemon', 'ok');
+    document.getElementById('val-uptime').textContent = h.uptime || '-';
+    document.getElementById('val-link').textContent = h.linkState || '-';
+    this.setIndicator('ind-link', h.linkState === 'active' ? 'ok' : 'warn');
+    this.setIndicator('ind-joystick', h.joystickOpen ? 'ok' : 'err');
+    if (!h.joystickOpen) document.getElementById('val-joystick').textContent = 'no joystick';
+  },
+
+  renderModel() {
+    const m = this.state.model;
+    if (!m) return;
+    if (m.available) {
+      this.setIndicator('ind-model', 'ok');
+      document.getElementById('val-model').textContent = m.name;
+      document.getElementById('val-mixes').textContent = m.mixes;
+      document.getElementById('val-logic').textContent = `${m.logic} switches`;
+      document.getElementById('val-cfs').textContent = `${m.customFn} functions`;
+      document.getElementById('val-sensors').textContent = m.sensors;
+    } else {
+      this.setIndicator('ind-model', 'warn');
+      document.getElementById('val-model').textContent = 'no model loaded';
+    }
+  },
+
+  renderModelDetails() {
+    const d = this.state.modelDetails;
+    if (!d || !d.available) {
+      document.getElementById('model-name').textContent = 'no model loaded';
+      document.getElementById('model-bitmap-name').textContent = '-';
+      document.getElementById('model-summary-line').textContent = '-';
+      return;
+    }
+    document.getElementById('model-name').textContent = d.name || '-';
+    document.getElementById('model-bitmap-name').textContent = d.bitmap || 'none';
+    const summary = `${(d.mixes||[]).length} mixes, ${(d.logicSwitches||[]).length} logic, ${(d.customFns||[]).length} CFs, ${(d.sensors||[]).length} sensors`;
+    document.getElementById('model-summary-line').textContent = summary;
+
+    // Image: if hasBitmap, point at the endpoint with a cache buster.
+    const img = document.getElementById('model-image');
+    const placeholder = document.getElementById('model-image-placeholder');
+    if (d.hasBitmap) {
+      img.src = `http://${this.state.address}/api/v1/model/image?t=${Date.now()}`;
+      img.onerror = () => {
+        img.style.display = 'none';
+        placeholder.style.display = 'block';
+        placeholder.textContent = 'image fetch failed';
+      };
+      img.style.display = 'block';
+      placeholder.style.display = 'none';
+    } else {
+      img.style.display = 'none';
+      placeholder.style.display = 'block';
+      placeholder.textContent = d.bitmap
+        ? `(${d.bitmap}: not provided to daemon)`
+        : 'no image';
+    }
+
+    // Mixes
+    const mixBody = document.getElementById('mix-tbody');
+    mixBody.innerHTML = (d.mixes || []).map(m => `
+      <tr>
+        <td class="muted">${m.index}</td>
+        <td>${m.ch}</td>
+        <td>${escapeHtml(m.name) || '<span class="muted">-</span>'}</td>
+        <td>${escapeHtml(m.source)}</td>
+        <td class="num">${m.weight}</td>
+        <td class="num">${m.offset}</td>
+        <td class="muted">${escapeHtml(m.switch || '') || '-'}</td>
+        <td class="muted">${escapeHtml(m.mltpx || '') || 'ADD'}</td>
+      </tr>
+    `).join('');
+
+    // Logic switches (rows tagged so per-frame renderer can flip Active dot).
+    const logicBody = document.getElementById('logic-defs-tbody');
+    logicBody.innerHTML = (d.logicSwitches || []).map(ls => `
+      <tr data-name="${escapeHtml(ls.name)}">
+        <td>${escapeHtml(ls.name)}</td>
+        <td>${escapeHtml(ls.func)}</td>
+        <td>${escapeHtml(ls.def)}</td>
+        <td class="muted">${escapeHtml(ls.andsw) || '-'}</td>
+        <td class="num muted">${ls.delay > 0 ? ls.delay.toFixed(1) + 's' : '-'}</td>
+        <td class="num muted">${ls.duration > 0 ? ls.duration.toFixed(1) + 's' : '-'}</td>
+        <td><span class="dot ${ls.active ? 'on' : ''}"></span></td>
+      </tr>
+    `).join('');
+
+    // Custom functions
+    const cfBody = document.getElementById('cf-tbody');
+    cfBody.innerHTML = (d.customFns || []).map(cf => `
+      <tr>
+        <td class="muted">${cf.id}</td>
+        <td>${escapeHtml(cf.switch)}</td>
+        <td>${escapeHtml(cf.func)}</td>
+        <td class="muted">${escapeHtml(cf.def) || '-'}</td>
+      </tr>
+    `).join('');
+
+    // Sensors
+    const sensorList = document.getElementById('sensor-list');
+    sensorList.innerHTML = (d.sensors || []).map(s => `
+      <div class="sensor-item">
+        <span class="sensor-name">${escapeHtml(s.name)}</span>${s.unit ? `<span class="sensor-unit"> (${escapeHtml(s.unit)})</span>` : ''}
+      </div>
+    `).join('') || '<div class="panel-empty">no sensors</div>';
+  },
+
+  renderStreamStats() {
+    if (this.state.framesReceived === 0) return;
+    const ageMs = Date.now() - this.state.lastFrameTime;
+    document.getElementById('val-frameage').textContent =
+      ageMs < 1000 ? `${ageMs} ms` : `${(ageMs / 1000).toFixed(1)} s`;
+    if (this.state.fpsWindow.length >= 2) {
+      const span = (this.state.fpsWindow[this.state.fpsWindow.length - 1]
+                    - this.state.fpsWindow[0]) / 1000;
+      const fps = span > 0 ? (this.state.fpsWindow.length - 1) / span : 0;
+      document.getElementById('val-fps').textContent = fps.toFixed(1);
+    }
+    document.getElementById('val-total').textContent = this.state.framesReceived;
+  },
+
+  setIndicator(id, level) {
+    const el = document.getElementById(id);
+    if (el) el.className = `indicator ${level}`;
+  },
+
+  // === Logs ===
+  startLogsPolling() {
+    if (this.logsTimer) clearInterval(this.logsTimer);
+    // Reset cursor on each new connection so we get a fresh view of the buffer.
+    this.state.logsLastSince = '';
+    this.logsTimer = setInterval(() => this.pollLogs(), 1000);
+    this.pollLogs();
+  },
+
+  stopLogsPolling() {
+    if (this.logsTimer) {
+      clearInterval(this.logsTimer);
+      this.logsTimer = null;
+    }
+  },
+
+  async pollLogs() {
+    if (this.state.connection !== 'connected') return;
+    if (this.state.logsPaused) return;
+    try {
+      const sinceParam = this.state.logsLastSince
+        ? `?since=${encodeURIComponent(this.state.logsLastSince)}`
+        : '';
+      const resp = await fetch(`http://${this.state.address}/api/v1/logs${sinceParam}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const entries = data.entries || [];
+      if (entries.length === 0) return;
+      this.state.logs.push(...entries);
+      // Cap GUI buffer (independent of daemon ring buffer cap).
+      if (this.state.logs.length > 5000) {
+        this.state.logs = this.state.logs.slice(-3000);
+      }
+      this.state.logsLastSince = entries[entries.length - 1].ts;
+      if (this.activeTab === 'logs') this.renderLogs();
+    } catch (e) {
+      // Non-fatal; next tick will retry.
+    }
+  },
+
+  renderLogs() {
+    const viewer = document.getElementById('logs-viewer');
+    const filter = (this.state.logsFilter || '').toLowerCase();
+    const all = this.state.logs;
+    const filtered = filter
+      ? all.filter(e => e.msg.toLowerCase().includes(filter))
+      : all;
+
+    // Render at most 1000 lines at a time for performance. If the user
+    // wants more, they can adjust the filter.
+    const view = filtered.slice(-1000);
+
+    if (view.length === 0) {
+      viewer.innerHTML = '<div class="logs-empty">no logs match</div>';
+    } else {
+      viewer.innerHTML = view.map(e => {
+        const cls = classifyLogLine(e.msg);
+        const tsShort = formatLogTime(e.ts);
+        return `<span class="log-line ${cls}"><span class="ts">${tsShort}</span>${escapeHtml(e.msg)}</span>`;
+      }).join('');
+    }
+
+    if (this.state.logsAutoScroll) {
+      viewer.scrollTop = viewer.scrollHeight;
+    }
+
+    const meta = `${filtered.length} line${filtered.length === 1 ? '' : 's'}` +
+      (filter ? ` (filtered from ${all.length})` : '') +
+      (this.state.logsPaused ? ' · paused' : '');
+    document.getElementById('logs-meta').textContent = meta;
+  },
+
+  tabRenderers: {
+    connection(frame) {
+      if (frame.joystick && frame.joystick.name) {
+        document.getElementById('val-joystick').textContent = frame.joystick.name;
+        this.setIndicator('ind-joystick', 'ok');
+      }
+      if (frame.link && frame.link.port) {
+        document.getElementById('val-port').textContent = frame.link.port;
+      }
+    },
+
+    channels(frame) {
+      const channels = (frame && frame.channels) || [];
+      const list = document.getElementById('channel-list');
+      if (list.children.length !== channels.length) {
+        list.innerHTML = '';
+        for (let i = 0; i < channels.length; i++) {
+          const row = document.createElement('div');
+          row.className = 'channel-row';
+          row.innerHTML = `
+            <div class="channel-label">CH${i + 1}</div>
+            <div class="channel-bar">
+              <div class="channel-fill"></div>
+              <div class="channel-mid"></div>
+            </div>
+            <div class="channel-value">-</div>
+          `;
+          list.appendChild(row);
+        }
+      }
+      for (let i = 0; i < channels.length; i++) {
+        const v = channels[i];
+        const row = list.children[i];
+        const fill = row.querySelector('.channel-fill');
+        const valEl = row.querySelector('.channel-value');
+        const { left, width } = bipolarBar(v);
+        fill.style.left = left;
+        fill.style.width = width;
+        valEl.textContent = v;
+      }
+    },
+
+    logic(frame) {
+      const logic = (frame && frame.logic) || {};
+      const names = Object.keys(logic).sort(naturalSort);
+      const grid = document.getElementById('logic-grid');
+      const meta = document.getElementById('logic-meta');
+      meta.textContent = names.length === 0
+        ? 'no logic switches'
+        : `${names.length} switch${names.length === 1 ? '' : 'es'}`;
+      if (grid.children.length !== names.length) {
+        grid.innerHTML = '';
+        for (const name of names) {
+          const card = document.createElement('div');
+          card.className = 'logic-card off';
+          card.dataset.name = name;
+          card.innerHTML = `<div class="logic-name">${name}</div><div class="logic-state">off</div>`;
+          grid.appendChild(card);
+        }
+      }
+      for (const card of grid.children) {
+        const name = card.dataset.name;
+        const on = !!logic[name];
+        card.className = `logic-card ${on ? 'on' : 'off'}`;
+        card.querySelector('.logic-state').textContent = on ? 'on' : 'off';
+      }
+    },
+
+    panel(frame) {
+      const p = (frame && frame.panel) || { switches: {}, selectors: {}, buttons: {} };
+      renderPanelMap('panel-switches',  p.switches  || {}, fmtInt);
+      renderPanelMap('panel-selectors', p.selectors || {}, fmtInt);
+      renderPanelMap('panel-buttons',   p.buttons   || {}, fmtBool);
+    },
+
+    joystick(frame) {
+      const js = frame && frame.joystick;
+      const meta = document.getElementById('joystick-meta');
+      if (!js) { meta.textContent = 'no joystick'; return; }
+      meta.textContent = js.name || 'unknown';
+      const axes    = js.axes    || [];
+      const buttons = js.buttons || [];
+
+      const stickDot = document.getElementById('js-stick-dot');
+      const x = clamp01(axes[0] || 0);
+      const y = clamp01(axes[1] || 0);
+      stickDot.style.left = `${(x + 1) * 50}%`;
+      stickDot.style.top  = `${(y + 1) * 50}%`;
+
+      const thrThumb = document.getElementById('js-slider-thr');
+      const thrPct = (clamp01(axes[2] || 0) + 1) * 50;
+      thrThumb.style.top = `calc(${thrPct}% - 4px)`;
+
+      const rudThumb = document.getElementById('js-slider-rud');
+      const rudPct = (clamp01(axes[3] || 0) + 1) * 50;
+      rudThumb.style.left = `calc(${rudPct}% - 4px)`;
+
+      const axisList = document.getElementById('js-axis-list');
+      if (axisList.children.length !== axes.length) {
+        axisList.innerHTML = '';
+        for (let i = 0; i < axes.length; i++) {
+          const row = document.createElement('div');
+          row.className = 'axis-row';
+          row.innerHTML = `<span class="name">axis ${i}</span><span class="value">-</span>`;
+          axisList.appendChild(row);
+        }
+      }
+      for (let i = 0; i < axes.length; i++) {
+        axisList.children[i].querySelector('.value').textContent = axes[i].toFixed(3);
+      }
+
+      const btnGrid = document.getElementById('js-button-grid');
+      if (btnGrid.children.length !== buttons.length) {
+        btnGrid.innerHTML = '';
+        for (let i = 0; i < buttons.length; i++) {
+          const cell = document.createElement('div');
+          cell.className = 'btn-cell';
+          cell.textContent = i;
+          btnGrid.appendChild(cell);
+        }
+      }
+      for (let i = 0; i < buttons.length; i++) {
+        btnGrid.children[i].classList.toggle('pressed', !!buttons[i]);
+      }
+    },
+
+    model(frame) {
+      // Static mix/CF/sensor data was rendered on connect by
+      // renderModelDetails(). Per-frame, only the Active dot for each
+      // logic switch row needs updating.
+      const logic = (frame && frame.logic) || {};
+      document.querySelectorAll('#logic-defs-tbody tr').forEach(row => {
+        const name = row.dataset.name;
+        const dot = row.querySelector('.dot');
+        if (dot) dot.className = `dot ${logic[name] ? 'on' : ''}`;
+      });
+    },
+
+    logs(_frame) {
+      // Logs are populated by the 1Hz poller, not the WS frame stream.
+      // This renderer just ensures the view is current when the user
+      // switches to the Logs tab.
+      this.renderLogs();
+    },
+  },
+};
+
+function bipolarBar(v) {
+  if (typeof v !== 'number') return { left: '50%', width: '0%' };
+  if (v >= CRSF_MID) {
+    const pct = ((v - CRSF_MID) / (CRSF_MAX - CRSF_MID)) * 50;
+    return { left: '50%', width: `${Math.max(0, Math.min(50, pct))}%` };
+  } else {
+    const pct = ((CRSF_MID - v) / (CRSF_MID - CRSF_MIN)) * 50;
+    const w = Math.max(0, Math.min(50, pct));
+    return { left: `${50 - w}%`, width: `${w}%` };
+  }
+}
+
+function clamp01(v) { return Math.max(-1, Math.min(1, v)); }
+
+function naturalSort(a, b) {
+  const ax = a.match(/(\d+)/), bx = b.match(/(\d+)/);
+  if (ax && bx) {
+    const an = parseInt(ax[1], 10), bn = parseInt(bx[1], 10);
+    if (an !== bn) return an - bn;
+  }
+  return a.localeCompare(b);
+}
+
+function renderPanelMap(elId, obj, fmt) {
+  const container = document.getElementById(elId);
+  const keys = Object.keys(obj).sort();
+  if (keys.length === 0) {
+    container.innerHTML = '<div class="panel-empty">none</div>';
+    return;
+  }
+  container.innerHTML = keys.map(k =>
+    `<div class="panel-item-row">
+       <span class="panel-item-name">${k}</span>
+       <span class="panel-item-value">${fmt(obj[k])}</span>
+     </div>`
+  ).join('');
+}
+
+function fmtInt(v)  { return String(v); }
+function fmtBool(v) { return v ? 'pressed' : 'released'; }
+
+// HTML-escape a string for safe insertion via innerHTML. Used for
+// model details which are user-supplied (mix names, switch names, etc.)
+// and could contain special characters.
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// classifyLogLine: heuristic colouring for log entries. Picks up common
+// keywords; not authoritative, just helpful at a glance.
+function classifyLogLine(msg) {
+  const m = msg.toLowerCase();
+  if (m.includes('error') || m.includes('panic') || m.includes('fatal') || m.includes('failed')) {
+    return 'error';
+  }
+  if (m.includes('warn')) return 'warn';
+  return '';
+}
+
+// formatLogTime: trim the daemon's RFC3339Nano timestamp down to
+// HH:MM:SS.mmm for display. The full ISO string is too wide.
+function formatLogTime(ts) {
+  if (!ts) return '';
+  const t = ts.replace(/^.*T/, '').replace(/Z$/, '');
+  // Keep HH:MM:SS plus three decimals.
+  const m = t.match(/^(\d{2}:\d{2}:\d{2})(\.\d{1,3})?/);
+  return m ? (m[1] + (m[2] || '')) : t;
+}
+
+document.addEventListener('DOMContentLoaded', () => App.init());
+</script>
+
+</body>
+</html>

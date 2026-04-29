@@ -1,0 +1,176 @@
+package model
+
+import (
+	"bytes"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const fixture = "../../testdata/big_talon.yml"
+
+func TestLoadBigTalon(t *testing.T) {
+	abs, _ := filepath.Abs(fixture)
+	m, err := LoadEdgeTX(abs)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if m.Semver != "2.9.1" {
+		t.Errorf("semver: got %q want %q", m.Semver, "2.9.1")
+	}
+	if m.Header.Name != "Big Talon" {
+		t.Errorf("header.name: got %q want %q", m.Header.Name, "Big Talon")
+	}
+
+	// Channel layout that we manually verified from the file.
+	wantMix := map[int]struct {
+		src  string
+		name string
+	}{
+		0:  {src: "I0", name: ""},
+		1:  {src: "I1", name: ""},
+		2:  {src: "I2", name: ""},
+		3:  {src: "I3", name: "Rud"},
+		4:  {src: "ls(3)", name: "Arm"},
+		5:  {src: "SE", name: "HorAcr"},
+		6:  {src: "SA", name: "CruPos"},
+		7:  {src: "SG", name: "BeepRT"},
+		8:  {src: "SB", name: "AutoLa"},
+		9:  {src: "SC", name: "WPGCS"},
+		10: {src: "6POS", name: "Tune"},
+	}
+	for ch, want := range wantMix {
+		mix := m.MixForChannel(ch)
+		if mix == nil {
+			t.Errorf("CH%d: no mix entry", ch)
+			continue
+		}
+		if mix.SrcRaw != want.src {
+			t.Errorf("CH%d srcRaw: got %q want %q", ch, mix.SrcRaw, want.src)
+		}
+		if mix.Name != want.name {
+			t.Errorf("CH%d name: got %q want %q", ch, mix.Name, want.name)
+		}
+	}
+
+	// Input names.
+	wantInputs := map[int]string{0: "Thr", 1: "Ail", 2: "Ele", 3: "Rud"}
+	for i, want := range wantInputs {
+		if got := m.InputName(i); got != want {
+			t.Errorf("input %d: got %q want %q", i, got, want)
+		}
+	}
+
+	// Flight modes.
+	if len(m.FlightModeData) != 9 {
+		t.Errorf("flight modes: got %d want 9", len(m.FlightModeData))
+	}
+	if m.FlightModeData[0].Name != "Horizon" {
+		t.Errorf("flight mode 0: got %q want Horizon", m.FlightModeData[0].Name)
+	}
+	if m.FlightModeData[6].Swtch != "SG2" || m.FlightModeData[6].Name != "RTH" {
+		t.Errorf("flight mode 6 (RTH): got %+v", m.FlightModeData[6])
+	}
+
+	// Logical switches.
+	if len(m.LogicalSw) != 4 {
+		t.Errorf("logical sw count: got %d want 4", len(m.LogicalSw))
+	}
+	ls3, ok := m.LogicalSw[3]
+	if !ok {
+		t.Fatal("L3 missing")
+	}
+	if ls3.Func != "FUNC_VNEG" || ls3.Andsw != "SF0" || ls3.Def != "I0,-99" {
+		t.Errorf("L3 (arm condition): got %+v", ls3)
+	}
+
+	// Custom functions: confirm OVERRIDE_CHANNEL safety pattern is present.
+	foundOverride := false
+	for _, fn := range m.CustomFn {
+		if fn.Func == "OVERRIDE_CHANNEL" && fn.Swtch == "!L3" && fn.Def == "0,-100,1" {
+			foundOverride = true
+			break
+		}
+	}
+	if !foundOverride {
+		t.Error("expected !L3 -> OVERRIDE_CHANNEL 0,-100,1 (throttle low when disarmed)")
+	}
+
+	// Module: CRSF on slot 1.
+	mod1, ok := m.ModuleData[1]
+	if !ok {
+		t.Fatal("moduleData[1] missing")
+	}
+	if mod1.Type != "TYPE_CROSSFIRE" || mod1.ChannelsCount != 16 {
+		t.Errorf("module: got %+v", mod1)
+	}
+
+	// Telemetry sensors: 24 entries.
+	if len(m.TelemetrySensors) != 24 {
+		t.Errorf("telemetry sensor count: got %d want 24", len(m.TelemetrySensors))
+	}
+
+	// Spot check a known sensor (RxBt = sensor 17, unit 1 (volts), prec 1).
+	rxbt, ok := m.TelemetrySensors[17]
+	if !ok {
+		t.Fatal("telemetrySensors[17] (RxBt) missing")
+	}
+	if rxbt.Label != "RxBt" || rxbt.Unit != 1 || rxbt.Prec != 1 {
+		t.Errorf("RxBt: got %+v", rxbt)
+	}
+
+	// Tier 2: extras must contain at least screenData and varioData.
+	if _, ok := m.Extras["screenData"]; !ok {
+		t.Error("extras missing screenData")
+	}
+	if _, ok := m.Extras["varioData"]; !ok {
+		t.Error("extras missing varioData")
+	}
+}
+
+func TestRoundTripMarshalsBack(t *testing.T) {
+	abs, _ := filepath.Abs(fixture)
+	m, err := LoadEdgeTX(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := ImportFromEdgeTX(m)
+	wrapped.ZeroTX.SourceBindings = map[string]Binding{
+		"Thr": {Device: "HOTAS X", Axis: ptr(2)},
+		"Ail": {Device: "HOTAS X", Axis: ptr(0)},
+	}
+	out, err := Marshal(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The output must contain both sections.
+	if !bytes.Contains(out, []byte("zerotx:")) {
+		t.Error("output missing zerotx section")
+	}
+	if !bytes.Contains(out, []byte("edgetx:")) {
+		t.Error("output missing edgetx section")
+	}
+	if !bytes.Contains(out, []byte("Big Talon")) {
+		t.Error("output missing model name")
+	}
+
+	// Re-decode and verify it survived.
+	round, err := DecodeZeroTX(strings.NewReader(string(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round.EdgeTX.Header.Name != "Big Talon" {
+		t.Errorf("round-trip name: got %q", round.EdgeTX.Header.Name)
+	}
+	if len(round.EdgeTX.MixData) != len(m.MixData) {
+		t.Errorf("round-trip mixData count: got %d want %d",
+			len(round.EdgeTX.MixData), len(m.MixData))
+	}
+	if round.ZeroTX.SourceBindings["Thr"].Device != "HOTAS X" {
+		t.Errorf("round-trip binding: got %+v", round.ZeroTX.SourceBindings["Thr"])
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

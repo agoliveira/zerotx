@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  daemon:
+    name: Daemon (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ['1.22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2 native headers
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: pi/daemon/go.sum
+
+      - name: go mod verify
+        working-directory: pi/daemon
+        run: go mod verify
+
+      - name: go vet
+        working-directory: pi/daemon
+        run: go vet ./...
+
+      - name: go build
+        working-directory: pi/daemon
+        run: go build ./...
+
+      - name: go test
+        working-directory: pi/daemon
+        run: go test -v -count=1 -race ./...
