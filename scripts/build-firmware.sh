@@ -48,7 +48,7 @@ if [[ -z "$UF2" && -n "$ELF" ]]; then
   else
     out_dir=$(dirname "$ELF")
     out_uf2="${out_dir}/$(basename "$ELF" .elf).uf2"
-    "$PICOTOOL" uf2 convert "$ELF" "$out_uf2" -t elf
+    "$PICOTOOL" uf2 convert "$ELF" "$out_uf2"
     UF2="$out_uf2"
   fi
 fi
