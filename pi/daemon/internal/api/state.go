@@ -44,6 +44,15 @@ type AudioInfo struct {
 	ActiveAlarms interface{} `json:"activeAlarms"`
 }
 
+// Recording is a saved-recording summary for the GUI's Recordings tab.
+// Mirrors recorder.Recording without an import cycle.
+type Recording struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime string `json:"modTime"`
+}
+
 // JoystickSnapshot exposes normalized axis values and button states. nil
 // when no joystick is connected.
 type JoystickSnapshot struct {
@@ -277,6 +286,10 @@ type Providers struct {
 	SetAudioThreshold func(level string) error
 	Acknowledge       func(name string)
 	AcknowledgeAll    func()
+
+	// Recordings returns the saved flight recordings on disk
+	// (newest first). Empty when recording is disabled.
+	Recordings func() ([]Recording, error)
 
 	Version string
 	Uptime  func() time.Duration

@@ -921,6 +921,38 @@ table.data-table {
 }
 .alarms-list .alarm-dismiss:hover { color: var(--text-main); border-color: var(--text-muted); }
 
+/* Recordings tab */
+.recordings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.recordings-list .rec-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.recordings-list .rec-name {
+  flex: 1;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recordings-list .rec-size,
+.recordings-list .rec-time {
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 /* === Modal overlay === */
 .modal-backdrop {
   position: fixed;
@@ -1035,6 +1067,7 @@ h2.warn { color: var(--warn); }
     <button data-tab="joystick">Joystick</button>
     <button data-tab="panel">Panel</button>
     <button data-tab="model">Model</button>
+    <button data-tab="recordings">Recordings</button>
     <button data-tab="logs">Logs</button>
     <div class="app-footer">ZeroTX GUI</div>
   </nav>
@@ -1310,6 +1343,25 @@ h2.warn { color: var(--warn); }
       </div>
     </section>
 
+    <section id="tab-recordings" class="tab">
+      <div class="panel">
+        <div class="tab-subtitle">
+          <h2>Saved recordings</h2>
+          <button id="recordings-refresh" class="action small">Refresh</button>
+        </div>
+        <p class="muted small">
+          Each flight (arm to disarm) saves a SQLite recording with
+          events and telemetry. The 10 most recent are kept; older
+          ones are deleted automatically. Files live in the daemon's
+          recordings directory and can be opened with any SQLite
+          tool for offline analysis.
+        </p>
+        <div id="recordings-list" class="recordings-list">
+          <div class="muted small">Connect to the daemon to load recordings.</div>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-logs" class="tab">
       <div class="panel">
         <div class="logs-controls">
@@ -1422,6 +1474,9 @@ const App = {
     // audio: latest snapshot from /api/v1/audio (threshold + active
     // alarms). Updated on connect and on each WebSocket frame.
     audio: null,
+    // recordings: list from /api/v1/recordings, loaded on connect and
+    // refreshable via the tab's Refresh button.
+    recordings: [],
   },
 
   ws: null,
@@ -1489,6 +1544,7 @@ const App = {
     document.getElementById('pf-disarm-btn').addEventListener('click', () => this.disarmFlight());
     document.getElementById('pf-settings-btn').addEventListener('click', () => this.openSettings());
     document.getElementById('pf-alarms-ack-all').addEventListener('click', () => this.acknowledgeAllAlarms());
+    document.getElementById('recordings-refresh').addEventListener('click', () => this.refreshRecordings());
 
     // Modal: clicking the backdrop dismisses (cancels). The window
     // itself doesn't bubble click, so clicks inside don't dismiss.
@@ -1514,6 +1570,7 @@ const App = {
     document.querySelectorAll('main.content > section.tab').forEach(s =>
       s.classList.toggle('active', s.id === `tab-${name}`));
     if (this.state.lastFrame) this.renderActiveTab(this.state.lastFrame);
+    if (name === 'recordings') this.refreshRecordings();
   },
 
   async connect() {
@@ -1557,6 +1614,7 @@ const App = {
         this.startLogsPolling();
         this.startHealthRefresh();
         this.refreshPreflight();
+        this.refreshRecordings();
       };
       this.ws.onmessage = (evt) => this.onFrame(evt.data);
       this.ws.onclose = () => {
@@ -1817,6 +1875,44 @@ const App = {
         body: JSON.stringify({ all: true }),
       });
     } catch (e) { /* non-fatal */ }
+  },
+
+  async refreshRecordings() {
+    if (this.state.connection !== 'connected') {
+      this.state.recordings = [];
+      this.renderRecordings();
+      return;
+    }
+    try {
+      const r = await fetch(`http://${this.state.address}/api/v1/recordings`);
+      if (r.ok) {
+        this.state.recordings = await r.json() || [];
+      }
+    } catch (e) { /* non-fatal */ }
+    this.renderRecordings();
+  },
+
+  renderRecordings() {
+    const list = document.getElementById('recordings-list');
+    if (!list) return;
+    if (this.state.connection !== 'connected') {
+      list.innerHTML = '<div class="muted small">Connect to the daemon to load recordings.</div>';
+      return;
+    }
+    const recs = this.state.recordings || [];
+    if (recs.length === 0) {
+      list.innerHTML = '<div class="muted small">No recordings yet. Each arm-to-disarm flight will save here.</div>';
+      return;
+    }
+    list.innerHTML = recs.map(r => {
+      const sizeKB = (r.size / 1024).toFixed(1);
+      const time = r.modTime ? new Date(r.modTime).toLocaleString() : '-';
+      return `<div class="rec-row">
+        <span class="rec-name">${escapeHtml(r.name)}</span>
+        <span class="rec-size">${sizeKB} KB</span>
+        <span class="rec-time">${escapeHtml(time)}</span>
+      </div>`;
+    }).join('');
   },
 
   async refreshJoysticks() {

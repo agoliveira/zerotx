@@ -23,6 +23,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/api"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
@@ -32,7 +33,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.17.0-audio-priority"
+const version = "0.18.0-recordings"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -57,6 +58,9 @@ func main() {
 	soundsLang := flag.String("sounds-lang", "en", "language subdirectory under -sounds-dir (e.g. en, pt)")
 	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
 	audioThreshold := flag.String("audio-threshold", "notice", "audio threshold: info / notice / warning / critical (critical events ignore threshold)")
+	recordingsDir := flag.String("recordings-dir", defaultRecordingsDir(), "directory for saved flight recordings")
+	noRecordings := flag.Bool("no-recordings", false, "disable flight recording entirely")
+	keepRecordings := flag.Int("keep-recordings", 10, "number of most-recent recordings to retain (older deleted on save)")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -220,13 +224,58 @@ func main() {
 	}
 	defer player.Close()
 
+	// Recorder: SQLite-backed flight recording. In-memory while flying,
+	// saved to <recordings-dir> on disarm. Failures here must not
+	// affect flight; we fall back to a no-op recorder on construction
+	// error or when explicitly disabled.
+	var rec recorder.Interface = recorder.NoOpRecorder{}
+	if !*noRecordings {
+		r, err := recorder.New(recorder.Config{
+			RecordingsDir: *recordingsDir,
+			Keep:          *keepRecordings,
+		})
+		if err != nil {
+			log.Printf("recorder: disabled (%v)", err)
+		} else {
+			rec = r
+			log.Printf("recorder: dir=%s keep=%d", *recordingsDir, *keepRecordings)
+		}
+	} else {
+		log.Println("recorder: disabled (-no-recordings)")
+	}
+	defer rec.Close()
+
+	// Telemetry sampler: poll the telemetry snapshot at 5Hz and forward
+	// to the recorder. The recorder throttles internally to avoid
+	// duplicate rows when nothing has changed; this goroutine just has
+	// to wake often enough to catch every meaningful update. Stops on
+	// daemon shutdown via the same context as the rest of the daemon.
+	telemSamplerStop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(200 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-telemSamplerStop:
+				return
+			case <-t.C:
+				snap := telemetryState.Snapshot()
+				if !snap.HaveAny {
+					continue
+				}
+				rec.LogTelemetry(buildTelemetrySample(snap))
+			}
+		}
+	}()
+	defer close(telemSamplerStop)
+
 	// stack holder. nil => IDLE (no CRSF emission). The tick loop reads
 	// this atomically each tick; the API server writes it via load/unload.
 	holder := &stackHolder{}
 
 	// If a model was provided at startup, build its Stack and go READY.
 	if ztxModel != nil {
-		s, err := BuildStack(ztxModel, jsState, pnl, player)
+		s, err := BuildStack(ztxModel, jsState, pnl, player, rec)
 		if err != nil {
 			log.Fatalf("build stack: %v", err)
 		}
@@ -256,7 +305,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, telemetryState, port, *modelImage, *modelFlag, logBuf, version, time.Now())
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, telemetryState, rec, port, *modelImage, *modelFlag, logBuf, version, time.Now())
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -496,6 +545,7 @@ func buildAPIProviders(
 	jsHolder *joystickHolder,
 	player audio.Player,
 	telemState *telemetry.State,
+	rec recorder.Interface,
 	port string,
 	modelImagePath string,
 	modelDefaultPath string,
@@ -574,7 +624,7 @@ func buildAPIProviders(
 			return buildPreflight(holder, jsHolder, port, modelDefaultPath)
 		},
 		LoadModel: func(path string) error {
-			return loadModel(holder, jsHolder.JoystickState(), pnl, player, path)
+			return loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, path)
 		},
 		UnloadModel: func() {
 			if s := holder.Load(); s != nil {
@@ -628,10 +678,19 @@ func buildAPIProviders(
 		},
 		ListModels: listModels,
 		SetFlightArmed: func(armed bool) {
-			// Disarming auto-acknowledges all active audio alarms so the
-			// post-flight environment isn't still beeping. Arming is a
-			// no-op for the audio subsystem.
-			if !armed {
+			// Arming starts a recording; disarming closes it (which
+			// auto-saves and rotates) and auto-acknowledges any active
+			// audio alarms so the post-flight environment isn't still
+			// beeping. Recorder failures are logged inside the package
+			// and never block this code path.
+			if armed {
+				name := ""
+				if s := holder.Load(); s != nil && s.Model != nil {
+					name = s.Model.EdgeTX.Header.Name
+				}
+				rec.OnArm(name, "")
+			} else {
+				rec.OnDisarm()
 				player.AcknowledgeAll()
 			}
 			jsHolder.SetFlightArmed(armed)
@@ -656,6 +715,23 @@ func buildAPIProviders(
 		Acknowledge:    player.Acknowledge,
 		AcknowledgeAll: player.AcknowledgeAll,
 
+		Recordings: func() ([]api.Recording, error) {
+			recs, err := rec.Recordings()
+			if err != nil {
+				return nil, err
+			}
+			out := make([]api.Recording, 0, len(recs))
+			for _, r := range recs {
+				out = append(out, api.Recording{
+					Name:    r.Name,
+					Path:    r.Path,
+					Size:    r.Size,
+					ModTime: r.ModTime,
+				})
+			}
+			return out, nil
+		},
+
 		Version:    version,
 		Uptime:     func() time.Duration { return time.Since(startedAt) },
 	}
@@ -664,12 +740,12 @@ func buildAPIProviders(
 // loadModel parses a YAML at the given path and atomically swaps in
 // the new Stack. Returns an error without touching the active stack if
 // parsing or building fails.
-func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Panel, player audio.Player, path string) error {
+func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Panel, player audio.Player, rec recorder.Interface, path string) error {
 	m, err := model.LoadZeroTX(path)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", path, err)
 	}
-	s, err := BuildStack(m, jsState, pnl, player)
+	s, err := BuildStack(m, jsState, pnl, player, rec)
 	if err != nil {
 		return fmt.Errorf("build stack for %s: %w", path, err)
 	}
@@ -939,4 +1015,62 @@ func listModels(dir string) ([]api.ModelFile, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
 	return out, nil
+}
+
+// defaultRecordingsDir returns the default directory for saved
+// recordings. Honours $XDG_DATA_HOME when set, otherwise falls back to
+// ~/.local/share/zerotx/recordings or just "./recordings" if the home
+// directory can't be resolved.
+func defaultRecordingsDir() string {
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, "zerotx", "recordings")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "share", "zerotx", "recordings")
+	}
+	return "recordings"
+}
+
+// buildTelemetrySample converts a telemetry.Snapshot into the
+// recorder's TelemetrySample shape. Pointer-typed fields preserve
+// "no data" vs "zero": battery 0V is a real reading.
+func buildTelemetrySample(s telemetry.Snapshot) recorder.TelemetrySample {
+	out := recorder.TelemetrySample{}
+	if s.Battery != nil && !s.Battery.Stale {
+		v := s.Battery.Data.Volts
+		a := s.Battery.Data.Amps
+		pct := int(s.Battery.Data.Percent)
+		mah := int(s.Battery.Data.UsedMAh)
+		out.BatVolts = &v
+		out.BatAmps = &a
+		out.BatPct = &pct
+		out.BatMAh = &mah
+	}
+	if s.GPS != nil && !s.GPS.Stale {
+		lat := s.GPS.Data.LatDeg
+		lon := s.GPS.Data.LonDeg
+		alt := int(s.GPS.Data.AltMeters)
+		kmh := s.GPS.Data.GroundKmh
+		hdg := s.GPS.Data.HeadingDeg
+		sats := int(s.GPS.Data.Sats)
+		out.GpsLat = &lat
+		out.GpsLon = &lon
+		out.GpsAlt = &alt
+		out.GpsKmh = &kmh
+		out.GpsHdg = &hdg
+		out.GpsSats = &sats
+	}
+	if s.Link != nil && !s.Link.Stale {
+		rssi := int(s.Link.Data.UplinkRSSIdBm)
+		lq := int(s.Link.Data.UplinkLQ)
+		snr := int(s.Link.Data.UplinkSNR)
+		out.LinkRSSI = &rssi
+		out.LinkLQ = &lq
+		out.LinkSNR = &snr
+	}
+	if s.FlightMode != nil {
+		mode := s.FlightMode.Data.Mode
+		out.FlightMode = &mode
+	}
+	return out
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/mapper"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/model"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
@@ -44,7 +45,10 @@ type Stack struct {
 // If player is non-nil, BuildStack starts a goroutine that drains the
 // CF processor's Audio channel and forwards events to the player. The
 // drain runs until Stop is called on the returned Stack.
-func BuildStack(m *model.ZeroTXModel, jsState source.JoystickState, pnl panel.Panel, player audio.Player) (*Stack, error) {
+//
+// If rec is non-nil, audio events are also forwarded to the recorder
+// for inclusion in the active session's recording.
+func BuildStack(m *model.ZeroTXModel, jsState source.JoystickState, pnl panel.Panel, player audio.Player, rec recorder.Interface) (*Stack, error) {
 	if m == nil {
 		return nil, fmt.Errorf("BuildStack: model is nil")
 	}
@@ -66,7 +70,7 @@ func BuildStack(m *model.ZeroTXModel, jsState source.JoystickState, pnl panel.Pa
 	if player != nil {
 		s.stopAudio = make(chan struct{})
 		s.audioDone = make(chan struct{})
-		go s.drainAudio(player)
+		go s.drainAudio(player, rec)
 	}
 	return s, nil
 }
@@ -75,7 +79,10 @@ func BuildStack(m *model.ZeroTXModel, jsState source.JoystickState, pnl panel.Pa
 // the player until Stop is called. The level is computed from the track
 // name via audio.DefaultLevelFor; future per-CF priority overrides
 // would plumb through here.
-func (s *Stack) drainAudio(player audio.Player) {
+//
+// If rec is non-nil, every audio event is also recorded for the
+// active session. Recorder calls are no-ops outside a session.
+func (s *Stack) drainAudio(player audio.Player, rec recorder.Interface) {
 	defer close(s.audioDone)
 	for {
 		select {
@@ -85,7 +92,11 @@ func (s *Stack) drainAudio(player audio.Player) {
 			if !ok {
 				return
 			}
-			player.Play(ev.Kind, ev.Name, audio.DefaultLevelFor(ev.Name))
+			level := audio.DefaultLevelFor(ev.Name)
+			player.Play(ev.Kind, ev.Name, level)
+			if rec != nil {
+				rec.LogEvent("audio", ev.Name, level.String(), nil)
+			}
 		}
 	}
 }

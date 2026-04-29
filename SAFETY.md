@@ -199,6 +199,45 @@ true`). The post-arm GUI surfaces active alarms with dismiss buttons.
 **Disarming the flight auto-acknowledges all active alarms** so the
 post-flight environment isn't still beeping.
 
+## Recording
+
+Each arm-to-disarm flight is captured as a SQLite database for
+post-flight analysis. The database lives in memory while the flight
+is in progress; on disarm it is copied to disk via `VACUUM INTO`.
+
+The recorder runs **off the flight-critical path** entirely:
+
+- Audio events are forwarded to it via the same drain that feeds the
+  player. A failed insert logs and continues; the player still plays.
+- Telemetry samples are pulled by a 5Hz sampler goroutine that polls
+  the telemetry state and forwards the snapshot. The sampler shares
+  no locks with the channel emission path.
+- All inserts happen on a single SQLite connection so concurrent
+  writes serialise; there is no contention with the daemon's tick
+  loop.
+
+**Power loss between arm and disarm = lost recording.** This is by
+design: writing to the SD card during flight risks FS corruption
+under power-cut scenarios, and tmpfs writes are effectively free.
+The trade-off is that a complete loss of power on the Pi mid-flight
+loses the in-memory recording. A 12V SLA UPS on the case is the
+proper redundancy.
+
+Cell count detected by the telemetry layer (heuristic from initial
+voltage) is implicit in the recorded battery rows: the recording
+captures `bat_volts` directly without an explicit cells field, so
+post-flight analysis can derive per-cell voltage as
+`bat_volts / cell_count` using the cell count from session metadata
+or external knowledge of the airframe.
+
+GPS coordinates are recorded at full 7-decimal precision. Sharing a
+recording shares your flight path. There is no per-recording redaction
+toolchain yet; an operator who needs to publish sanitised recordings
+should script that separately.
+
+Cleanup keeps the 10 most recent recordings; older files are deleted
+on each save. Configurable via `-keep-recordings`.
+
 ## Things deliberately NOT done
 
 - **No automatic model swap mid-flight.** The model is loaded in pre-flight

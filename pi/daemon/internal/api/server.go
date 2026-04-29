@@ -61,6 +61,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/audio", s.handleAudio)
 	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
 	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
+	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
 	mux.HandleFunc("/api/v1/model/unload", s.handleModelUnload)
 	mux.HandleFunc("/api/v1/models", s.handleModels)
@@ -291,6 +292,25 @@ func (s *Server) handleAudioAcknowledge(w http.ResponseWriter, r *http.Request) 
 		s.providers.Acknowledge(body.Name)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRecordings lists saved flight recordings on disk. Newest
+// first. Empty array when recording is disabled or no flights have
+// been recorded yet.
+func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
+	if s.providers.Recordings == nil {
+		writeJSON(w, http.StatusOK, []Recording{})
+		return
+	}
+	recs, err := s.providers.Recordings()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if recs == nil {
+		recs = []Recording{}
+	}
+	writeJSON(w, http.StatusOK, recs)
 }
 
 // handleModelLoad parses a JSON body {"path": "..."} and asks the
