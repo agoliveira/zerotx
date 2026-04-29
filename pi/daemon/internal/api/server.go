@@ -58,6 +58,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/logs", s.handleLogs)
 	mux.HandleFunc("/api/v1/preflight", s.handlePreflight)
 	mux.HandleFunc("/api/v1/telemetry", s.handleTelemetry)
+	mux.HandleFunc("/api/v1/audio", s.handleAudio)
+	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
+	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
 	mux.HandleFunc("/api/v1/model/unload", s.handleModelUnload)
 	mux.HandleFunc("/api/v1/models", s.handleModels)
@@ -222,6 +225,72 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, t)
+}
+
+// handleAudio returns the current audio subsystem state.
+func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
+	if s.providers.Audio == nil {
+		writeJSON(w, http.StatusOK, AudioInfo{Threshold: "notice"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.providers.Audio())
+}
+
+// handleAudioThreshold accepts {"level": "warning"} and updates the
+// daemon's audio threshold. Returns 400 on invalid level.
+func (s *Server) handleAudioThreshold(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Level string `json:"level"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if s.providers.SetAudioThreshold == nil {
+		http.Error(w, "audio not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.providers.SetAudioThreshold(body.Level); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAudioAcknowledge accepts either {"name": "bat-low"} (single)
+// or {"all": true} (all alarms).
+func (s *Server) handleAudioAcknowledge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+		All  bool   `json:"all"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.All {
+		if s.providers.AcknowledgeAll != nil {
+			s.providers.AcknowledgeAll()
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name or all required", http.StatusBadRequest)
+		return
+	}
+	if s.providers.Acknowledge != nil {
+		s.providers.Acknowledge(body.Name)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleModelLoad parses a JSON body {"path": "..."} and asks the

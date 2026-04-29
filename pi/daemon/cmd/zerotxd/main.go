@@ -32,7 +32,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.16.1-telemetry-gui"
+const version = "0.17.0-audio-priority"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -56,6 +56,7 @@ func main() {
 	soundsDir := flag.String("sounds-dir", os.ExpandEnv("$HOME/fpv/Edgetx/sd/SOUNDS"), "audio sample directory (EdgeTX-compatible layout)")
 	soundsLang := flag.String("sounds-lang", "en", "language subdirectory under -sounds-dir (e.g. en, pt)")
 	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
+	audioThreshold := flag.String("audio-threshold", "notice", "audio threshold: info / notice / warning / critical (critical events ignore threshold)")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -207,9 +208,14 @@ func main() {
 		log.Println("audio: disabled (-no-audio)")
 		player = &audio.NullPlayer{}
 	} else {
+		thr, ok := audio.ParseLevel(*audioThreshold)
+		if !ok {
+			log.Printf("audio: -audio-threshold %q invalid, defaulting to notice", *audioThreshold)
+		}
 		player = audio.New(audio.Config{
 			SoundsDir: *soundsDir,
 			Lang:      *soundsLang,
+			Threshold: thr,
 		})
 	}
 	defer player.Close()
@@ -621,10 +627,34 @@ func buildAPIProviders(
 			return nil
 		},
 		ListModels: listModels,
-		SetFlightArmed: jsHolder.SetFlightArmed,
+		SetFlightArmed: func(armed bool) {
+			// Disarming auto-acknowledges all active audio alarms so the
+			// post-flight environment isn't still beeping. Arming is a
+			// no-op for the audio subsystem.
+			if !armed {
+				player.AcknowledgeAll()
+			}
+			jsHolder.SetFlightArmed(armed)
+		},
 		Telemetry: func() interface{} {
 			return telemState.Snapshot()
 		},
+		Audio: func() api.AudioInfo {
+			return api.AudioInfo{
+				Threshold:    player.Threshold().String(),
+				ActiveAlarms: player.ActiveAlarms(),
+			}
+		},
+		SetAudioThreshold: func(level string) error {
+			l, ok := audio.ParseLevel(level)
+			if !ok {
+				return fmt.Errorf("invalid level %q (want info|notice|warning|critical)", level)
+			}
+			player.SetThreshold(l)
+			return nil
+		},
+		Acknowledge:    player.Acknowledge,
+		AcknowledgeAll: player.AcknowledgeAll,
 
 		Version:    version,
 		Uptime:     func() time.Duration { return time.Since(startedAt) },

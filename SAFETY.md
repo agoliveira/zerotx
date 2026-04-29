@@ -171,6 +171,34 @@ If no audio backend is available (no paplay or aplay on PATH), the
 daemon logs a warning at startup and uses a NullPlayer that drops all
 events. Daemon stays useful but silent.
 
+### Priority levels
+
+Each event has a Level (info / notice / warning / critical) derived by
+pattern-matching the track name (e.g. `armed.*` → critical, `*low*` →
+warning, `fm-*` → notice). The Player has a Threshold; events strictly
+below threshold are dropped (logged at debug level). **Critical events
+ignore the threshold and always play**, unless the whole audio system
+is disabled (`-no-audio`).
+
+The threshold is set via `-audio-threshold info|notice|warning|critical`
+at startup (default: `notice` — info dropped, rest plays). Operators
+can change it at runtime via `POST /api/v1/audio/threshold`. No file
+persistence: restart resets to the flag default.
+
+### Repeating alarms
+
+Warning and critical events schedule periodic re-plays. Defaults:
+
+- Critical: every 5s, indefinite, until acknowledged
+- Warning: every 30s, max 3 cycles, dismissable
+- Notice/info: never repeat
+
+Same alarm name re-firing resets its timer (debounce). Operators
+acknowledge via `POST /api/v1/audio/acknowledge` (per-name or `all:
+true`). The post-arm GUI surfaces active alarms with dismiss buttons.
+**Disarming the flight auto-acknowledges all active alarms** so the
+post-flight environment isn't still beeping.
+
 ## Things deliberately NOT done
 
 - **No automatic model swap mid-flight.** The model is loaded in pre-flight

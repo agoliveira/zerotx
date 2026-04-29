@@ -33,6 +33,15 @@ type State struct {
 	Joystick  *JoystickSnapshot  `json:"joystick,omitempty"`
 	Link      LinkSnapshot       `json:"link"`
 	Telemetry interface{}        `json:"telemetry,omitempty"`
+	Audio     *AudioInfo         `json:"audio,omitempty"`
+}
+
+// AudioInfo summarises the audio subsystem's current state for API
+// consumers. Threshold is the minimum level that plays; ActiveAlarms
+// is the list of currently-scheduled repeating alarms.
+type AudioInfo struct {
+	Threshold    string      `json:"threshold"`
+	ActiveAlarms interface{} `json:"activeAlarms"`
 }
 
 // JoystickSnapshot exposes normalized axis values and button states. nil
@@ -260,6 +269,15 @@ type Providers struct {
 	// value as opaque JSON to avoid an import cycle.
 	Telemetry func() interface{}
 
+	// Audio returns the current threshold and any active repeating
+	// alarms. ActiveAlarms is a thin shape that survives the import
+	// cycle by holding the audio package's ActiveAlarm directly via
+	// interface{}; the GUI consumes it as JSON.
+	Audio             func() AudioInfo
+	SetAudioThreshold func(level string) error
+	Acknowledge       func(name string)
+	AcknowledgeAll    func()
+
 	Version string
 	Uptime  func() time.Duration
 }
@@ -281,6 +299,10 @@ func (p *Providers) snapshot() State {
 	}
 	if p.Telemetry != nil {
 		out.Telemetry = p.Telemetry()
+	}
+	if p.Audio != nil {
+		ai := p.Audio()
+		out.Audio = &ai
 	}
 	return out
 }

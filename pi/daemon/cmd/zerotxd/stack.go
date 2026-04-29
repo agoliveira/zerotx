@@ -72,7 +72,9 @@ func BuildStack(m *model.ZeroTXModel, jsState source.JoystickState, pnl panel.Pa
 }
 
 // drainAudio forwards events from the CF processor's Audio channel to
-// the player until Stop is called.
+// the player until Stop is called. The level is computed from the track
+// name via audio.DefaultLevelFor; future per-CF priority overrides
+// would plumb through here.
 func (s *Stack) drainAudio(player audio.Player) {
 	defer close(s.audioDone)
 	for {
@@ -83,7 +85,7 @@ func (s *Stack) drainAudio(player audio.Player) {
 			if !ok {
 				return
 			}
-			player.Play(ev.Kind, ev.Name)
+			player.Play(ev.Kind, ev.Name, audio.DefaultLevelFor(ev.Name))
 		}
 	}
 }

@@ -869,6 +869,58 @@ table.data-table {
   text-transform: uppercase;
 }
 
+/* Active alarms panel (post-arm) */
+.alarms-panel {
+  border-left: 3px solid var(--err);
+}
+.alarms-panel h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.alarms-panel h2 .action {
+  font-size: 11px;
+}
+.alarms-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+}
+.alarms-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-bottom: 6px;
+  background: var(--bg-elevated);
+}
+.alarms-list li.crit { border-color: var(--err); }
+.alarms-list li.warn { border-color: var(--warn); }
+.alarms-list .alarm-name {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-main);
+}
+.alarms-list .alarm-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+.alarms-list .alarm-dismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.alarms-list .alarm-dismiss:hover { color: var(--text-main); border-color: var(--text-muted); }
+
 /* === Modal overlay === */
 .modal-backdrop {
   position: fixed;
@@ -1072,6 +1124,11 @@ h2.warn { color: var(--warn); }
            Provides at-a-glance live status while flying, until the
            full flight-mode HUD lands in a future round. -->
       <div id="pf-postarm" style="display:none">
+        <div class="panel alarms-panel" id="pf-alarms-panel" style="display:none">
+          <h2>Active alarms <button id="pf-alarms-ack-all" class="action small">Acknowledge all</button></h2>
+          <ul id="pf-alarms-list" class="alarms-list"></ul>
+        </div>
+
         <div class="panel" id="pf-armed-telemetry-panel" style="display:none">
           <h2>Telemetry <span id="pf-armed-telemetry-stale" class="stale-tag" style="display:none">stale</span></h2>
           <div class="telemetry-grid">
@@ -1362,6 +1419,9 @@ const App = {
     // Null when telemetry has never been received (operator may be
     // flying without telemetry, or link doesn't carry it).
     telemetry: null,
+    // audio: latest snapshot from /api/v1/audio (threshold + active
+    // alarms). Updated on connect and on each WebSocket frame.
+    audio: null,
   },
 
   ws: null,
@@ -1428,6 +1488,7 @@ const App = {
     document.getElementById('pf-arm-btn').addEventListener('click', () => this.armFlight());
     document.getElementById('pf-disarm-btn').addEventListener('click', () => this.disarmFlight());
     document.getElementById('pf-settings-btn').addEventListener('click', () => this.openSettings());
+    document.getElementById('pf-alarms-ack-all').addEventListener('click', () => this.acknowledgeAllAlarms());
 
     // Modal: clicking the backdrop dismisses (cancels). The window
     // itself doesn't bubble click, so clicks inside don't dismiss.
@@ -1597,6 +1658,18 @@ const App = {
         }
       }
     }
+    // Capture audio state (threshold + active alarms) from the stream.
+    if (frame.audio !== undefined) {
+      const prevCount = this.state.audio
+        ? (this.state.audio.activeAlarms || []).length : 0;
+      this.state.audio = frame.audio;
+      const newCount = (frame.audio && frame.audio.activeAlarms || []).length;
+      // Re-render the active alarms panel when count changes (cheap)
+      // or when armed (always).
+      if (this.state.flightArmed && (prevCount !== newCount || this.activeTab === 'preflight')) {
+        this.renderActiveAlarms();
+      }
+    }
     this.renderActiveTab(frame);
   },
 
@@ -1693,8 +1766,57 @@ const App = {
         this.state.telemetry = (t && Object.keys(t).length > 0) ? t : null;
       }
     } catch (e) { /* non-fatal */ }
+    try {
+      const r = await fetch(`http://${this.state.address}/api/v1/audio`);
+      if (r.ok) {
+        this.state.audio = await r.json();
+        if (this.state.audio && this.state.audio.threshold) {
+          localStorage.setItem('zerotxAudioThreshold', this.state.audio.threshold);
+        }
+      }
+    } catch (e) { /* non-fatal */ }
     await Promise.all([this.refreshJoysticks(), this.refreshModels()]);
     this.renderPreflight();
+  },
+
+  async setAudioThreshold(level) {
+    try {
+      const r = await fetch(`http://${this.state.address}/api/v1/audio/threshold`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        this.modal.alert('Audio threshold update failed', body.error || r.statusText);
+        return;
+      }
+      // Optimistic local update — daemon WS frame will confirm shortly.
+      if (!this.state.audio) this.state.audio = {};
+      this.state.audio.threshold = level;
+    } catch (e) {
+      this.modal.alert('Network error', e.message);
+    }
+  },
+
+  async acknowledgeAlarm(name) {
+    try {
+      await fetch(`http://${this.state.address}/api/v1/audio/acknowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+    } catch (e) { /* non-fatal — daemon is source of truth */ }
+  },
+
+  async acknowledgeAllAlarms() {
+    try {
+      await fetch(`http://${this.state.address}/api/v1/audio/acknowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      });
+    } catch (e) { /* non-fatal */ }
   },
 
   async refreshJoysticks() {
@@ -1861,6 +1983,10 @@ const App = {
   // === Settings popover ===
 
   openSettings() {
+    const currentThreshold = (this.state.audio && this.state.audio.threshold)
+      || localStorage.getItem('zerotxAudioThreshold')
+      || 'notice';
+    const opt = (val, label) => `<option value="${val}"${currentThreshold === val ? ' selected' : ''}>${label}</option>`;
     const html = `
       <p>Configure pre-flight behaviour. Settings persist across sessions.</p>
       <div class="checkbox-row">
@@ -1876,6 +2002,26 @@ const App = {
         workflows. The pre-flight checklist still gates arming
         regardless of confirmation settings.
       </p>
+
+      <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
+
+      <p>Audio threshold. Events strictly below this level are silenced.
+        Critical events always play unless audio is fully disabled.</p>
+      <div class="row" style="margin-top:8px">
+        <span class="label">Threshold</span>
+        <select id="set-audio-threshold">
+          ${opt('info', 'Info (everything plays)')}
+          ${opt('notice', 'Notice (default)')}
+          ${opt('warning', 'Warnings only')}
+          ${opt('critical', 'Critical only')}
+        </select>
+      </div>
+      <p class="muted small">
+        Repeat policy: critical alarms repeat every 5s indefinitely;
+        warnings every 30s up to 3 cycles; notice and info play once.
+        Disarming auto-acknowledges all active alarms.
+      </p>
+
       <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
       <p>Reset operator confirmations and any auto-verify overrides.
         Useful when starting a fresh session or when stale state has
@@ -1893,6 +2039,14 @@ const App = {
         this.state.settings.confirmDisarm =
           document.getElementById('set-confirm-disarm').checked;
         localStorage.setItem('zerotxSettings', JSON.stringify(this.state.settings));
+
+        // Push threshold change to the daemon. Cache locally for
+        // snappy display before the next /audio refresh comes back.
+        const newThreshold = document.getElementById('set-audio-threshold').value;
+        if (newThreshold !== currentThreshold) {
+          localStorage.setItem('zerotxAudioThreshold', newThreshold);
+          this.setAudioThreshold(newThreshold);
+        }
       },
     });
 
@@ -2296,6 +2450,50 @@ const App = {
     }).join('') || '<div class="log-line muted">no entries</div>';
 
     this.renderTelemetryPanel();
+    this.renderActiveAlarms();
+  },
+
+  // renderActiveAlarms shows currently-scheduled repeating alarms.
+  // Each item has a per-alarm dismiss button; the panel header has
+  // an "Acknowledge all" button. Hidden pre-arm (operator's
+  // confirmations checklist takes that screen real estate). Disarm
+  // auto-acks on the daemon side, so the panel will simply empty
+  // out when the user clicks DISARM.
+  renderActiveAlarms() {
+    const panel = document.getElementById('pf-alarms-panel');
+    if (!panel) return;
+    if (!this.state.flightArmed) {
+      panel.style.display = 'none';
+      return;
+    }
+    const alarms = (this.state.audio && this.state.audio.activeAlarms) || [];
+    if (alarms.length === 0) {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = '';
+    const list = document.getElementById('pf-alarms-list');
+    list.innerHTML = '';
+    for (const a of alarms) {
+      const li = document.createElement('li');
+      li.className = a.level === 'critical' ? 'crit' : 'warn';
+      const cycleText = a.maxCycles > 0
+        ? `${a.playedCount}/${a.maxCycles}`
+        : `${a.playedCount}/∞`;
+      li.innerHTML = `
+        <span class="alarm-name">${escapeHtml(a.name)}</span>
+        <span class="alarm-meta">${escapeHtml(a.level)} · ${cycleText}</span>
+        <button class="alarm-dismiss" data-name="${escapeHtml(a.name)}">Dismiss</button>
+      `;
+      list.appendChild(li);
+    }
+    // Bind dismiss buttons. Re-bound on every render; cheap enough.
+    list.querySelectorAll('.alarm-dismiss').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const name = e.currentTarget.dataset.name;
+        this.acknowledgeAlarm(name);
+      });
+    });
   },
 
   // renderTelemetryPanel populates the post-arm telemetry panel from
