@@ -29,11 +29,12 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logic"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/model"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/narrator"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.19.0-hud"
+const version = "0.22.2-narrator"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -224,6 +225,11 @@ func main() {
 	}
 	defer player.Close()
 
+	// Narrator builds and emits structured narrative announcements
+	// (boot greeting, post-flight summary). Pure transformation;
+	// owns no goroutines. Backed by the audio Player above.
+	narr := narrator.New(player)
+
 	// Recorder: SQLite-backed flight recording. In-memory while flying,
 	// saved to <recordings-dir> on disarm. Failures here must not
 	// affect flight; we fall back to a no-op recorder on construction
@@ -305,7 +311,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now())
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now())
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -314,6 +320,12 @@ func main() {
 			}
 		}()
 	}
+
+	// Boot greeting. Narrative announcement that the daemon is ready.
+	// Played once at the configured threshold; if -no-audio or audio
+	// threshold filters it out, this is silent. Either way the daemon
+	// keeps booting; the greeting is presentational, never a gate.
+	narr.PlayBootGreeting()
 
 	// Goroutines.
 	go func() {
@@ -544,6 +556,7 @@ func buildAPIProviders(
 	pnl panel.Panel,
 	jsHolder *joystickHolder,
 	player audio.Player,
+	narr *narrator.Narrator,
 	telemState *telemetry.State,
 	rec recorder.Interface,
 	port string,
@@ -691,8 +704,28 @@ func buildAPIProviders(
 				}
 				rec.OnArm(name, "")
 			} else {
-				rec.OnDisarm()
+				path := rec.OnDisarm()
 				player.AcknowledgeAll()
+
+				// Post-flight narration. If recording produced a
+				// saved file, summarize it and emit the narrative
+				// announcement. Failures here (file missing,
+				// summary error, etc.) are logged but do not
+				// affect any other disarm-side cleanup. We launch
+				// in a goroutine so the disarm path stays snappy
+				// — summary computation is cheap but the audio
+				// queue is async anyway, so launching async
+				// matches the rest of the audio path's contract.
+				if path != "" {
+					go func(p string) {
+						summary, err := recorder.Summarize(p)
+						if err != nil {
+							log.Printf("post-flight: summarize %s: %v", p, err)
+							return
+						}
+						narr.PlayPostFlight(summary)
+					}(path)
+				}
 			}
 			jsHolder.SetFlightArmed(armed)
 		},

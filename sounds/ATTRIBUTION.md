@@ -1,48 +1,56 @@
 # Audio bank attribution and licensing
 
-The ZeroTX audio bank is generated from the dictionary at `dictionary.yml`
-using **ElevenLabs** TTS via their REST API. Synthesis happens at build
-time on the operator's machine; generated audio is stored locally in
-`sounds/<bank>/`.
+The ZeroTX public sound bank is generated from `dictionary.yml` using a
+swappable synthesizer. The default is **edge-tts** (free, no API key,
+runs via Microsoft's Edge TTS service); alternatives including
+ElevenLabs, Piper, and eSpeak-NG are documented in `README.md`.
 
-## Voices used
+## What's committed to git
 
-| Bank          | Voice            | Provenance                                |
-| ------------- | ---------------- | ----------------------------------------- |
-| `en`          | Mia              | ElevenLabs library voice                  |
-| `pt`          | Larissa          | ElevenLabs library voice                  |
-| `pt-adilson`  | Adilson (cloned) | Cloned from project owner's voice samples |
-| `pt-pirate`   | Adilson (cloned) | Same clone as `pt-adilson`                |
+- The dictionary (`dictionary.yml`) : track names and spoken text in en
+  and pt. The wording is generic FPV/RC vocabulary
+- The build script (`scripts/build-sounds.sh`)
+- This file
+- README and personal.yml.example
 
-## Licensing
+## What's NOT committed
 
-Audio generated via the ElevenLabs API is owned by the user under their
-Terms of Service. For personal and non-commercial hobby use, the generated
-clips are yours to use, modify, and redistribute. Commercial distribution
-of generated audio requires the appropriate ElevenLabs subscription tier;
-ZeroTX as a hobby project doesn't trigger this, but anyone forking ZeroTX
-for commercial purposes should re-read the current ElevenLabs TOS.
+- Generated audio (`sounds/<bank>/`) : gitignored. Anyone with the
+  default synthesizer regenerates it locally
+- Personal config (`sounds/personal.yml`) : gitignored. Voice IDs,
+  cloned voices, and personal text variants live here
+- Hand-recorded overrides (under `overrides/<bank>/`) : gitignored
+  by default. Operators can selectively commit specific overrides
+  if they want to share them
 
-The cloned voice (`pt-adilson`, `pt-pirate`) is the project owner's own
-voice. ElevenLabs voice cloning produces synthesis the trained user owns;
-the cloned banks ship under the project's GPLv3 licence with the project
-owner's consent.
+## Licensing of generated audio
 
-If anyone ever wanted to distribute ZeroTX without an ElevenLabs dependency
-(licence cleanliness, offline-only requirements, etc.), the audio bank can
-be regenerated using one of:
+Licensing depends on the synthesizer used:
 
-- **Piper** (MIT-licensed, runs offline, lower quality)
-- **eSpeak-ng** (GPLv3, robotic but truly free)
-- **Hand-recorded** by a contributor who licences their voice under
-  the project's terms
+- **edge-tts** uses Microsoft's free Edge TTS endpoint. There's no
+  formal redistribution license for the generated audio; the pragmatic
+  position taken by hobbyist projects is that audio generated for
+  personal use is fine. For commercial distribution, a proper license
+  is needed
+- **ElevenLabs** generated audio is owned by the user under their
+  Terms of Service. Starter tier ($6/month and up) includes a
+  commercial license. Cloned voices remain the user's
+- **Piper, eSpeak-NG** are open-source (MIT and GPLv3 respectively);
+  generated audio is unencumbered
+- **Hand-recorded** audio is licensed by the recorder; contributors
+  to ZeroTX overrides license under the project's GPLv3 by submitting
 
-The dictionary system supports any of these — only the build script's
-synthesis call changes. Lookup names, repeat policies, and the daemon's
-audio package stay the same.
+## Cloned voices
 
-## Hand-recorded overrides
+If you use a cloned voice via ElevenLabs (or another voice cloning
+service), the cloned voice references your account's voices. Treat
+voice IDs as semi-sensitive. Anyone with the ID and your API key can
+synthesize using your clone. This is why `personal.yml` is gitignored
+and `personal.yml.example` uses placeholder strings.
 
-Anything in `overrides/<bank>/` is presumed to be the recorder's own voice
-and licensed under the project's GPLv3 terms. By contributing overrides,
-you licence your recording under the same.
+## Spoken content licensing
+
+The dictionary's en and pt text is original wording for standard FPV/RC
+events. It's licensed under the project's GPLv2-or-later license like
+the rest of ZeroTX. Translations or wording suggestions submitted as
+PRs are accepted under the same terms.

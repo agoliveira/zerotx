@@ -36,7 +36,7 @@ var decomposition = map[string][]string{
 	// GPS family.
 	"gps-lock":   {"w-gps", "lock"},
 	"gps-lost":   {"w-gps", "lost"},
-	"gps-fix-3d": {"w-gps", "fix"},
+	"gps-fix-3d": {"w-gps", "w-fix"},
 	"gps-glitch": {"w-gps", "glitch"},
 	"home-set":   {"home", "set"},
 

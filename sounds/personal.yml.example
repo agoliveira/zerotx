@@ -1,0 +1,75 @@
+# ZeroTX personal sound bank configuration (template).
+#
+# Copy this file to sounds/personal.yml and edit. The personal.yml file
+# is gitignored. It's where private voice IDs, custom banks, and any
+# personal text variants live.
+#
+# At build time, scripts/build-sounds.sh merges this file with
+# dictionary.yml. The merge rules are:
+#
+#   1. Banks declared here EXTEND the public banks list. You can add
+#      new banks (e.g. cloned voice, joke variants, mood banks) without
+#      editing the public dictionary.
+#
+#   2. To OVERRIDE a public bank's voice, redeclare it here with the
+#      same name. Example: redeclare 'en' here to use a different voice
+#      than the public default.
+#
+#   3. Track text declared here EXTENDS the public tracks. You add new
+#      banks-per-track entries; the public dictionary's en/pt text is
+#      preserved.
+#
+#   4. To OVERRIDE a track's text in a public bank, declare it here
+#      with the same track name and bank. The personal.yml entry wins.
+#
+# Empty track text (or an absent entry) skips that bank/track combo
+# at build time (no API call, no file generated). This lets new banks
+# ship with placeholder structure that you fill in iteratively.
+#
+# === Privacy note ===
+# Voice IDs from ElevenLabs reference your account's voices. Anyone
+# with the ID and your API key can synthesize using those voices:
+# including your cloned voice. Treat IDs as semi-sensitive: this file
+# is gitignored for that reason.
+
+banks:
+  # === Override the public en bank with your voice of choice ===
+  # en:
+  #   voice_id: "REPLACE_WITH_YOUR_ELEVENLABS_VOICE_ID"
+  #   model: eleven_multilingual_v2
+  #   description: "English (your override)"
+
+  # === Override the public pt bank ===
+  # pt:
+  #   voice_id: "REPLACE_WITH_YOUR_ELEVENLABS_VOICE_ID"
+  #   model: eleven_multilingual_v2
+  #   description: "Brazilian Portuguese (your override)"
+
+  # === Add a custom bank with your cloned voice ===
+  # Naming is free-form. Use whatever fits your project. The daemon's
+  # -sounds-lang flag selects which bank plays at runtime.
+  # my-bank:
+  #   voice_id: "REPLACE_WITH_YOUR_ELEVENLABS_VOICE_ID"
+  #   model: eleven_multilingual_v2
+  #   description: "Description of this bank"
+
+# Per-bank track text overrides or additions. Use this to:
+#   - Provide text for custom banks declared above
+#   - Override specific tracks in public banks (en, pt) with your own
+#     wording
+#   - Provide localizations for languages the public dictionary doesn't
+#     yet cover (e.g. add a 'de' bank with German text)
+#
+# Empty strings or absent entries skip generation cleanly.
+tracks:
+  # === Examples for a custom bank ===
+  # armed:
+  #   my-bank: "Armed."
+  # failsafe:
+  #   my-bank: "Failsafe."
+  # bat-low:
+  #   my-bank: "Battery low."
+
+  # === Example: override a public track in en ===
+  # daemon-started:
+  #   en: "Custom welcome message."

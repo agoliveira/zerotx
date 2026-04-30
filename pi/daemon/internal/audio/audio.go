@@ -105,6 +105,15 @@ type Player interface {
 	// Returns immediately.
 	Play(kind, name string, level Level)
 
+	// PlaySequence accepts an ordered list of track names and plays
+	// them as a single stitched utterance with the standard
+	// inter-fragment gap between each. Used by the narrator to emit
+	// runtime-composed announcements (post-flight summary, narrative
+	// alarms, etc.) where the sequence isn't known at dictionary time.
+	// Threshold gating is applied once, to the whole sequence.
+	// Returns immediately. No-op if names is empty.
+	PlaySequence(kind string, names []string, level Level)
+
 	// Threshold returns the current minimum level. Events with a
 	// strictly lower level are dropped.
 	Threshold() Level
@@ -235,7 +244,8 @@ func detectBackend() (string, []string) {
 // (CI, headless servers, missing utilities) or when -no-audio is set.
 type NullPlayer struct{}
 
-func (n *NullPlayer) Play(string, string, Level)    {}
+func (n *NullPlayer) Play(string, string, Level)              {}
+func (n *NullPlayer) PlaySequence(string, []string, Level)    {}
 func (n *NullPlayer) Threshold() Level              { return LevelInfo }
 func (n *NullPlayer) SetThreshold(Level)            {}
 func (n *NullPlayer) Acknowledge(string)            {}
@@ -264,9 +274,14 @@ type shellPlayer struct {
 
 // playRequest is what flows through the events channel. Stripped of
 // any scheduling concerns; the worker just resolves and plays.
+//
+// If sequence is non-empty, the worker plays each name in order with
+// the standard inter-fragment gap. Otherwise the worker resolves
+// `name` (with whole-phrase-then-decompose semantics).
 type playRequest struct {
-	kind string
-	name string
+	kind     string
+	name     string
+	sequence []string
 }
 
 // alarmState tracks one currently-scheduled repeating alarm. It owns
@@ -280,6 +295,28 @@ type alarmState struct {
 	playedCount int       // protected by shellPlayer.mu
 	nextPlayAt  time.Time // protected by shellPlayer.mu
 	done        chan struct{}
+}
+
+// PlaySequence implements Player. Builds a single playRequest that
+// carries a pre-resolved sequence; the worker plays each fragment
+// with the standard inter-fragment gap. No alarm scheduling for
+// sequences (they're narrative, not repeating alarms).
+func (p *shellPlayer) PlaySequence(kind string, names []string, level Level) {
+	if len(names) == 0 {
+		return
+	}
+	if p.isClosed() {
+		return
+	}
+	thr := Level(atomic.LoadInt32(&p.threshold))
+	if level < thr && level != LevelCritical {
+		log.Printf("audio: dropped sequence first=%s level=%s (threshold=%s)", names[0], level, thr)
+		return
+	}
+	// Defensive copy so caller can't mutate the slice mid-flight.
+	seq := make([]string, len(names))
+	copy(seq, names)
+	p.enqueue(playRequest{kind: kind, sequence: seq})
 }
 
 func (p *shellPlayer) Play(kind, name string, level Level) {
@@ -461,6 +498,14 @@ func (p *shellPlayer) isClosed() bool {
 func (p *shellPlayer) run() {
 	defer close(p.done)
 	for ev := range p.events {
+		// Sequence request: play each fragment in order, skipping
+		// whole-phrase lookup and decomposition (the caller has
+		// already resolved the list).
+		if len(ev.sequence) > 0 {
+			p.playSequence(ev.sequence)
+			continue
+		}
+
 		// First try whole-phrase lookup. Cheapest path; one stat call
 		// per extension and we play the matching file.
 		if path, ok := p.resolve(ev.name); ok {

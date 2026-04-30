@@ -205,29 +205,38 @@ The audio package looks up sample files at `<sounds-dir>/<bank>/<name>.<ext>`
 with a fallback to `<sounds-dir>/<name>.<ext>`. Banks are named voice/style
 collections; the daemon's `-sounds-lang` flag selects which bank plays.
 
-Round 1 ships four banks: `en` (professional English), `pt` (professional
-Brazilian Portuguese), `pt-adilson` (project owner's cloned voice in neutral
-register), and `pt-pirate` (same clone, profane register, joke bank). Adding
-banks is a YAML edit plus a build-script run.
+The public dictionary ships with two banks (`en` and `pt`) and a generic FPV
+vocabulary covering alarms, flight modes, building blocks (numbers, units,
+words), and sentence fragments for narrative announcements. Operators add
+custom banks (cloned voices, mood variants, etc.) via `sounds/personal.yml`,
+which is gitignored. The build script merges the personal config over the
+public dictionary at synthesis time.
 
-The actual sample files are generated from a YAML dictionary
-(`sounds/dictionary.yml`) by `scripts/build-sounds.sh`, which calls the
-ElevenLabs REST API to synthesise each entry. The generated audio is **not
-committed to the repo** — contributors regenerate on demand. The dictionary,
-build script, and any hand-recorded overrides are committed; the per-bank
-MP3 directories are gitignored.
+The audio bank is generated from `sounds/dictionary.yml` by
+`scripts/build-sounds.sh`, which uses **edge-tts** by default. The
+synthesizer is swappable — operators replace one function in the build
+script to use ElevenLabs, Piper, eSpeak-NG, or any other tool that produces
+mono audio at 22 kHz or higher. Generated audio is **not committed to the
+repo**; contributors regenerate on demand.
 
-**Hand-recorded overrides** at `sounds/overrides/<bank>/<name>.{mp3,wav}` are
-copied over the generated audio at build time and always win. This lets the
-operator replace specific tracks with their own voice (for safety-critical
-clips like `armed`, `failsafe`) without regenerating the whole bank.
+When whole-phrase lookup fails for a track name, the audio package falls
+back to **stitching**: a curated decomposition map (in
+`audio/decompositions.go`) splits compound names like `bat-low` into
+fragments (`w-battery`, `low`) that are played in sequence with an 80ms
+inter-fragment gap. Partial decompositions degrade gracefully — missing
+fragments log a warning and the surrounding sequence still plays.
+
+**Hand-recorded overrides** at `sounds/overrides/<bank>/<name>.{mp3,wav,ogg}`
+are copied over the generated audio at build time and always win. This lets
+the operator replace specific tracks with their own voice (for safety-
+critical clips like `armed`, `failsafe`) without regenerating the whole bank.
 
 The audio bank is **purely advisory**. Missing or corrupt audio files produce
 a one-time log warning per file and silence for that event; nothing in the
 flight-critical path depends on audio playback succeeding. The choice of
-ElevenLabs as the TTS provider is documented in `sounds/ATTRIBUTION.md`
-along with regeneration paths for contributors who need a different
-licensing posture.
+default synthesizer is documented in `sounds/README.md` along with
+alternatives for contributors who need different licensing or quality
+posture.
 
 ## Recording
 

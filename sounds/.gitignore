@@ -1,16 +1,23 @@
-# Generated audio banks — not committed. Run scripts/build-sounds.sh
-# after editing dictionary.yml to regenerate.
+# Generated audio banks - not committed.
 en/
 pt/
-pt-adilson/
-pt-pirate/
-
-# Catch any future banks named in the dictionary.
-# Pattern matches dirs containing .mp3 files.
 */*.mp3
+*/*.wav
+*/*.ogg
+!overrides/**/*.mp3
+!overrides/**/*.wav
+!overrides/**/*.ogg
 
-# Override directory: committed contents are honoured but the dir itself
-# stays empty in fresh clones via overrides/.gitkeep.
+# Personal configuration - voice IDs, cloned voices, custom banks.
+# This is gitignored by design; see personal.yml.example for the
+# structure and copy/edit to create your own.
+personal.yml
+
+# Override directory: committed contents are honoured (see exceptions
+# above for audio extensions), but the directory's own structure stays
+# minimal in fresh clones.
 overrides/*
 !overrides/.gitkeep
 !overrides/README.md
+!overrides/en/
+!overrides/pt/
