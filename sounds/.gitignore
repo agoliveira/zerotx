@@ -1,10 +1,16 @@
-# Generated audio bank — not committed. Run scripts/build-sounds.sh
+# Generated audio banks — not committed. Run scripts/build-sounds.sh
 # after editing dictionary.yml to regenerate.
 en/
 pt/
+pt-adilson/
+pt-pirate/
 
-# Override directory — committed contents are honoured but the dir
-# itself stays empty in fresh clones via overrides/.gitkeep.
+# Catch any future banks named in the dictionary.
+# Pattern matches dirs containing .mp3 files.
+*/*.mp3
+
+# Override directory: committed contents are honoured but the dir itself
+# stays empty in fresh clones via overrides/.gitkeep.
 overrides/*
 !overrides/.gitkeep
 !overrides/README.md

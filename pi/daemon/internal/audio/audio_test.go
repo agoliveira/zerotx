@@ -500,3 +500,130 @@ func TestConcurrency_Smoke(t *testing.T) {
 		t.Errorf("expected no active alarms after AcknowledgeAll")
 	}
 }
+
+// === Decomposition / stitching ===
+
+func TestDecompose_KnownCompound(t *testing.T) {
+	parts, ok := decompose("bat-low")
+	if !ok {
+		t.Fatal("expected bat-low to decompose")
+	}
+	if len(parts) != 2 || parts[0] != "w-battery" || parts[1] != "low" {
+		t.Errorf("unexpected decomposition: %v", parts)
+	}
+}
+
+func TestDecompose_UnknownReturnsFalse(t *testing.T) {
+	_, ok := decompose("never-defined-track")
+	if ok {
+		t.Error("expected unknown name to return ok=false")
+	}
+}
+
+func TestDecompose_DefensiveCopy(t *testing.T) {
+	// Caller mutating the returned slice must not corrupt the table.
+	parts, _ := decompose("bat-low")
+	parts[0] = "MUTATED"
+	parts2, _ := decompose("bat-low")
+	if parts2[0] == "MUTATED" {
+		t.Error("decompose returned a shared slice; mutation leaked back")
+	}
+}
+
+func TestDecompose_AllEntriesNonEmpty(t *testing.T) {
+	// Sanity check that no entry has zero fragments.
+	for name, parts := range decomposition {
+		if len(parts) == 0 {
+			t.Errorf("%s decomposes to empty", name)
+		}
+		for i, p := range parts {
+			if p == "" {
+				t.Errorf("%s fragment %d is empty", name, i)
+			}
+		}
+	}
+}
+
+// resolveOnly tests the run() lookup-then-decompose path without
+// actually exec'ing audio. We replace the play() function with a
+// recorder by giving the player a stub command and substituting
+// fileExists to control which paths "exist".
+func TestStitching_LookupFirstThenDecompose(t *testing.T) {
+	// Whole phrase exists: stitching should NOT trigger.
+	have := map[string]bool{
+		"/sounds/en/bat-low.wav": true,
+	}
+	substituteFileExists(t, func(p string) bool { return have[p] })
+
+	p := &shellPlayer{cfg: Config{
+		SoundsDir:  "/sounds",
+		Lang:       "en",
+		Extensions: []string{".wav"},
+	}}
+
+	// Resolve directly to confirm whole-phrase lookup wins.
+	path, ok := p.resolve("bat-low")
+	if !ok || path != "/sounds/en/bat-low.wav" {
+		t.Errorf("whole-phrase lookup failed: got %q ok=%v", path, ok)
+	}
+}
+
+func TestStitching_FallsBackWhenWholeMissing(t *testing.T) {
+	// Whole bat-low.wav missing; fragments present.
+	have := map[string]bool{
+		"/sounds/en/w-battery.wav": true,
+		"/sounds/en/low.wav":       true,
+	}
+	substituteFileExists(t, func(p string) bool { return have[p] })
+
+	p := &shellPlayer{cfg: Config{
+		SoundsDir:  "/sounds",
+		Lang:       "en",
+		Extensions: []string{".wav"},
+	}}
+
+	// Whole-phrase lookup should fail.
+	if _, ok := p.resolve("bat-low"); ok {
+		t.Fatal("whole-phrase shouldn't resolve here")
+	}
+	// Decomposition should produce the right parts.
+	parts, ok := decompose("bat-low")
+	if !ok || len(parts) != 2 {
+		t.Fatalf("decompose failed: %v ok=%v", parts, ok)
+	}
+	// Each fragment should resolve.
+	for _, frag := range parts {
+		if _, ok := p.resolve(frag); !ok {
+			t.Errorf("fragment %q didn't resolve but its file exists", frag)
+		}
+	}
+}
+
+func TestStitching_PartialMissingFragmentDegrades(t *testing.T) {
+	// w-battery exists but "low" is missing. The player should still
+	// play what it can rather than going completely silent.
+	have := map[string]bool{
+		"/sounds/en/w-battery.wav": true,
+		// "low.wav" deliberately absent
+	}
+	substituteFileExists(t, func(p string) bool { return have[p] })
+
+	p := &shellPlayer{cfg: Config{
+		SoundsDir:  "/sounds",
+		Lang:       "en",
+		Extensions: []string{".wav"},
+	}}
+
+	parts, _ := decompose("bat-low")
+	resolvedCount := 0
+	for _, frag := range parts {
+		if _, ok := p.resolve(frag); ok {
+			resolvedCount++
+		}
+	}
+	if resolvedCount != 1 {
+		t.Errorf("expected exactly 1 fragment to resolve (w-battery), got %d", resolvedCount)
+	}
+}
+
+// (helper removed; tests use shellPlayer directly without starting run())

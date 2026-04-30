@@ -461,14 +461,57 @@ func (p *shellPlayer) isClosed() bool {
 func (p *shellPlayer) run() {
 	defer close(p.done)
 	for ev := range p.events {
-		path, ok := p.resolve(ev.name)
+		// First try whole-phrase lookup. Cheapest path; one stat call
+		// per extension and we play the matching file.
+		if path, ok := p.resolve(ev.name); ok {
+			p.play(path)
+			continue
+		}
+
+		// Whole-phrase lookup failed. Try decomposing the track name
+		// into building blocks. Stitching plays each block in sequence
+		// with a short inter-fragment gap so it sounds like natural
+		// speech rather than a robotic concat.
+		//
+		// Decomposition is hand-curated (see decompositions.go) — only
+		// names with a known mapping decompose. Algorithmic splitting
+		// on '-' was tempting but produced wrong results when a single
+		// concept happens to be hyphenated (e.g. "fm-acr" is one
+		// concept, not two; "bat-low" really is "bat" + "low").
+		if parts, ok := decompose(ev.name); ok {
+			p.playSequence(parts)
+			continue
+		}
+
+		// Nothing matched. Log once per missing name and move on.
+		p.warnMissing(ev.name)
+	}
+}
+
+// playSequence resolves and plays a series of building-block names in
+// order, with an inter-fragment gap between each. Used for stitched
+// announcements when whole-phrase lookup fails. Skips fragments that
+// can't be resolved (logging each once) so a partial stitch is better
+// than total silence.
+func (p *shellPlayer) playSequence(names []string) {
+	for i, n := range names {
+		path, ok := p.resolve(n)
 		if !ok {
-			p.warnMissing(ev.name)
+			p.warnMissing(n)
 			continue
 		}
 		p.play(path)
+		// Inter-fragment gap. 80ms approximates natural between-word
+		// timing without sounding robotic. Skipped after the last
+		// fragment so the queue moves on cleanly.
+		if i < len(names)-1 {
+			time.Sleep(stitchGap)
+		}
 	}
 }
+
+// stitchGap is the pause inserted between stitched fragments.
+const stitchGap = 80 * time.Millisecond
 
 // resolve searches for a sample file. EdgeTX puts language-specific
 // audio at /SOUNDS/<lang>/<name>.wav; some samples (e.g. system-wide
