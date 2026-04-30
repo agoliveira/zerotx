@@ -1,0 +1,10 @@
+# Generated audio bank — not committed. Run scripts/build-sounds.sh
+# after editing dictionary.yml to regenerate.
+en/
+pt/
+
+# Override directory — committed contents are honoured but the dir
+# itself stays empty in fresh clones via overrides/.gitkeep.
+overrides/*
+!overrides/.gitkeep
+!overrides/README.md
