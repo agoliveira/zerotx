@@ -34,7 +34,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 )
 
-const version = "0.22.2-narrator"
+const version = "0.22.3-display-protocol"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
