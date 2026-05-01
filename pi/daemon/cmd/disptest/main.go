@@ -63,6 +63,15 @@ func main() {
 		Parity:   serial.NoParity,
 		DataBits: 8,
 		StopBits: serial.OneStopBit,
+		// CP2102/CH340 USB-serial chips on ESP32 dev boards trigger a
+		// chip reset when DTR/RTS are toggled at port open (this is
+		// how the auto-flash mechanism works). We don't want disptest
+		// to reset the ESP32 every time it connects, so we explicitly
+		// hold both lines false at open.
+		InitialStatusBits: &serial.ModemOutputBits{
+			DTR: false,
+			RTS: false,
+		},
 	}
 	rwc, err := serial.Open(*port, mode)
 	if err != nil {
@@ -70,7 +79,7 @@ func main() {
 	}
 
 	cfg := display.Config{
-		SnapshotRate: 5 * time.Second, // very slow; we drive manually
+		SnapshotRate: 500 * time.Millisecond, // 2Hz - quick enough for interactive testing
 	}
 	drv := display.New(rwc, cfg)
 	drv.SetEventHandler(func(ev display.Event) {
@@ -142,17 +151,8 @@ func dispatch(drv *display.Driver, line string) bool {
 		// Parse k=v pairs and build a State partial.
 		s := parseStatePartial(args)
 		drv.SetState(s)
-		// Force-flush by waiting for the next ticker; or, better,
-		// just call the driver's enqueue path. The Driver doesn't
-		// expose immediate-state-emit, so we use a small trick:
-		// poke it through a manual raw line built from the parsed
-		// state. But simplest: just rely on the snapshot ticker.
-		// For interactive testing, the user might want it now.
-		// Re-emit by toggling and toggling back? Cleaner: just
-		// call the driver again with the same fields and the
-		// ticker fires soon. For disptest we accept the default
-		// SnapshotRate (5s) which is fine for manual testing.
-		fmt.Println("(state stored; sent on next snapshot pulse, ~5s)")
+		// (state stored; sent on next snapshot pulse)
+		fmt.Println("(state stored; sent on next snapshot pulse, ~500ms)")
 	case "snapshot":
 		// Helper: send the current state right now via raw.
 		fmt.Println("(no direct snapshot trigger; use 'raw DISP STATE ...' for instant)")
@@ -267,7 +267,7 @@ func printHelp() {
 	fmt.Println(`Commands:
   mode <name>                  switch render mode
                                  (idle/preflight/flight/alarm/rth/postflight)
-  state k=v [k=v...]           update state fields (sent on next snapshot ~5s)
+  state k=v [k=v...]           update state fields (sent on next snapshot ~500ms)
                                  keys: armed, bat, batpct, alt, dist, spd,
                                        link, sats, mode, gps, time
   alarm <level> "<text>"       fire alarm overlay

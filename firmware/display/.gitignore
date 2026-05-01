@@ -1,0 +1,16 @@
+# PlatformIO build artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VSCode workspace files (project-local PlatformIO IDE state)
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch/
+
+# Build output
+*.elf
+*.bin
+*.hex
+*.map
+*.o
