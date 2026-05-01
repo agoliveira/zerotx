@@ -26,14 +26,14 @@ import (
 // Fields use lowercase JSON keys; missing/inactive sources have nil or
 // zero-value fields so the client can render gracefully.
 type State struct {
-	Timestamp string             `json:"ts"`
-	Channels  []uint16           `json:"channels"`
-	Logic     map[string]bool    `json:"logic,omitempty"`
-	Panel     panel.Snapshot     `json:"panel"`
-	Joystick  *JoystickSnapshot  `json:"joystick,omitempty"`
-	Link      LinkSnapshot       `json:"link"`
-	Telemetry interface{}        `json:"telemetry,omitempty"`
-	Audio     *AudioInfo         `json:"audio,omitempty"`
+	Timestamp string            `json:"ts"`
+	Channels  []uint16          `json:"channels"`
+	Logic     map[string]bool   `json:"logic,omitempty"`
+	Panel     panel.Snapshot    `json:"panel"`
+	Joystick  *JoystickSnapshot `json:"joystick,omitempty"`
+	Link      LinkSnapshot      `json:"link"`
+	Telemetry interface{}       `json:"telemetry,omitempty"`
+	Audio     *AudioInfo        `json:"audio,omitempty"`
 }
 
 // AudioInfo summarises the audio subsystem's current state for API
@@ -57,13 +57,13 @@ type Recording struct {
 // when no joystick is connected.
 type JoystickSnapshot struct {
 	Name    string    `json:"name"`
-	Axes    []float64 `json:"axes"`    // [-1.0, 1.0]
+	Axes    []float64 `json:"axes"` // [-1.0, 1.0]
 	Buttons []bool    `json:"buttons"`
 }
 
 // LinkSnapshot describes the RP2040 USB-CDC link state.
 type LinkSnapshot struct {
-	State         string `json:"state"`                   // "active", "stale", "down"
+	State         string `json:"state"` // "active", "stale", "down"
 	Port          string `json:"port,omitempty"`
 	LastHeartbeat string `json:"lastHeartbeat,omitempty"` // RFC3339 or empty
 }
@@ -84,25 +84,74 @@ type ModelSummary struct {
 type ModelDetails struct {
 	Available     bool                `json:"available"`
 	Name          string              `json:"name"`
-	Bitmap        string              `json:"bitmap"`        // YAML-declared filename, e.g. "bigtalon"
-	HasBitmap     bool                `json:"hasBitmap"`     // server has a file ready to serve
+	Bitmap        string              `json:"bitmap"`    // YAML-declared filename, e.g. "bigtalon"
+	HasBitmap     bool                `json:"hasBitmap"` // server has a file ready to serve
+	FCType        string              `json:"fcType,omitempty"`
+	Airframe      string              `json:"airframe,omitempty"`
+	Thresholds    *ThresholdDetails   `json:"thresholds,omitempty"`
 	Mixes         []MixDetail         `json:"mixes"`
 	LogicSwitches []LogicSwitchDetail `json:"logicSwitches"`
 	CustomFns     []CustomFnDetail    `json:"customFns"`
 	Sensors       []SensorDetail      `json:"sensors"`
 }
 
+// ThresholdDetails mirrors model.Thresholds with the same per-domain
+// shape. Pack-level battery voltages are pre-computed from per-cell
+// limits + cell count for GUI display convenience.
+type ThresholdDetails struct {
+	Battery    *BatteryThresholdDetails    `json:"battery,omitempty"`
+	Altitude   *AltitudeThresholdDetails   `json:"altitude,omitempty"`
+	Distance   *DistanceThresholdDetails   `json:"distance,omitempty"`
+	Link       *LinkThresholdDetails       `json:"link,omitempty"`
+	FlightTime *FlightTimeThresholdDetails `json:"flightTime,omitempty"`
+}
+
+type BatteryThresholdDetails struct {
+	Cells     int     `json:"cells"`
+	CellWarnV float64 `json:"cellWarnV"`
+	CellCritV float64 `json:"cellCritV"`
+	CellMinV  float64 `json:"cellMinV"`
+	CellFullV float64 `json:"cellFullV"`
+	// Pre-computed pack-level voltages (cells * cell_*) for display.
+	PackWarnV float64 `json:"packWarnV"`
+	PackCritV float64 `json:"packCritV"`
+	PackMinV  float64 `json:"packMinV"`
+	PackFullV float64 `json:"packFullV"`
+}
+
+type AltitudeThresholdDetails struct {
+	WarnM int `json:"warnM"`
+	CritM int `json:"critM"`
+}
+
+type DistanceThresholdDetails struct {
+	WarnM int `json:"warnM"`
+	CritM int `json:"critM"`
+}
+
+type LinkThresholdDetails struct {
+	RSSIWarnDBM int `json:"rssiWarnDbm"`
+	RSSICritDBM int `json:"rssiCritDbm"`
+	LQWarnPct   int `json:"lqWarnPct"`
+	LQCritPct   int `json:"lqCritPct"`
+}
+
+type FlightTimeThresholdDetails struct {
+	WarnS int `json:"warnS"`
+	CritS int `json:"critS"`
+}
+
 // MixDetail mirrors one entry in EdgeTX's mixData. Multiple mixes can
 // target the same channel; ordering is preserved from the YAML.
 type MixDetail struct {
 	Index     int    `json:"index"`
-	Ch        int    `json:"ch"`     // 1-based for human display
+	Ch        int    `json:"ch"` // 1-based for human display
 	Name      string `json:"name"`
 	Source    string `json:"source"`
 	Weight    int    `json:"weight"`
 	Offset    int    `json:"offset"`
 	Switch    string `json:"switch"`
-	Mltpx     string `json:"mltpx"`  // ADD / MULTIPLY / REPLACE
+	Mltpx     string `json:"mltpx"` // ADD / MULTIPLY / REPLACE
 	DelayUp   int    `json:"delayUp"`
 	DelayDown int    `json:"delayDown"`
 }
@@ -111,7 +160,7 @@ type MixDetail struct {
 type LogicSwitchDetail struct {
 	Name     string  `json:"name"`
 	Func     string  `json:"func"`
-	Def      string  `json:"def"`      // raw, e.g. "I0,-99"
+	Def      string  `json:"def"` // raw, e.g. "I0,-99"
 	Andsw    string  `json:"andsw"`
 	Delay    float64 `json:"delay"`    // seconds
 	Duration float64 `json:"duration"` // seconds
@@ -135,16 +184,16 @@ type SensorDetail struct {
 
 // HealthResponse is returned by /health.
 type HealthResponse struct {
-	Version       string `json:"version"`
-	Uptime        string `json:"uptime"`
-	LinkState     string `json:"linkState"`
-	ModelLoaded   bool   `json:"modelLoaded"`
-	JoystickOpen  bool   `json:"joystickOpen"`
+	Version      string `json:"version"`
+	Uptime       string `json:"uptime"`
+	LinkState    string `json:"linkState"`
+	ModelLoaded  bool   `json:"modelLoaded"`
+	JoystickOpen bool   `json:"joystickOpen"`
 }
 
 // LogEntry is a single captured log line.
 type LogEntry struct {
-	Time string `json:"ts"`  // RFC3339Nano
+	Time string `json:"ts"` // RFC3339Nano
 	Msg  string `json:"msg"`
 }
 
@@ -158,9 +207,9 @@ type LogsResponse struct {
 // Preflight is returned by GET /api/v1/preflight. It's the aggregate
 // readiness snapshot the GUI consumes to render the pre-flight checklist.
 type Preflight struct {
-	State         string             `json:"state"`         // "idle" or "ready"
-	Ready         bool               `json:"ready"`         // all blockers cleared
-	Blockers      []string           `json:"blockers"`      // human-readable reasons not ready
+	State         string             `json:"state"`    // "idle" or "ready"
+	Ready         bool               `json:"ready"`    // all blockers cleared
+	Blockers      []string           `json:"blockers"` // human-readable reasons not ready
 	GroundStation PreflightGS        `json:"groundStation"`
 	Joystick      PreflightJoystickG `json:"joystick"`
 	Model         PreflightModelG    `json:"model"`
@@ -257,8 +306,8 @@ type Providers struct {
 	UnloadModel    func()
 
 	// Joystick selection.
-	Joysticks      func() []JoystickDevice
-	SelectJoystick func(index int, emergency bool) error
+	Joysticks       func() []JoystickDevice
+	SelectJoystick  func(index int, emergency bool) error
 	ReleaseJoystick func() error
 
 	// Models directory listing.
@@ -296,6 +345,17 @@ type Providers struct {
 	// missing or unreadable; nil pointers within the summary mean
 	// "no data of that kind in this recording".
 	Summarize func(name string) (interface{}, error)
+
+	// Arm reports the current arm state machine state and inputs.
+	// Returned as opaque interface{} (JSON-encoded by the api
+	// package) to avoid importing the arm package.
+	Arm func() interface{}
+	// ArmConfirm fires the operator's confirm action (e.g. from a
+	// keyboard combo handled by the GUI). Returns no error: the
+	// state machine accepts confirms silently if not in
+	// ARMING_REQUESTED state. The actual outcome arrives via
+	// arm-state events, which the GUI also subscribes to.
+	ArmConfirm func()
 
 	Version string
 	Uptime  func() time.Duration

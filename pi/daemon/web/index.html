@@ -523,6 +523,37 @@ table.data-table {
 .sensor-name { color: var(--text-main); }
 .sensor-unit { color: var(--text-muted); font-size: 11px; }
 
+/* === Thresholds (Model tab) === */
+.thresholds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.th-card {
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.th-card-title {
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.th-card-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: var(--text-main);
+}
+.th-zone-warn { color: var(--warn); font-weight: 600; }
+.th-zone-crit { color: var(--err); font-weight: 600; }
+.th-zone-min  { color: var(--text-dim); font-weight: 600; }
+
 /* === Logs tab === */
 .logs-controls {
   display: flex;
@@ -1527,8 +1558,22 @@ h2.warn { color: var(--warn); }
             <h2 class="model-name" id="model-name">-</h2>
             <div class="muted-line">bitmap: <span id="model-bitmap-name">-</span></div>
             <div class="muted-line" id="model-summary-line">-</div>
+            <div class="muted-line">
+              FC: <span id="model-fc-type">-</span>
+              · Airframe: <span id="model-airframe">-</span>
+            </div>
           </div>
         </div>
+      </div>
+
+      <div class="panel" id="thresholds-panel" style="display:none">
+        <h2>Alarm thresholds</h2>
+        <p class="muted small">
+          Loaded from the model file. Display device colors its bars
+          based on these. Audio narrator announces breaches at the
+          configured threshold level.
+        </p>
+        <div class="thresholds-grid" id="thresholds-grid"></div>
       </div>
 
       <div class="panel">
@@ -2442,6 +2487,9 @@ const App = {
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         this.modal.alert('Model unload failed', body.error || r.statusText);
+      } else {
+        this.state.modelDetails = { available: false };
+        this.renderModelDetails();
       }
     } catch (e) { this.modal.alert('Network error', e.message); }
     await this.refreshPreflight();
@@ -3237,6 +3285,11 @@ const App = {
     document.getElementById('model-bitmap-name').textContent = d.bitmap || 'none';
     const summary = `${(d.mixes||[]).length} mixes, ${(d.logicSwitches||[]).length} logic, ${(d.customFns||[]).length} CFs, ${(d.sensors||[]).length} sensors`;
     document.getElementById('model-summary-line').textContent = summary;
+    document.getElementById('model-fc-type').textContent = d.fcType || '-';
+    document.getElementById('model-airframe').textContent = d.airframe || '-';
+
+    // Thresholds panel
+    this.renderThresholds(d.thresholds);
 
     // Image: if hasBitmap, point at the endpoint with a cache buster.
     const img = document.getElementById('model-image');
@@ -3313,6 +3366,67 @@ const App = {
         <span class="sensor-name">${escapeHtml(s.name)}</span>${s.unit ? `<span class="sensor-unit"> (${escapeHtml(s.unit)})</span>` : ''}
       </div>
     `).join('') || '<div class="panel-empty">no sensors</div>';
+  },
+
+  renderThresholds(t) {
+    const panel = document.getElementById('thresholds-panel');
+    const grid = document.getElementById('thresholds-grid');
+    if (!t) {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = 'block';
+    const cards = [];
+
+    if (t.battery) {
+      const b = t.battery;
+      cards.push(`
+        <div class="th-card">
+          <div class="th-card-title">Battery <span class="muted small">${b.cells}S</span></div>
+          <div class="th-card-row"><span class="th-zone-warn">Warn</span><span>${b.cellWarnV.toFixed(2)}V <span class="muted small">(pack ${b.packWarnV.toFixed(2)}V)</span></span></div>
+          <div class="th-card-row"><span class="th-zone-crit">Crit</span><span>${b.cellCritV.toFixed(2)}V <span class="muted small">(pack ${b.packCritV.toFixed(2)}V)</span></span></div>
+          <div class="th-card-row"><span class="th-zone-min">Min</span><span>${b.cellMinV.toFixed(2)}V <span class="muted small">(pack ${b.packMinV.toFixed(2)}V)</span></span></div>
+          <div class="th-card-row"><span class="muted">Full</span><span>${b.cellFullV.toFixed(2)}V <span class="muted small">(pack ${b.packFullV.toFixed(2)}V)</span></span></div>
+        </div>
+      `);
+    }
+    if (t.altitude) {
+      cards.push(`
+        <div class="th-card">
+          <div class="th-card-title">Altitude</div>
+          <div class="th-card-row"><span class="th-zone-warn">Warn</span><span>${t.altitude.warnM} m</span></div>
+          <div class="th-card-row"><span class="th-zone-crit">Crit</span><span>${t.altitude.critM} m</span></div>
+        </div>
+      `);
+    }
+    if (t.distance) {
+      cards.push(`
+        <div class="th-card">
+          <div class="th-card-title">Distance</div>
+          <div class="th-card-row"><span class="th-zone-warn">Warn</span><span>${t.distance.warnM} m</span></div>
+          <div class="th-card-row"><span class="th-zone-crit">Crit</span><span>${t.distance.critM} m</span></div>
+        </div>
+      `);
+    }
+    if (t.link) {
+      cards.push(`
+        <div class="th-card">
+          <div class="th-card-title">Link</div>
+          <div class="th-card-row"><span class="th-zone-warn">Warn</span><span>${t.link.rssiWarnDbm} dBm · LQ ${t.link.lqWarnPct}%</span></div>
+          <div class="th-card-row"><span class="th-zone-crit">Crit</span><span>${t.link.rssiCritDbm} dBm · LQ ${t.link.lqCritPct}%</span></div>
+        </div>
+      `);
+    }
+    if (t.flightTime) {
+      cards.push(`
+        <div class="th-card">
+          <div class="th-card-title">Flight time</div>
+          <div class="th-card-row"><span class="th-zone-warn">Warn</span><span>${formatSec(t.flightTime.warnS)}</span></div>
+          <div class="th-card-row"><span class="th-zone-crit">Crit</span><span>${formatSec(t.flightTime.critS)}</span></div>
+        </div>
+      `);
+    }
+    grid.innerHTML = cards.join('') || '<div class="panel-empty">no thresholds set</div>';
   },
 
   renderStreamStats() {
@@ -3603,6 +3717,13 @@ function renderPanelMap(elId, obj, fmt) {
 
 function fmtInt(v)  { return String(v); }
 function fmtBool(v) { return v ? 'pressed' : 'released'; }
+
+function formatSec(s) {
+  if (s == null) return '-';
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m ${r}s`;
+}
 
 // HTML-escape a string for safe insertion via innerHTML. Used for
 // model details which are user-supplied (mix names, switch names, etc.)
