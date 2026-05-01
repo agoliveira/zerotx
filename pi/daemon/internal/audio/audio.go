@@ -630,13 +630,13 @@ var fileExists = func(path string) bool {
 //
 // Patterns are checked in order; first match wins.
 //
-//	armed.*         → critical
-//	disarm.*        → critical
 //	*failsafe*      → critical
 //	*crit*          → critical
 //	*low* (battery, signal) → warning
 //	*warn*          → warning
 //	*rth*           → warning   (RTH is significant)
+//	armed.*         → notice    (state change, not an alarm)
+//	disarm.*        → notice    (state change, not an alarm)
 //	*fm-*           → notice    (flight mode change)
 //	*cruise*        → notice
 //	*poshld*        → notice
@@ -645,10 +645,6 @@ var fileExists = func(path string) bool {
 func DefaultLevelFor(name string) Level {
 	stem := stripRepeatSuffix(strings.ToLower(name))
 	switch {
-	case strings.HasPrefix(stem, "armed"):
-		return LevelCritical
-	case strings.HasPrefix(stem, "disarm"):
-		return LevelCritical
 	case strings.Contains(stem, "failsafe"):
 		return LevelCritical
 	case strings.Contains(stem, "crit"):
@@ -661,6 +657,10 @@ func DefaultLevelFor(name string) Level {
 	case strings.Contains(stem, "rth"):
 		return LevelWarning
 
+	case strings.HasPrefix(stem, "armed"):
+		return LevelNotice
+	case strings.HasPrefix(stem, "disarm"):
+		return LevelNotice
 	case strings.Contains(stem, "fm-"):
 		return LevelNotice
 	case strings.Contains(stem, "cruise"):

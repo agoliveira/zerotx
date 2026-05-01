@@ -193,9 +193,6 @@ func TestDefaultLevelFor(t *testing.T) {
 		want Level
 	}{
 		// Critical
-		{"armed.1x", LevelCritical},
-		{"armed", LevelCritical},
-		{"disarm.1x", LevelCritical},
 		{"failsafe.1x", LevelCritical},
 		{"crit-error.1x", LevelCritical},
 
@@ -205,7 +202,10 @@ func TestDefaultLevelFor(t *testing.T) {
 		{"warn-something.1x", LevelWarning},
 		{"rth.1x", LevelWarning},
 
-		// Notice
+		// Notice (state changes, not alarms)
+		{"armed.1x", LevelNotice},
+		{"armed", LevelNotice},
+		{"disarm.1x", LevelNotice},
 		{"fm-acr.1x", LevelNotice},
 		{"fm-hor.1x", LevelNotice},
 		{"cruise.1x", LevelNotice},
