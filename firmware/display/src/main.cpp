@@ -422,7 +422,7 @@ constexpr int LOGICAL_HEIGHT = PANEL_HEIGHT;             // 32
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 constexpr unsigned long IDLE_REDRAW_INTERVAL_MS = 1000;  // clock tick
 
-constexpr const char* FW_VERSION = "0.15.0";
+constexpr const char* FW_VERSION = "0.16.0";
 
 // ===== VFD/LCD palette =====
 //
@@ -505,6 +505,38 @@ struct State {
   int    dist_m_prev     = 0;
   int    dist_delta      = 0;
   unsigned long dist_updated_ms = 0;
+
+  // Alarm thresholds pushed by the daemon at model load (see
+  // DISP THRESHOLDS in the protocol doc). Per-domain "_set" flags
+  // gate whether thresholds are honored: rendering falls back to
+  // neutral colors for any domain whose flag is false.
+  bool  bat_thresholds_set = false;
+  float bat_warn_v  = 0.0f;
+  float bat_crit_v  = 0.0f;
+  float bat_min_v   = 0.0f;
+  float bat_full_v  = 0.0f;
+
+  bool bat_pct_warn_known = false;  // derived from bat_warn_v/bat_full_v
+  int  bat_pct_warn = 0;            // ditto, in 0..100
+  int  bat_pct_crit = 0;            // ditto
+
+  bool alt_thresholds_set = false;
+  int  alt_warn_m = 0;
+  int  alt_crit_m = 0;
+
+  bool dist_thresholds_set = false;
+  int  dist_warn_m = 0;
+  int  dist_crit_m = 0;
+
+  bool link_thresholds_set = false;
+  int  rssi_warn_dbm = 0;
+  int  rssi_crit_dbm = 0;
+  int  lq_warn_pct = 0;
+  int  lq_crit_pct = 0;
+
+  bool time_thresholds_set = false;
+  int  time_warn_s = 0;
+  int  time_crit_s = 0;
 };
 
 Mode current_mode = Mode::IDLE;
@@ -913,6 +945,98 @@ void handle_line(const char* line) {
     if (dma_display) {
       dma_display->setBrightness8(pct * 255 / 100);
     }
+  }
+  else if (strcmp(cmd, "THRESHOLDS") == 0) {
+    // Reset all domains; missing fields = clear that domain.
+    state.bat_thresholds_set = false;
+    state.bat_pct_warn_known = false;
+    state.alt_thresholds_set = false;
+    state.dist_thresholds_set = false;
+    state.link_thresholds_set = false;
+    state.time_thresholds_set = false;
+
+    // Battery: all four fields required together.
+    const char* v_bw = arg_value(tokens, n, 2, "bat_warn");
+    const char* v_bc = arg_value(tokens, n, 2, "bat_crit");
+    const char* v_bm = arg_value(tokens, n, 2, "bat_min");
+    const char* v_bf = arg_value(tokens, n, 2, "bat_full");
+    int bat_present = (v_bw != nullptr) + (v_bc != nullptr) + (v_bm != nullptr) + (v_bf != nullptr);
+    if (bat_present == 4) {
+      state.bat_warn_v = atof(v_bw);
+      state.bat_crit_v = atof(v_bc);
+      state.bat_min_v  = atof(v_bm);
+      state.bat_full_v = atof(v_bf);
+      state.bat_thresholds_set = true;
+      // Derive percent-band thresholds for the 0-100 BAT bar.
+      // bat_pct from telemetry uses an unspecified mapping, but the
+      // common convention is pct = (V - min) / (full - min) * 100,
+      // so warn/crit voltages map to the same formula. If full <= min
+      // we can't derive (bad config), skip silently.
+      float span = state.bat_full_v - state.bat_min_v;
+      if (span > 0.001f) {
+        state.bat_pct_warn = (int)((state.bat_warn_v - state.bat_min_v) / span * 100.0f + 0.5f);
+        state.bat_pct_crit = (int)((state.bat_crit_v - state.bat_min_v) / span * 100.0f + 0.5f);
+        if (state.bat_pct_warn < 0) state.bat_pct_warn = 0;
+        if (state.bat_pct_warn > 100) state.bat_pct_warn = 100;
+        if (state.bat_pct_crit < 0) state.bat_pct_crit = 0;
+        if (state.bat_pct_crit > 100) state.bat_pct_crit = 100;
+        state.bat_pct_warn_known = true;
+      }
+    } else if (bat_present > 0) {
+      send_error("partial battery thresholds");
+    }
+
+    // Altitude: warn + crit required together.
+    const char* v_aw = arg_value(tokens, n, 2, "alt_warn");
+    const char* v_ac = arg_value(tokens, n, 2, "alt_crit");
+    if (v_aw && v_ac) {
+      state.alt_warn_m = atoi(v_aw);
+      state.alt_crit_m = atoi(v_ac);
+      state.alt_thresholds_set = true;
+    } else if (v_aw || v_ac) {
+      send_error("partial altitude thresholds");
+    }
+
+    // Distance: warn + crit required together.
+    const char* v_dw = arg_value(tokens, n, 2, "dist_warn");
+    const char* v_dc = arg_value(tokens, n, 2, "dist_crit");
+    if (v_dw && v_dc) {
+      state.dist_warn_m = atoi(v_dw);
+      state.dist_crit_m = atoi(v_dc);
+      state.dist_thresholds_set = true;
+    } else if (v_dw || v_dc) {
+      send_error("partial distance thresholds");
+    }
+
+    // Link: all four fields together (rssi and lq are tightly
+    // coupled - half the link picture is misleading).
+    const char* v_rw = arg_value(tokens, n, 2, "rssi_warn");
+    const char* v_rc = arg_value(tokens, n, 2, "rssi_crit");
+    const char* v_lw = arg_value(tokens, n, 2, "lq_warn");
+    const char* v_lc = arg_value(tokens, n, 2, "lq_crit");
+    int link_present = (v_rw != nullptr) + (v_rc != nullptr) + (v_lw != nullptr) + (v_lc != nullptr);
+    if (link_present == 4) {
+      state.rssi_warn_dbm = atoi(v_rw);
+      state.rssi_crit_dbm = atoi(v_rc);
+      state.lq_warn_pct = atoi(v_lw);
+      state.lq_crit_pct = atoi(v_lc);
+      state.link_thresholds_set = true;
+    } else if (link_present > 0) {
+      send_error("partial link thresholds");
+    }
+
+    // Time: warn + crit required together.
+    const char* v_tw = arg_value(tokens, n, 2, "time_warn");
+    const char* v_tc = arg_value(tokens, n, 2, "time_crit");
+    if (v_tw && v_tc) {
+      state.time_warn_s = atoi(v_tw);
+      state.time_crit_s = atoi(v_tc);
+      state.time_thresholds_set = true;
+    } else if (v_tw || v_tc) {
+      send_error("partial time thresholds");
+    }
+
+    needs_redraw = true;
   }
   else if (strcmp(cmd, "PING") == 0) {
     send_pong();
@@ -1354,15 +1478,26 @@ void render_flight() {
     draw_custom_string_centered("--", 21, 1, COLOR_LABEL);
   }
 
-  // BAT bar: green/amber/red zones, blink below 10%.
+  // BAT bar: green/amber/red zones. Thresholds come from daemon-pushed
+  // values when available, else fall back to hardcoded 50/20/10.
   if (state.batpct_known) {
+    int warn_pct, crit_pct, blink_pct;
+    if (state.bat_pct_warn_known) {
+      warn_pct  = state.bat_pct_warn;
+      crit_pct  = state.bat_pct_crit;
+      blink_pct = state.bat_pct_crit / 2;  // half of crit for the panic blink
+      if (blink_pct < 5) blink_pct = 5;
+    } else {
+      warn_pct  = 50;
+      crit_pct  = 20;
+      blink_pct = 10;
+    }
     uint16_t color;
-    if (state.bat_pct > 50)      color = COLOR_OK;
-    else if (state.bat_pct > 20) color = COLOR_CAUTION;
-    else                          color = COLOR_CRITICAL;
-    // Blink below 10% - hide bar half the time at ~1Hz
+    if (state.bat_pct > warn_pct)      color = COLOR_OK;
+    else if (state.bat_pct > crit_pct) color = COLOR_CAUTION;
+    else                               color = COLOR_CRITICAL;
     bool show = true;
-    if (state.bat_pct < 10) {
+    if (state.bat_pct < blink_pct) {
       // anim_frame ticks at 100ms (10fps). 5 frames on, 5 frames off = 1Hz blink.
       show = (anim_frame / 5) % 2 == 0;
     }
@@ -1381,9 +1516,16 @@ void render_flight() {
     draw_custom_string_centered("--", 64, 1, COLOR_LABEL);
   }
 
-  // ALT trend bar: animated chevron in channel color.
+  // ALT trend bar: animated chevron. Color zones from threshold if set,
+  // neutral gray otherwise.
   if (state.alt_known) {
-    draw_trend_bar(43, 42, COLOR_BAR_NEUTRAL, state.alt_delta, alt_stale);
+    uint16_t alt_bar_color = COLOR_BAR_NEUTRAL;
+    if (state.alt_thresholds_set) {
+      if      (state.alt_m >= state.alt_crit_m) alt_bar_color = COLOR_CRITICAL;
+      else if (state.alt_m >= state.alt_warn_m) alt_bar_color = COLOR_CAUTION;
+      else                                      alt_bar_color = COLOR_OK;
+    }
+    draw_trend_bar(43, 42, alt_bar_color, state.alt_delta, alt_stale);
   }
 
   // ============== DST tile (x: 86..127, center=107) ==============
@@ -1405,9 +1547,16 @@ void render_flight() {
     draw_custom_string_centered("--", 107, 1, COLOR_LABEL);
   }
 
-  // DST trend bar: animated chevron in channel color.
+  // DST trend bar: animated chevron. Color zones from threshold if set,
+  // neutral gray otherwise.
   if (state.dist_known) {
-    draw_trend_bar(86, 42, COLOR_BAR_NEUTRAL, state.dist_delta, dist_stale);
+    uint16_t dst_bar_color = COLOR_BAR_NEUTRAL;
+    if (state.dist_thresholds_set) {
+      if      (state.dist_m >= state.dist_crit_m) dst_bar_color = COLOR_CRITICAL;
+      else if (state.dist_m >= state.dist_warn_m) dst_bar_color = COLOR_CAUTION;
+      else                                        dst_bar_color = COLOR_OK;
+    }
+    draw_trend_bar(86, 42, dst_bar_color, state.dist_delta, dist_stale);
   }
 }
 

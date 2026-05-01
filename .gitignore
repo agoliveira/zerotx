@@ -28,3 +28,6 @@ rp2040/build/
 # Tarballs from earlier transfer workflow
 *.tar.gz
 *.tgz
+
+# Private working notes (Claude session journal)
+JOURNAL.md

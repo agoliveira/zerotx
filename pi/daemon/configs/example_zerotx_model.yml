@@ -36,6 +36,56 @@ zerotx:
     # 6-position rotary
     "6POS": { device: "GCS", selector: 0 }
 
+  # === Aircraft taxonomy ===
+  # fc_type: identifies FC firmware family. Consumers (narrator, HUD) use
+  # this to interpret telemetry semantics that differ between INAV and
+  # ArduPilot. Valid: inav | ardupilot | betaflight. Optional.
+  fc_type: inav
+
+  # airframe: broad airframe class for narrator phrasing and HUD widget
+  # defaults. Valid: quad | wing | plane | heli. Optional.
+  airframe: wing
+
+  # === Alarm thresholds ===
+  # All sub-sections optional. Omit a section to disable its alarms; the
+  # display falls back to neutral rendering and the narrator stays silent
+  # for that domain. When a section IS present, all its fields are required.
+  thresholds:
+    # Per-cell battery limits. Pack-level voltages are derived from cell
+    # count: pack_warn_v = cells * cell_warn_v. This way one schema works
+    # for any cell count without manual recomputation.
+    # Required ordering: cell_min_v <= cell_crit_v <= cell_warn_v <= cell_full_v.
+    battery:
+      cells: 4              # 1-16
+      cell_warn_v: 3.6      # amber zone: time to think about landing
+      cell_crit_v: 3.4      # red zone: land NOW
+      cell_min_v: 3.2       # damage zone: should never reach this in flight
+      cell_full_v: 4.2      # 100% reference for percentage gauges (LiPo: 4.2, LiHV: up to 4.35)
+
+    # Altitude bands (AGL, meters). warn_m must be < crit_m.
+    altitude:
+      warn_m: 100
+      crit_m: 200
+
+    # Distance from home bands (meters). warn_m must be < crit_m.
+    distance:
+      warn_m: 500
+      crit_m: 1500
+
+    # RF link health. RSSI in dBm (less negative = stronger), LQ in percent
+    # (higher = better). warn fires before crit: rssi_warn_dbm > rssi_crit_dbm,
+    # lq_warn_pct > lq_crit_pct.
+    link:
+      rssi_warn_dbm: -90
+      rssi_crit_dbm: -100
+      lq_warn_pct: 70
+      lq_crit_pct: 50
+
+    # Mission elapsed time bands (seconds). warn_s must be < crit_s.
+    flight_time:
+      warn_s: 600           # 10 min
+      crit_s: 900           # 15 min
+
 edgetx:
   semver: 2.9.1
   header:

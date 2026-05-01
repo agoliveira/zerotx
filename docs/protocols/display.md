@@ -72,6 +72,7 @@ displayed until the mode changes.
 | `MODE`     | On transition       | ~25 bytes       |
 | `STATE`    | 5Hz active, 1Hz idle| ~120 bytes      |
 | `ALARM`    | On alarm fire       | ~80 bytes       |
+| `THRESHOLDS`| On model load      | ~200 bytes      |
 | `MSG`      | One-shot            | ~200 bytes      |
 | `BRIGHTNESS`| On operator change | ~25 bytes       |
 | `HEARTBEAT`| 0.2Hz               | ~40 bytes       |
@@ -153,6 +154,54 @@ the chain.
 
 ```
 DISP BRIGHTNESS 50
+```
+
+### `DISP THRESHOLDS <key=value>...`
+
+Push the alarm thresholds the display should use to color its
+flight-mode bars and gauges. Sent once when a model is loaded
+(typically right after `MODE` transitions out of `IDLE`); not
+sent again unless the model is reloaded. The display caches the
+values and reapplies them on every render until a new
+`THRESHOLDS` message arrives or the connection resets.
+
+All fields are optional. Missing fields tell the display "no
+threshold for this domain"; the corresponding bar renders neutral
+(uncolored). Sending `DISP THRESHOLDS` with no fields explicitly
+clears all thresholds.
+
+| Key             | Type  | Domain    | Meaning                                |
+| --------------- | ----- | --------- | -------------------------------------- |
+| `bat_warn`      | float | battery   | Pack voltage warn threshold (V)        |
+| `bat_crit`      | float | battery   | Pack voltage critical threshold (V)   |
+| `bat_min`       | float | battery   | Pack voltage damage threshold (V)     |
+| `bat_full`      | float | battery   | Pack voltage at 100% (V)               |
+| `alt_warn`      | int   | altitude  | Altitude warn threshold (m AGL)        |
+| `alt_crit`      | int   | altitude  | Altitude critical threshold (m AGL)   |
+| `dist_warn`     | int   | distance  | Distance-from-home warn (m)            |
+| `dist_crit`     | int   | distance  | Distance-from-home critical (m)        |
+| `rssi_warn`     | int   | link      | RSSI warn (dBm, less negative = better)|
+| `rssi_crit`     | int   | link      | RSSI critical (dBm)                    |
+| `lq_warn`       | int   | link      | Link quality warn (%)                  |
+| `lq_crit`       | int   | link      | Link quality critical (%)              |
+| `time_warn`     | int   | time      | Mission time warn (seconds)            |
+| `time_crit`     | int   | time      | Mission time critical (seconds)        |
+
+Within each domain, both warn and crit must be sent together or
+not at all. The display ignores partial-domain updates (e.g. a
+message with `alt_warn` but no `alt_crit`) and logs an `ERROR`
+back. Battery is the exception: all four fields are required if
+any battery field is present.
+
+For each domain, warn fires before crit. For battery and link
+RSSI this means warn > crit (less negative dBm = stronger; higher
+voltage = healthier). For altitude, distance, link LQ, and time
+this means warn < crit. The display does not validate these
+relationships; the daemon is responsible for sending a
+self-consistent set.
+
+```
+DISP THRESHOLDS bat_warn=14.4 bat_crit=13.6 bat_min=12.8 bat_full=16.8 alt_warn=700 alt_crit=900 dist_warn=7000 dist_crit=9000 rssi_warn=-90 rssi_crit=-100 lq_warn=70 lq_crit=50 time_warn=600 time_crit=900
 ```
 
 ### `DISP PING`
