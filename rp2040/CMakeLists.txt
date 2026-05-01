@@ -15,6 +15,7 @@ add_executable(zerotx-fw
     src/crsf.c
     src/state.c
     src/status_led.c
+    src/input_arm.c
 )
 
 target_include_directories(zerotx-fw PRIVATE src)

@@ -45,8 +45,35 @@
  * forwards every well-formed CRSF frame as it arrives. */
 #define MSG_TELEMETRY       0x12
 
+/* Physical control panel input event. MCU -> Pi only. Sent on edge
+ * detection (debounced) plus once at boot to establish ground truth.
+ *
+ * Payload layout: [input_id:1][state:1]
+ *
+ * input_id values are reserved per-input below (ZTX_INPUT_*). state
+ * is the logical state in the protocol's polarity convention, not the
+ * raw pin level: the MCU translates wiring polarity into the protocol
+ * value so changes in physical wiring don't ripple to the daemon.
+ *
+ * For the arm key:
+ *   state = 0  key DOWN (disarmed-intent / safe)
+ *   state = 1  key UP   (arming-requested-intent)
+ *
+ * The MCU emits an event only on stable edge transitions. The daemon
+ * may also see a single boot-time event reflecting the initial state.
+ * The state machine in the daemon handles boot-key-up warning. */
+#define MSG_INPUT_EVENT     0x05
+
 /* Slow-path messages */
 #define MSG_LOG             0x14  /* MCU -> Pi, ASCII string */
+
+/* Reserved input IDs for MSG_INPUT_EVENT.
+ *
+ * 0x00 is reserved as "invalid / probe". Future controls-area inputs
+ * (additional safety-critical hardware only — see project's control
+ * panel design philosophy) take subsequent values. */
+#define ZTX_INPUT_INVALID   0x00
+#define ZTX_INPUT_ARM_KEY   0x01
 
 /* Wire-format protocol version. Bumped only when frame format or
  * message semantics change in an incompatible way. Both sides must
@@ -56,8 +83,13 @@
  *     Backward compatible at the IPC parser level (unknown messages
  *     are silently dropped) but the GUI features that depend on
  *     telemetry require a daemon and firmware that both speak v2.
+ *
+ * v3: adds MSG_INPUT_EVENT (0x05) carrying physical control-panel
+ *     input edges. Backward compatible at the IPC parser level
+ *     (unknown messages are silently dropped). Daemon arming
+ *     features require both sides at v3.
  */
-#define ZTX_PROTO_VERSION   2u
+#define ZTX_PROTO_VERSION   3u
 
 /* Sizing limits */
 #define ZTX_MAX_PAYLOAD     256

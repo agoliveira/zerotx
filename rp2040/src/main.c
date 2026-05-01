@@ -17,10 +17,11 @@
 #include "crsf.h"
 #include "state.h"
 #include "status_led.h"
+#include "input_arm.h"
 
 #define CRSF_BAUD       400000u
 
-#define FW_VERSION_STRING "zerotx-fw m1.6-telemetry"
+#define FW_VERSION_STRING "zerotx-fw m1.7-armkey"
 
 static uint8_t s_tx_hb_seq = 0;
 static uint8_t s_tx_seq = 0;
@@ -127,6 +128,7 @@ int main(void) {
     status_led_init();
     ipc_init(usb_write_byte);
     state_init();
+    input_arm_init();
 
     uint64_t last_crsf_us = 0;
     uint64_t last_tx_hb_us = 0;
@@ -159,6 +161,10 @@ int main(void) {
          * complete, CRC-valid frame is forwarded over IPC for the
          * daemon to parse. */
         crsf_rx_poll(on_crsf_telemetry);
+
+        /* Poll the arm key. Edge events go out over IPC. Bumps tx
+         * seq only if a frame was actually emitted. */
+        s_tx_seq = input_arm_poll(now, s_tx_seq);
 
         state_tick(now);
 
