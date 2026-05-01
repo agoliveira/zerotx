@@ -22,10 +22,11 @@
 //     auto-fb checklist items fall back to manual confirmations.
 //
 // CRSF frame types parsed today:
-//   0x02 GPS                 lat/lon, ground speed, heading, altitude, sats
-//   0x08 Battery sensor      voltage, current, used capacity, percentage
-//   0x14 Link statistics     up/downlink RSSI/LQ/SNR, TX power
-//   0x21 Flight mode         FC-defined string ("ANGLE", "RTH", etc.)
+//
+//	0x02 GPS                 lat/lon, ground speed, heading, altitude, sats
+//	0x08 Battery sensor      voltage, current, used capacity, percentage
+//	0x14 Link statistics     up/downlink RSSI/LQ/SNR, TX power
+//	0x21 Flight mode         FC-defined string ("ANGLE", "RTH", etc.)
 //
 // Future work (not in this round): vario, attitude, baro, GPS time.
 // MSP-over-CRSF (frame 0x7A) would let us query MSP_BATTERY_STATE for
@@ -45,10 +46,10 @@ import (
 // CRSF telemetry frame types we care about. The CRSF spec defines
 // many more; these are the ones we parse today.
 const (
-	frameGPS         byte = 0x02
-	frameBattery     byte = 0x08
-	frameLink        byte = 0x14
-	frameFlightMode  byte = 0x21
+	frameGPS        byte = 0x02
+	frameBattery    byte = 0x08
+	frameLink       byte = 0x14
+	frameFlightMode byte = 0x21
 )
 
 // Stale-detection windows per frame type. Chosen to be ~5x the typical
@@ -57,9 +58,9 @@ const (
 // than "discard it"; the State still serves the last value with
 // Stale=true so the GUI can decide what to do.
 var staleWindow = map[byte]time.Duration{
-	frameGPS:        2 * time.Second, // ~5 Hz typical
-	frameBattery:    5 * time.Second, // ~1 Hz typical
-	frameLink:       1 * time.Second, // ~10 Hz typical
+	frameGPS:        2 * time.Second,  // ~5 Hz typical
+	frameBattery:    5 * time.Second,  // ~1 Hz typical
+	frameLink:       1 * time.Second,  // ~10 Hz typical
 	frameFlightMode: 30 * time.Second, // emitted on change
 }
 
@@ -73,7 +74,7 @@ type GPS struct {
 	LonDeg     float64 `json:"lonDeg"`
 	GroundKmh  float64 `json:"groundKmh"`
 	HeadingDeg float64 `json:"headingDeg"`
-	AltMeters  int32   `json:"altMeters"`  // CRSF altitude is meters + 1000 offset
+	AltMeters  int32   `json:"altMeters"` // CRSF altitude is meters + 1000 offset
 	Sats       uint8   `json:"sats"`
 }
 
@@ -84,12 +85,12 @@ type GPS struct {
 // detected; not redetected on every frame. Wrong for partially
 // discharged packs at first connection but works for the 95% case.
 type Battery struct {
-	Volts      float64 `json:"volts"`
-	Amps       float64 `json:"amps"`
-	UsedMAh    int32   `json:"usedMAh"`
-	Percent    uint8   `json:"percent"`
-	CellCount  int     `json:"cellCount"`  // 0 if not yet detected
-	VoltsCell  float64 `json:"voltsCell"`  // Volts/CellCount when known
+	Volts     float64 `json:"volts"`
+	Amps      float64 `json:"amps"`
+	UsedMAh   int32   `json:"usedMAh"`
+	Percent   uint8   `json:"percent"`
+	CellCount int     `json:"cellCount"` // 0 if not yet detected
+	VoltsCell float64 `json:"voltsCell"` // Volts/CellCount when known
 }
 
 // Link holds parsed CRSF link statistics.
@@ -98,14 +99,14 @@ type Battery struct {
 // LQ as a percentage, SNR as a signed dB value, and TX power as an
 // indexed enum. We keep the raw values plus a denormalised dBm.
 type Link struct {
-	UplinkRSSIdBm    int8  `json:"uplinkRssiDbm"`
-	UplinkLQ         uint8 `json:"uplinkLq"`
-	UplinkSNR        int8  `json:"uplinkSnr"`
-	DownlinkRSSIdBm  int8  `json:"downlinkRssiDbm"`
-	DownlinkLQ       uint8 `json:"downlinkLq"`
-	DownlinkSNR      int8  `json:"downlinkSnr"`
-	RFMode           uint8 `json:"rfMode"`
-	TxPowerIdx       uint8 `json:"txPowerIdx"`
+	UplinkRSSIdBm   int8  `json:"uplinkRssiDbm"`
+	UplinkLQ        uint8 `json:"uplinkLq"`
+	UplinkSNR       int8  `json:"uplinkSnr"`
+	DownlinkRSSIdBm int8  `json:"downlinkRssiDbm"`
+	DownlinkLQ      uint8 `json:"downlinkLq"`
+	DownlinkSNR     int8  `json:"downlinkSnr"`
+	RFMode          uint8 `json:"rfMode"`
+	TxPowerIdx      uint8 `json:"txPowerIdx"`
 }
 
 // FlightMode holds the FC-reported flight mode string. Strings vary by
@@ -124,6 +125,7 @@ type Snapshot struct {
 	Battery    *BatteryEntry    `json:"battery,omitempty"`
 	Link       *LinkEntry       `json:"link,omitempty"`
 	FlightMode *FlightModeEntry `json:"flightMode,omitempty"`
+	Home       *HomeEntry       `json:"home,omitempty"`
 
 	// HaveAny is true if at least one sensor has ever produced data.
 	// The GUI uses this to distinguish "telemetry not flowing yet"
@@ -153,24 +155,47 @@ type FlightModeEntry struct {
 	Stale   bool       `json:"stale"`
 }
 
+// Home is the home position recorded on arm (or by explicit
+// operator command), plus the current great-circle distance from
+// the latest GPS sample. DistanceM is 0 when no current GPS fix
+// is available even if Home is set.
+type Home struct {
+	LatDeg    float64 `json:"latDeg"`
+	LonDeg    float64 `json:"lonDeg"`
+	DistanceM int32   `json:"distanceM"`
+}
+type HomeEntry struct {
+	Data    Home   `json:"data"`
+	Updated string `json:"updated"` // when home was set
+}
+
 // State holds the latest decoded value per sensor plus an update
 // timestamp. Safe for concurrent use.
 type State struct {
 	mu sync.RWMutex
 
-	gps        *GPS
-	gpsAt      time.Time
-	battery    *Battery
-	batteryAt  time.Time
-	link       *Link
-	linkAt     time.Time
-	mode       *FlightMode
-	modeAt     time.Time
+	gps       *GPS
+	gpsAt     time.Time
+	battery   *Battery
+	batteryAt time.Time
+	link      *Link
+	linkAt    time.Time
+	mode      *FlightMode
+	modeAt    time.Time
 
 	// cellCount is detected on first battery telemetry frame and cached
 	// for the lifetime of the State. Setting it back to 0 (e.g. on
 	// model unload) would force re-detection on next first frame.
 	cellCount int
+
+	// Home position, set by SetHome (typically called on arm with a
+	// valid GPS lock). Distance-from-home in Snapshot is computed
+	// from this against the current GPS sample. Zero (homeSet=false)
+	// means no home, and Snapshot reports HaveHome=false.
+	homeLat float64
+	homeLon float64
+	homeSet bool
+	homeAt  time.Time
 
 	// log of frame types we couldn't parse (for warn-once logging).
 	unknownTypes map[byte]bool
@@ -323,6 +348,21 @@ func (s *State) Snapshot() Snapshot {
 		}
 		out.HaveAny = true
 	}
+	if s.homeSet {
+		var dist int32
+		if s.gps != nil {
+			d := haversineMeters(s.homeLat, s.homeLon, s.gps.LatDeg, s.gps.LonDeg)
+			dist = int32(d + 0.5)
+		}
+		out.Home = &HomeEntry{
+			Data: Home{
+				LatDeg:    s.homeLat,
+				LonDeg:    s.homeLon,
+				DistanceM: dist,
+			},
+			Updated: s.homeAt.UTC().Format(time.RFC3339Nano),
+		}
+	}
 	return out
 }
 
@@ -336,6 +376,7 @@ func (s *State) Reset() {
 	s.link = nil
 	s.mode = nil
 	s.cellCount = 0
+	s.homeSet = false
 }
 
 // === Frame decoders ===
@@ -480,4 +521,65 @@ func joinNonEmpty(s []string, sep string) string {
 		out += p
 	}
 	return out
+}
+
+// === Home position ===
+
+// SetHome records the current GPS position as home. Returns true if
+// home was recorded, false if there is no current GPS fix to use.
+// The caller (typically main.go on arm) decides when to call this.
+//
+// If force is false and home is already set, returns false without
+// changing anything (idempotent on repeated arms within a flight).
+// Pass force=true to override (e.g. operator explicitly resets home).
+func (s *State) SetHome(force bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gps == nil {
+		return false
+	}
+	if s.homeSet && !force {
+		return false
+	}
+	s.homeLat = s.gps.LatDeg
+	s.homeLon = s.gps.LonDeg
+	s.homeSet = true
+	s.homeAt = time.Now()
+	if s.logf != nil {
+		s.logf("telemetry: home set to %.6f,%.6f", s.homeLat, s.homeLon)
+	}
+	return true
+}
+
+// ClearHome wipes the recorded home. After this, Snapshot.Home is nil
+// until SetHome is called again. Used on disarm-followed-by-relocate
+// or on model unload.
+func (s *State) ClearHome() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.homeSet = false
+}
+
+// HasHome reports whether a home position is currently set.
+func (s *State) HasHome() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.homeSet
+}
+
+// haversineMeters returns the great-circle distance in meters between
+// two lat/lon pairs in decimal degrees. Mean Earth radius is used;
+// accuracy is more than sufficient for sub-km RC ranges where the
+// Earth-as-sphere assumption introduces well under 0.5% error.
+func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusM = 6371000.0
+	rad := math.Pi / 180.0
+	phi1 := lat1 * rad
+	phi2 := lat2 * rad
+	dphi := (lat2 - lat1) * rad
+	dlambda := (lon2 - lon1) * rad
+	a := math.Sin(dphi/2)*math.Sin(dphi/2) +
+		math.Cos(phi1)*math.Cos(phi2)*math.Sin(dlambda/2)*math.Sin(dlambda/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earthRadiusM * c
 }

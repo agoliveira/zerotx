@@ -20,13 +20,13 @@ func wrap(addr, frameType byte, body []byte) []byte {
 func TestParseGPS_RoundTrip(t *testing.T) {
 	// Build a known-good GPS frame body.
 	body := make([]byte, 15)
-	var lat int32 = 514321000   // 51.4321 * 1e7
-	var lon int32 = -12345670   // -1.234567 * 1e7
+	var lat int32 = 514321000 // 51.4321 * 1e7
+	var lon int32 = -12345670 // -1.234567 * 1e7
 	binary.BigEndian.PutUint32(body[0:4], uint32(lat))
 	binary.BigEndian.PutUint32(body[4:8], uint32(lon))
-	binary.BigEndian.PutUint16(body[8:10], 1234)                     // 123.4 km/h
-	binary.BigEndian.PutUint16(body[10:12], 17500)                   // 175.00 deg
-	binary.BigEndian.PutUint16(body[12:14], 1450)                    // alt = 450m (1450 - 1000)
+	binary.BigEndian.PutUint16(body[8:10], 1234)   // 123.4 km/h
+	binary.BigEndian.PutUint16(body[10:12], 17500) // 175.00 deg
+	binary.BigEndian.PutUint16(body[12:14], 1450)  // alt = 450m (1450 - 1000)
 	body[14] = 12
 
 	g, ok := parseGPS(body)
@@ -196,7 +196,7 @@ func TestState_Feed_BatteryCellCountVariousChemistries(t *testing.T) {
 		{"3S LiPo full", 12.6, 3},
 		{"4S LiPo full", 16.8, 4},
 		{"6S LiPo full", 25.2, 6},
-		{"3S LiHV nominal", 11.4, 3},   // 3.8V/cell
+		{"3S LiHV nominal", 11.4, 3},      // 3.8V/cell
 		{"4S Li-ion mid-charge", 14.4, 4}, // 3.6V/cell
 		{"6S Li-ion mid-charge", 21.6, 6}, // 3.6V/cell
 		{"2S boundary (8.4V)", 8.4, 2},
@@ -272,3 +272,133 @@ func TestState_FeedShortPayloadIgnored(t *testing.T) {
 		t.Errorf("Feed should reject nil payload")
 	}
 }
+
+// === Home position tests ===
+
+// gpsBody helper packs a GPS body matching parseGPS expectations.
+func gpsBody(latE7, lonE7 int32, gsKmh10 uint16, hdg100 uint16, altPlus1000 int32, sats uint8) []byte {
+	body := make([]byte, 15)
+	binary.BigEndian.PutUint32(body[0:4], uint32(latE7))
+	binary.BigEndian.PutUint32(body[4:8], uint32(lonE7))
+	binary.BigEndian.PutUint16(body[8:10], gsKmh10)
+	binary.BigEndian.PutUint16(body[10:12], hdg100)
+	binary.BigEndian.PutUint16(body[12:14], uint16(altPlus1000))
+	body[14] = sats
+	return body
+}
+
+func TestSetHome_NoGPSReturnsFalse(t *testing.T) {
+	s := New(nil)
+	if s.SetHome(false) {
+		t.Error("SetHome should fail when no GPS data has been received")
+	}
+	if s.HasHome() {
+		t.Error("HasHome should be false after failed SetHome")
+	}
+}
+
+func TestSetHome_RecordsCurrentGPS(t *testing.T) {
+	s := New(nil)
+	// Feed a GPS frame at a known location.
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	if !s.SetHome(false) {
+		t.Fatal("SetHome should succeed once GPS is present")
+	}
+	snap := s.Snapshot()
+	if snap.Home == nil {
+		t.Fatal("Snapshot.Home should be non-nil after SetHome")
+	}
+	if snap.Home.Data.LatDeg < 51.4320 || snap.Home.Data.LatDeg > 51.4322 {
+		t.Errorf("home lat: got %v, want ~51.4321", snap.Home.Data.LatDeg)
+	}
+	if snap.Home.Data.DistanceM != 0 {
+		t.Errorf("distance to self should be ~0, got %d", snap.Home.Data.DistanceM)
+	}
+}
+
+func TestSetHome_IdempotentUnlessForced(t *testing.T) {
+	s := New(nil)
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	if !s.SetHome(false) {
+		t.Fatal("first SetHome should succeed")
+	}
+	// Move GPS.
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514400000, -12300000, 0, 0, 1100, 9)))
+	// Without force, second call should be a no-op.
+	if s.SetHome(false) {
+		t.Error("second SetHome without force should return false")
+	}
+	snap := s.Snapshot()
+	if snap.Home.Data.LatDeg < 51.4320 || snap.Home.Data.LatDeg > 51.4322 {
+		t.Errorf("home should still be original location, got %v", snap.Home.Data.LatDeg)
+	}
+	// With force, second call should overwrite.
+	if !s.SetHome(true) {
+		t.Error("forced SetHome should succeed")
+	}
+	snap = s.Snapshot()
+	if snap.Home.Data.LatDeg < 51.4399 || snap.Home.Data.LatDeg > 51.4401 {
+		t.Errorf("home should have updated to new location, got %v", snap.Home.Data.LatDeg)
+	}
+}
+
+func TestSnapshot_DistanceComputed(t *testing.T) {
+	s := New(nil)
+	// Set home.
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	s.SetHome(false)
+	// Move ~111 meters north (0.001 deg latitude is ~111m).
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514331000, -12345670, 0, 0, 1100, 9)))
+	snap := s.Snapshot()
+	if snap.Home == nil {
+		t.Fatal("Home should be present")
+	}
+	dist := snap.Home.Data.DistanceM
+	if dist < 100 || dist > 130 {
+		t.Errorf("expected ~111m, got %d", dist)
+	}
+}
+
+func TestClearHome(t *testing.T) {
+	s := New(nil)
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	s.SetHome(false)
+	if !s.HasHome() {
+		t.Fatal("home should be set")
+	}
+	s.ClearHome()
+	if s.HasHome() {
+		t.Error("home should be cleared")
+	}
+	if snap := s.Snapshot(); snap.Home != nil {
+		t.Error("Snapshot.Home should be nil after ClearHome")
+	}
+}
+
+func TestReset_ClearsHome(t *testing.T) {
+	s := New(nil)
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	s.SetHome(false)
+	s.Reset()
+	if s.HasHome() {
+		t.Error("Reset should clear home")
+	}
+}
+
+func TestHaversine_KnownDistance(t *testing.T) {
+	// SP <-> RJ (rough), about 360 km.
+	d := haversineMeters(-23.5505, -46.6333, -22.9068, -43.1729)
+	if d < 350000 || d > 370000 {
+		t.Errorf("SP-RJ should be ~360km, got %.0fm", d)
+	}
+}
+
+func TestHaversine_SamePoint(t *testing.T) {
+	d := haversineMeters(51.4321, -1.234567, 51.4321, -1.234567)
+	if d > 0.001 {
+		t.Errorf("same point distance should be ~0, got %v", d)
+	}
+}
+
+// silence unused import if time isn't used
+var _ = time.Now
