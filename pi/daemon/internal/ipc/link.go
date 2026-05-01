@@ -23,9 +23,9 @@ type Link struct {
 	port serial.Port
 
 	// OnFrame is invoked for every parsed frame except MsgLog (which goes to
-	// OnLog instead), MsgTelemetry (which goes to OnTelemetry instead) and
-	// the handshake messages (which are handled internally). Set before
-	// calling Run.
+	// OnLog instead), MsgTelemetry (which goes to OnTelemetry instead),
+	// MsgInputEvent (which goes to OnInputEvent instead) and the handshake
+	// messages (which are handled internally). Set before calling Run.
 	OnFrame func(Frame)
 	// OnLog receives MCU log strings. If nil, MCU logs go to stdlib log.
 	OnLog func(string)
@@ -34,6 +34,11 @@ type Link struct {
 	// telemetry package decodes these into typed sensor data. If nil,
 	// telemetry frames are silently dropped.
 	OnTelemetry func([]byte)
+	// OnInputEvent receives physical control-panel input events forwarded
+	// by the MCU: [input_id:1][state:1]. The daemon routes these to the
+	// arm state machine and any future controls-area consumers. If nil,
+	// input events are silently dropped.
+	OnInputEvent func(inputID, state byte)
 
 	// LocalVersion is the daemon's human-readable version string sent in
 	// the MsgHello payload. Optional; if empty, "" is sent.
@@ -45,11 +50,11 @@ type Link struct {
 
 	// Handshake state. Guarded by hsMu (separate mutex so a long-running
 	// SendChannelIntent doesn't block dispatch).
-	hsMu        sync.RWMutex
-	hsOK        bool   // true once HelloAck received with matching proto
-	hsLegacy    bool   // true once we've given up waiting and decided to proceed without ACK
-	hsRemote    string // remote version string from HelloAck, for logging
-	hsLoggedTx  bool   // tracks whether we've logged "intent dropped because handshake not done"
+	hsMu       sync.RWMutex
+	hsOK       bool   // true once HelloAck received with matching proto
+	hsLegacy   bool   // true once we've given up waiting and decided to proceed without ACK
+	hsRemote   string // remote version string from HelloAck, for logging
+	hsLoggedTx bool   // tracks whether we've logged "intent dropped because handshake not done"
 }
 
 // Open opens the given serial device. Baud is mostly cosmetic for USB-CDC
@@ -155,6 +160,11 @@ func (l *Link) dispatch(f Frame) {
 	case MsgTelemetry:
 		if l.OnTelemetry != nil {
 			l.OnTelemetry(f.Payload)
+		}
+		return
+	case MsgInputEvent:
+		if l.OnInputEvent != nil && len(f.Payload) >= 2 {
+			l.OnInputEvent(f.Payload[0], f.Payload[1])
 		}
 		return
 	}
@@ -263,7 +273,7 @@ func (l *Link) handshakeLoop(ctx context.Context) {
 				l.hsMu.Lock()
 				if !l.hsOK {
 					l.hsLegacy = true
-					log.Printf("ipc: WARNING firmware did not respond to handshake within %v; " +
+					log.Printf("ipc: WARNING firmware did not respond to handshake within %v; "+
 						"proceeding in legacy mode (compatibility unverified). Update firmware.",
 						giveUpAt)
 				}
@@ -300,8 +310,8 @@ func (l *Link) recordHandshakeResult(remoteProto uint8, remoteVersion string) {
 		log.Printf("ipc: handshake OK (proto=%d, firmware=%q)", remoteProto, remoteVersion)
 		return
 	}
-	log.Printf("ipc: PROTOCOL MISMATCH: daemon proto=%d (%q), firmware proto=%d (%q). " +
-		"Channel intent will not be emitted; update one side. " +
+	log.Printf("ipc: PROTOCOL MISMATCH: daemon proto=%d (%q), firmware proto=%d (%q). "+
+		"Channel intent will not be emitted; update one side. "+
 		"FC failsafe will take over once MCU watchdog times out.",
 		ProtoVersion, l.LocalVersion, remoteProto, remoteVersion)
 }

@@ -16,6 +16,17 @@ const (
 	MsgInputState    byte = 0x02 // MCU -> Pi, empty in M1
 	MsgHeartbeat     byte = 0x03 // both, 1 byte seq
 
+	// MsgInputEvent: MCU -> Pi. Sent on stable edge transition of a
+	// physical control-panel input, plus once at boot to establish
+	// ground truth. Payload layout:
+	//   [input_id:1][state:1]
+	// Input IDs are reserved per-input below (InputArmKey, etc).
+	// State is the logical (protocol-polarity) value, not the raw
+	// pin level: the firmware translates wiring polarity so the
+	// daemon sees a consistent semantic regardless of how the
+	// physical switch is wired.
+	MsgInputEvent byte = 0x05
+
 	MsgHello    byte = 0x10 // both, [proto:1][reserved:3][version_str:N]
 	MsgHelloAck byte = 0x11 // both, same payload as MsgHello
 
@@ -30,17 +41,29 @@ const (
 	MsgLog byte = 0x14 // MCU -> Pi, ASCII string
 )
 
+// Reserved input IDs for MsgInputEvent.
+//
+// 0x00 is reserved as "invalid / probe". Future controls-area inputs
+// (additional safety-critical hardware only) take subsequent values.
+const (
+	InputInvalid byte = 0x00
+	InputArmKey  byte = 0x01
+)
+
 // ProtoVersion is the wire-format protocol version. Bumped only when the
 // frame format or message semantics change in an incompatible way. Both
 // the daemon and the RP2040 firmware must agree on this value at link
 // open time; mismatches gate channel intent emission.
 //
-// v2 (current): adds MsgTelemetry. New firmware against old daemon is
+// v2: adds MsgTelemetry. New firmware against old daemon is
 // backward-compatible at the IPC parser level (unknown messages are
 // dropped by the parser); old firmware against new daemon means no
 // telemetry data, but the daemon still works (auto-checks fall back
 // to manual confirmations).
-const ProtoVersion uint8 = 2
+//
+// v3 (current): adds MsgInputEvent. Daemon arming features
+// (state machine, AUX channel control) require both sides at v3.
+const ProtoVersion uint8 = 3
 
 // Sizing limits (must agree with the firmware).
 const (

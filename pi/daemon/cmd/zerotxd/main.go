@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/api"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/arm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
@@ -180,6 +181,36 @@ func main() {
 	telemetryState := telemetry.New(log.Printf)
 	link.OnTelemetry = func(payload []byte) {
 		telemetryState.Feed(payload)
+	}
+
+	// Arm state machine. Tracks the GCS-side arming sequence (panel
+	// arm key + confirm + throttle 0 + FC ready). Inputs are fed by
+	// link.OnInputEvent (arm key from MCU), the channel intent loop
+	// (throttle), the telemetry snapshot (FC ready), and the API
+	// (Confirm). Events are drained in goroutines launched after
+	// the context is established (below).
+	//
+	// The first MsgInputEvent for the arm key after boot is treated
+	// as Init (so the state machine sees boot-time ground truth and
+	// emits the "key up at boot" warning if applicable). Subsequent
+	// events are normal KeyChanged transitions.
+	armMachine := arm.New()
+	var armInitOnce sync.Once
+	link.OnInputEvent = func(inputID, state byte) {
+		switch inputID {
+		case ipc.InputArmKey:
+			keyUp := state != 0
+			fired := false
+			armInitOnce.Do(func() {
+				armMachine.Init(keyUp)
+				fired = true
+			})
+			if !fired {
+				armMachine.KeyChanged(keyUp)
+			}
+		default:
+			log.Printf("ipc: unknown input id %#02x state=%d", inputID, state)
+		}
 	}
 	log.Printf("link open on %s", port)
 
@@ -357,9 +388,15 @@ func main() {
 		}
 	}
 
+	// Arm state machine: launch the event drain (logs transitions
+	// for now; audio/AUX wiring follow in subsequent steps) and a
+	// 1Hz Tick driver for the 60s arming-request timeout.
+	go drainArmEvents(ctx, armMachine)
+	go tickArmMachine(ctx, armMachine)
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now(), dispMgr, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -503,6 +540,21 @@ func main() {
 
 			ch := s.Mapper.Resolve()
 			chHolder.Set(ch)
+			// Feed throttle (CH3 by EdgeTX convention) into the arm
+			// state machine. CRSF range minimum is ~172; use a
+			// generous 200 cutoff so floating-point jitter near idle
+			// doesn't false-positive as "throttle non-zero".
+			armMachine.ThrottleChanged(ch[2] <= 200)
+			// FC ready-to-arm: derive from flight mode telemetry.
+			// Permissive heuristic for now — fresh, non-empty mode
+			// string counts as ready. Real FCs (INAV/ArduPilot)
+			// signal pre-arm errors via decorations in the mode
+			// string (asterisks, '!' prefixes); refinement to check
+			// those will come once we have real FC telemetry to
+			// pattern against.
+			tsnap := telemetryState.Snapshot()
+			fcReady := tsnap.FlightMode != nil && !tsnap.FlightMode.Stale && tsnap.FlightMode.Data.Mode != ""
+			armMachine.FCReadyChanged(fcReady)
 			if err := link.SendChannelIntent(ch); err != nil {
 				log.Printf("send intent: %v", err)
 				continue
@@ -615,6 +667,7 @@ func buildAPIProviders(
 	version string,
 	startedAt time.Time,
 	dispMgr *display.Manager,
+	armMachine *arm.Machine,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -704,6 +757,7 @@ func buildAPIProviders(
 				log.Printf("model unloaded: %s", s.Model.EdgeTX.Header.Name)
 			}
 			holder.Store(nil)
+			telemState.ClearHome()
 			if dispMgr != nil {
 				dispMgr.SetThresholds(nil)
 				dispMgr.SetMode(display.ModeIdle)
@@ -766,6 +820,12 @@ func buildAPIProviders(
 					name = s.Model.EdgeTX.Header.Name
 				}
 				rec.OnArm(name, "")
+				// Record home position if GPS has a fix. Idempotent
+				// across re-arms (force=false) so multiple takeoffs
+				// in one session keep the original home.
+				if telemState.SetHome(false) {
+					log.Printf("home position set on arm")
+				}
 				if dispMgr != nil {
 					dispMgr.SetMode(display.ModeFlight)
 				}
@@ -819,6 +879,10 @@ func buildAPIProviders(
 		Telemetry: func() interface{} {
 			return telemState.Snapshot()
 		},
+		Arm: func() interface{} {
+			return armMachine.Snapshot()
+		},
+		ArmConfirm: armMachine.Confirm,
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{
 				Threshold:    player.Threshold().String(),
@@ -954,6 +1018,42 @@ func buildModelDetails(m *model.ZeroTXModel, eng *logic.Engine, imgPath string) 
 		Name:      et.Header.Name,
 		Bitmap:    et.Header.Bitmap,
 		HasBitmap: hasBitmap,
+		FCType:    m.ZeroTX.FCType,
+		Airframe:  m.ZeroTX.Airframe,
+	}
+
+	if t := m.ZeroTX.Thresholds; t != nil {
+		td := &api.ThresholdDetails{}
+		if b := t.Battery; b != nil {
+			cells := float64(b.Cells)
+			td.Battery = &api.BatteryThresholdDetails{
+				Cells:     b.Cells,
+				CellWarnV: b.CellWarnV,
+				CellCritV: b.CellCritV,
+				CellMinV:  b.CellMinV,
+				CellFullV: b.CellFullV,
+				PackWarnV: cells * b.CellWarnV,
+				PackCritV: cells * b.CellCritV,
+				PackMinV:  cells * b.CellMinV,
+				PackFullV: cells * b.CellFullV,
+			}
+		}
+		if a := t.Altitude; a != nil {
+			td.Altitude = &api.AltitudeThresholdDetails{WarnM: a.WarnM, CritM: a.CritM}
+		}
+		if d := t.Distance; d != nil {
+			td.Distance = &api.DistanceThresholdDetails{WarnM: d.WarnM, CritM: d.CritM}
+		}
+		if l := t.Link; l != nil {
+			td.Link = &api.LinkThresholdDetails{
+				RSSIWarnDBM: l.RSSIWarnDBM, RSSICritDBM: l.RSSICritDBM,
+				LQWarnPct: l.LQWarnPct, LQCritPct: l.LQCritPct,
+			}
+		}
+		if ft := t.FlightTime; ft != nil {
+			td.FlightTime = &api.FlightTimeThresholdDetails{WarnS: ft.WarnS, CritS: ft.CritS}
+		}
+		out.Thresholds = td
 	}
 
 	// Mixes: stored as a slice in YAML order, just translate field names.
@@ -1271,8 +1371,45 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
 		l := s.Link.Data
 		out.LinkPct = display.IntPtr(int(l.UplinkLQ))
 	}
+	if s.Home != nil {
+		out.DistM = display.IntPtr(int(s.Home.Data.DistanceM))
+	}
 	if s.FlightMode != nil {
 		out.FlightMode = s.FlightMode.Data.Mode
 	}
 	return out
+}
+
+// drainArmEvents consumes events from the arm state machine and
+// translates them into side effects. For now (M3.1) it just logs;
+// audio cues, AUX channel wiring, and GUI state updates land in
+// later steps.
+func drainArmEvents(ctx context.Context, m *arm.Machine) {
+	events := m.Events()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-events:
+			log.Printf("arm: %s (state=%s)", e, m.State())
+		}
+	}
+}
+
+// tickArmMachine drives the 60s arming-request timeout. Calls Tick
+// at 1Hz which is plenty of resolution for a 60s timeout. The
+// state machine ignores Tick from any state other than
+// ARMING_REQUESTED, so the cost of the call when nothing is
+// pending is a single mutex acquire-release.
+func tickArmMachine(ctx context.Context, m *arm.Machine) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			m.Tick(now)
+		}
+	}
 }

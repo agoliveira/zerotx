@@ -20,9 +20,9 @@ type Server struct {
 	providers *Providers
 	webDir    string // if non-empty, serve from filesystem instead of embed
 
-	mu       sync.RWMutex
-	httpSrv  *http.Server
-	hub      *hub
+	mu        sync.RWMutex
+	httpSrv   *http.Server
+	hub       *hub
 	startedAt time.Time
 }
 
@@ -70,6 +70,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/joystick/select", s.handleJoystickSelect)
 	mux.HandleFunc("/api/v1/joystick/release", s.handleJoystickRelease)
 	mux.HandleFunc("/api/v1/flight/arm", s.handleFlightArm)
+	mux.HandleFunc("/api/v1/arm", s.handleArm)
+	mux.HandleFunc("/api/v1/arm/confirm", s.handleArmConfirm)
 
 	// Static GUI at /. The embed.FS path is rooted; for dev iteration,
 	// SetWebDir bypasses it.
@@ -475,6 +477,39 @@ func (s *Server) handleFlightArm(w http.ResponseWriter, r *http.Request) {
 	}
 	s.providers.SetFlightArmed(req.Armed)
 	writeJSON(w, http.StatusOK, map[string]bool{"armed": req.Armed})
+}
+
+// handleArm returns the current arm state machine snapshot (state +
+// inputs). GET only. Returns 501 if the daemon doesn't have an arm
+// machine wired up.
+func (s *Server) handleArm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.Arm == nil {
+		http.Error(w, "arm state not supported on this daemon", http.StatusNotImplemented)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.providers.Arm())
+}
+
+// handleArmConfirm fires the operator's confirm action. POST only.
+// Body is empty; the act of POSTing IS the confirm. The state
+// machine accepts confirms silently if not in ARMING_REQUESTED, so
+// callers shouldn't expect this endpoint to return state — they
+// should subscribe to arm events for the actual outcome.
+func (s *Server) handleArmConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.ArmConfirm == nil {
+		http.Error(w, "arm confirm not supported on this daemon", http.StatusNotImplemented)
+		return
+	}
+	s.providers.ArmConfirm()
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "confirm"})
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
