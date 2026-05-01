@@ -22,16 +22,19 @@ import (
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/api"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
-	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
-	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logic"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/model"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/narrator"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
+
+	"go.bug.st/serial"
 )
 
 const version = "0.22.3-display-protocol"
@@ -62,6 +65,8 @@ func main() {
 	recordingsDir := flag.String("recordings-dir", defaultRecordingsDir(), "directory for saved flight recordings")
 	noRecordings := flag.Bool("no-recordings", false, "disable flight recording entirely")
 	keepRecordings := flag.Int("keep-recordings", 10, "number of most-recent recordings to retain (older deleted on save)")
+	displayPort := flag.String("display-port", "", "HUB75 display device serial port (e.g. /dev/ttyACM1); empty disables display output")
+	displayBrightness := flag.Int("display-brightness", 80, "HUB75 display brightness 0-100")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -257,6 +262,10 @@ func main() {
 	// to wake often enough to catch every meaningful update. Stops on
 	// daemon shutdown via the same context as the rest of the daemon.
 	telemSamplerStop := make(chan struct{})
+	// dispMgr is initialized after the API setup below; declared here
+	// so the sampler closure can capture it. nil until the display
+	// section runs; sampler guards on nil.
+	var dispMgr *display.Manager
 	go func() {
 		t := time.NewTicker(200 * time.Millisecond)
 		defer t.Stop()
@@ -270,6 +279,9 @@ func main() {
 					continue
 				}
 				rec.LogTelemetry(buildTelemetrySample(snap))
+				if dispMgr != nil {
+					dispMgr.SetState(telemetryToDisplayState(snap))
+				}
 			}
 		}
 	}()
@@ -309,9 +321,45 @@ func main() {
 		cancel()
 	}()
 
+	// Display device (HUB75 LED panel), optional. When -display-port
+	// is set, run a Manager that opens the serial port, talks the
+	// DISP protocol, and reconnects on failure. When unset, dispMgr
+	// stays nil and all integration call sites guard on it.
+	if *displayPort != "" {
+		dispMgr = display.NewManager(display.ManagerConfig{
+			Open: func() (display.Transport, error) {
+				return serial.Open(*displayPort, &serial.Mode{
+					BaudRate: 115200,
+					Parity:   serial.NoParity,
+					DataBits: 8,
+					StopBits: serial.OneStopBit,
+					InitialStatusBits: &serial.ModemOutputBits{
+						DTR: false, RTS: false, // ESP32 reset workaround
+					},
+				})
+			},
+			OnEvent: func(ev display.Event) {
+				if ev.Kind == "READY" {
+					log.Printf("display: device ready: %v", ev.Args)
+				} else if ev.Kind == "ERROR" {
+					log.Printf("display: device error: %v", ev.Args)
+				}
+			},
+		})
+		go func() { _ = dispMgr.Run(ctx) }()
+		dispMgr.SetBrightness(*displayBrightness)
+		// Initial mode: IDLE if no model, PREFLIGHT once one is loaded.
+		if ztxModel == nil {
+			dispMgr.SetMode(display.ModeIdle)
+		} else {
+			dispMgr.SetMode(display.ModePreflight)
+			dispMgr.SetThresholds(modelThresholdsToDisplay(ztxModel.ZeroTX.Thresholds))
+		}
+	}
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now())
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now(), dispMgr, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -566,6 +614,8 @@ func buildAPIProviders(
 	logBuf *logbuf.Buffer,
 	version string,
 	startedAt time.Time,
+	dispMgr *display.Manager,
+	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
 		Channels: chH.Get,
@@ -638,13 +688,26 @@ func buildAPIProviders(
 			return buildPreflight(holder, jsHolder, port, modelDefaultPath)
 		},
 		LoadModel: func(path string) error {
-			return loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, path)
+			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, path); err != nil {
+				return err
+			}
+			if dispMgr != nil {
+				if s := holder.Load(); s != nil && s.Model != nil {
+					dispMgr.SetThresholds(modelThresholdsToDisplay(s.Model.ZeroTX.Thresholds))
+				}
+				dispMgr.SetMode(display.ModePreflight)
+			}
+			return nil
 		},
 		UnloadModel: func() {
 			if s := holder.Load(); s != nil {
 				log.Printf("model unloaded: %s", s.Model.EdgeTX.Header.Name)
 			}
 			holder.Store(nil)
+			if dispMgr != nil {
+				dispMgr.SetThresholds(nil)
+				dispMgr.SetMode(display.ModeIdle)
+			}
 		},
 		Joysticks: func() []api.JoystickDevice {
 			devs := joystick.List()
@@ -703,9 +766,33 @@ func buildAPIProviders(
 					name = s.Model.EdgeTX.Header.Name
 				}
 				rec.OnArm(name, "")
+				if dispMgr != nil {
+					dispMgr.SetMode(display.ModeFlight)
+				}
 			} else {
 				path := rec.OnDisarm()
 				player.AcknowledgeAll()
+				if dispMgr != nil {
+					dispMgr.SetMode(display.ModePostflight)
+					// Postflight banner sticks for 30s on the device,
+					// then we drop back to PREFLIGHT (model still
+					// loaded) or IDLE.
+					go func() {
+						select {
+						case <-time.After(30 * time.Second):
+						case <-ctx.Done():
+							return
+						}
+						if dispMgr == nil {
+							return
+						}
+						if s := holder.Load(); s != nil && s.Model != nil {
+							dispMgr.SetMode(display.ModePreflight)
+						} else {
+							dispMgr.SetMode(display.ModeIdle)
+						}
+					}()
+				}
 
 				// Post-flight narration. If recording produced a
 				// saved file, summarize it and emit the narrative
@@ -776,8 +863,8 @@ func buildAPIProviders(
 			return recorder.Summarize(path)
 		},
 
-		Version:    version,
-		Uptime:     func() time.Duration { return time.Since(startedAt) },
+		Version: version,
+		Uptime:  func() time.Duration { return time.Since(startedAt) },
 	}
 }
 
@@ -1115,6 +1202,77 @@ func buildTelemetrySample(s telemetry.Snapshot) recorder.TelemetrySample {
 	if s.FlightMode != nil {
 		mode := s.FlightMode.Data.Mode
 		out.FlightMode = &mode
+	}
+	return out
+}
+
+// === Display helpers ===
+
+// modelThresholdsToDisplay converts model.Thresholds (per-cell battery,
+// per-domain pointers) into display.Thresholds (pack-level battery,
+// same per-domain shape). Returns nil if input is nil or has no
+// populated domains; the display package treats nil as "clear all".
+func modelThresholdsToDisplay(t *model.Thresholds) *display.Thresholds {
+	if t == nil {
+		return nil
+	}
+	out := &display.Thresholds{}
+	if b := t.Battery; b != nil {
+		cells := float64(b.Cells)
+		out.Battery = &display.BatteryThresholds{
+			WarnV: cells * b.CellWarnV,
+			CritV: cells * b.CellCritV,
+			MinV:  cells * b.CellMinV,
+			FullV: cells * b.CellFullV,
+		}
+	}
+	if a := t.Altitude; a != nil {
+		out.Altitude = &display.AltitudeThresholds{WarnM: a.WarnM, CritM: a.CritM}
+	}
+	if d := t.Distance; d != nil {
+		out.Distance = &display.DistanceThresholds{WarnM: d.WarnM, CritM: d.CritM}
+	}
+	if l := t.Link; l != nil {
+		out.Link = &display.LinkThresholds{
+			RSSIWarnDBM: l.RSSIWarnDBM, RSSICritDBM: l.RSSICritDBM,
+			LQWarnPct: l.LQWarnPct, LQCritPct: l.LQCritPct,
+		}
+	}
+	if ft := t.FlightTime; ft != nil {
+		out.FlightTime = &display.FlightTimeThresholds{WarnS: ft.WarnS, CritS: ft.CritS}
+	}
+	// If nothing populated, return nil so the display clears.
+	if out.Battery == nil && out.Altitude == nil && out.Distance == nil &&
+		out.Link == nil && out.FlightTime == nil {
+		return nil
+	}
+	return out
+}
+
+// telemetryToDisplayState maps a telemetry.Snapshot to a display.State.
+// Only fields that are present (non-nil entries, non-stale data) are
+// set on the output; the display preserves last-known values for
+// absent fields.
+func telemetryToDisplayState(s telemetry.Snapshot) display.State {
+	var out display.State
+	if s.Battery != nil {
+		b := s.Battery.Data
+		out.BatV = display.Float64Ptr(b.Volts)
+		out.BatPct = display.IntPtr(int(b.Percent))
+	}
+	if s.GPS != nil {
+		g := s.GPS.Data
+		// CRSF altitude is meters + 1000 offset; subtract here.
+		out.AltM = display.IntPtr(int(g.AltMeters) - 1000)
+		out.SpdKmh = display.IntPtr(int(g.GroundKmh))
+		out.Sats = display.IntPtr(int(g.Sats))
+	}
+	if s.Link != nil {
+		l := s.Link.Data
+		out.LinkPct = display.IntPtr(int(l.UplinkLQ))
+	}
+	if s.FlightMode != nil {
+		out.FlightMode = s.FlightMode.Data.Mode
 	}
 	return out
 }

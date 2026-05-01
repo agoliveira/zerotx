@@ -79,17 +79,17 @@ const (
 // preserves last-known values for missing fields. This is what makes
 // partial updates work: the daemon can update only what changed.
 type State struct {
-	Armed     *bool    `display:"armed"`
-	BatV      *float64 `display:"bat"`
-	BatPct    *int     `display:"batpct"`
-	AltM      *int     `display:"alt"`
-	DistM     *int     `display:"dist"`
-	SpdKmh    *int     `display:"spd"`
-	LinkPct   *int     `display:"link"`
-	Sats      *int     `display:"sats"`
-	FlightMode string  `display:"mode"`
-	GpsFix    string   `display:"gps"`
-	TimeSec   *int     `display:"time"`
+	Armed      *bool    `display:"armed"`
+	BatV       *float64 `display:"bat"`
+	BatPct     *int     `display:"batpct"`
+	AltM       *int     `display:"alt"`
+	DistM      *int     `display:"dist"`
+	SpdKmh     *int     `display:"spd"`
+	LinkPct    *int     `display:"link"`
+	Sats       *int     `display:"sats"`
+	FlightMode string   `display:"mode"`
+	GpsFix     string   `display:"gps"`
+	TimeSec    *int     `display:"time"`
 }
 
 // Config controls Driver behavior. Reasonable defaults are filled in
@@ -135,12 +135,12 @@ type Driver struct {
 	outbound chan string
 
 	// State protected by mu.
-	mu        sync.Mutex
-	mode      Mode
-	state     State
-	closed    bool
-	lastBeat  time.Time
-	onEvent   func(Event)
+	mu       sync.Mutex
+	mode     Mode
+	state    State
+	closed   bool
+	lastBeat time.Time
+	onEvent  func(Event)
 
 	// Coordination.
 	done   chan struct{}
@@ -197,14 +197,21 @@ func (d *Driver) Run(ctx context.Context) error {
 	senderErr := make(chan error, 1)
 	go func() {
 		defer wg.Done()
-		senderErr <- d.runSender(innerCtx)
+		err := d.runSender(innerCtx)
+		senderErr <- err
+		// On any sender exit (transport write error, etc), cancel
+		// innerCtx so sibling goroutines unblock and Run returns.
+		cancel()
 	}()
 
 	// Receiver goroutine: reads lines, dispatches events.
 	receiverErr := make(chan error, 1)
 	go func() {
 		defer wg.Done()
-		receiverErr <- d.runReceiver(innerCtx)
+		err := d.runReceiver(innerCtx)
+		receiverErr <- err
+		// Same: receiver exit (EOF, read error) tears the Driver down.
+		cancel()
 	}()
 
 	// Snapshot ticker: sends state snapshots at the configured rate.
