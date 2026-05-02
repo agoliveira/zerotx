@@ -693,6 +693,11 @@ func main() {
 
 	var lastCh [ipc.Channels]uint16
 	var lastLogic []bool
+	// lastFCModeStr is the most recently logged CRSF flight-mode
+	// string. The mode is sampled every channel-intent tick (50Hz);
+	// we only log on transitions so the operator sees pre-arm state
+	// changes without log spam.
+	var lastFCModeStr string
 	first := true
 	for {
 		select {
@@ -740,15 +745,21 @@ func main() {
 			// generous 200 cutoff so floating-point jitter near idle
 			// doesn't false-positive as "throttle non-zero".
 			armMachine.ThrottleChanged(ch[2] <= 200)
-			// FC ready-to-arm: derive from flight mode telemetry.
-			// Permissive heuristic for now: fresh, non-empty mode
-			// string counts as ready. INAV signals pre-arm errors
-			// via decorations in the mode string (asterisks, '!'
-			// prefixes); refinement to check those will come once
-			// we have real FC telemetry to pattern against.
+			// FC ready-to-arm: derive from CRSF flight-mode string
+			// using the dedicated decoder (see fc_ready.go).
 			tsnap := telemetryState.Snapshot()
-			fcReady := tsnap.FlightMode != nil && !tsnap.FlightMode.Stale && tsnap.FlightMode.Data.Mode != ""
+			modeStr := ""
+			modeFresh := false
+			if tsnap.FlightMode != nil && !tsnap.FlightMode.Stale {
+				modeStr = tsnap.FlightMode.Data.Mode
+				modeFresh = true
+			}
+			fcReady := modeFresh && fcReadyFromMode(modeStr)
 			armMachine.FCReadyChanged(fcReady)
+			if modeStr != lastFCModeStr {
+				log.Printf("fc-ready: mode=%q ready=%v", modeStr, fcReady)
+				lastFCModeStr = modeStr
+			}
 			if err := link.SendChannelIntent(ch); err != nil {
 				log.Printf("send intent: %v", err)
 				continue
