@@ -48,6 +48,7 @@ const (
 	frameGPS        byte = 0x02
 	frameBattery    byte = 0x08
 	frameLink       byte = 0x14
+	frameAttitude   byte = 0x1E
 	frameFlightMode byte = 0x21
 )
 
@@ -60,6 +61,7 @@ var staleWindow = map[byte]time.Duration{
 	frameGPS:        2 * time.Second,  // ~5 Hz typical
 	frameBattery:    5 * time.Second,  // ~1 Hz typical
 	frameLink:       1 * time.Second,  // ~10 Hz typical
+	frameAttitude:   1 * time.Second,  // ~10 Hz typical
 	frameFlightMode: 30 * time.Second, // emitted on change
 }
 
@@ -108,6 +110,17 @@ type Link struct {
 	TxPowerIdx      uint8 `json:"txPowerIdx"`
 }
 
+// Attitude holds parsed CRSF attitude telemetry. Roll, pitch, yaw
+// in degrees. CRSF wire format is 1/10000 of a radian as int16
+// big-endian; we convert to degrees here so consumers don't need
+// to know the units. Pitch positive = nose up; roll positive =
+// right wing down (standard aviation convention).
+type Attitude struct {
+	RollDeg  float64 `json:"rollDeg"`
+	PitchDeg float64 `json:"pitchDeg"`
+	YawDeg   float64 `json:"yawDeg"`
+}
+
 // FlightMode holds the FC-reported flight mode string. INAV uses
 // "ANGL", "ACRO", "MANU", "RTH ", "WP  ", etc. The daemon doesn't
 // interpret; it just exposes the string.
@@ -122,6 +135,7 @@ type Snapshot struct {
 	GPS        *GPSEntry        `json:"gps,omitempty"`
 	Battery    *BatteryEntry    `json:"battery,omitempty"`
 	Link       *LinkEntry       `json:"link,omitempty"`
+	Attitude   *AttitudeEntry   `json:"attitude,omitempty"`
 	FlightMode *FlightModeEntry `json:"flightMode,omitempty"`
 	Home       *HomeEntry       `json:"home,omitempty"`
 
@@ -146,6 +160,11 @@ type LinkEntry struct {
 	Data    Link   `json:"data"`
 	Updated string `json:"updated"`
 	Stale   bool   `json:"stale"`
+}
+type AttitudeEntry struct {
+	Data    Attitude `json:"data"`
+	Updated string   `json:"updated"`
+	Stale   bool     `json:"stale"`
 }
 type FlightModeEntry struct {
 	Data    FlightMode `json:"data"`
@@ -178,6 +197,8 @@ type State struct {
 	batteryAt time.Time
 	link      *Link
 	linkAt    time.Time
+	attitude   *Attitude
+	attitudeAt time.Time
 	mode      *FlightMode
 	modeAt    time.Time
 
@@ -284,6 +305,17 @@ func (s *State) Feed(payload []byte) bool {
 		s.mu.Unlock()
 		return true
 
+	case frameAttitude:
+		a, ok := parseAttitude(body)
+		if !ok {
+			return false
+		}
+		s.mu.Lock()
+		s.attitude = &a
+		s.attitudeAt = now
+		s.mu.Unlock()
+		return true
+
 	case frameFlightMode:
 		m, ok := parseFlightMode(body)
 		if !ok {
@@ -335,6 +367,14 @@ func (s *State) Snapshot() Snapshot {
 			Data:    *s.link,
 			Updated: s.linkAt.UTC().Format(time.RFC3339Nano),
 			Stale:   isStale(s.linkAt, now, frameLink),
+		}
+		out.HaveAny = true
+	}
+	if s.attitude != nil {
+		out.Attitude = &AttitudeEntry{
+			Data:    *s.attitude,
+			Updated: s.attitudeAt.UTC().Format(time.RFC3339Nano),
+			Stale:   isStale(s.attitudeAt, now, frameAttitude),
 		}
 		out.HaveAny = true
 	}
@@ -455,12 +495,32 @@ func parseLink(b []byte) (Link, bool) {
 	}, true
 }
 
+// parseAttitude decodes CRSF frame 0x1E. Layout: 6 bytes, three
+// int16 big-endian values for pitch, roll, yaw, each in 1/10000 of
+// a radian. Pitch comes first on the wire (despite "attitude"
+// usually being read as roll-pitch-yaw); CRSF spec order is
+// pitch/roll/yaw.
+func parseAttitude(b []byte) (Attitude, bool) {
+	if len(b) < 6 {
+		return Attitude{}, false
+	}
+	pitch := int16(binary.BigEndian.Uint16(b[0:2]))
+	roll := int16(binary.BigEndian.Uint16(b[2:4]))
+	yaw := int16(binary.BigEndian.Uint16(b[4:6]))
+	const radToDeg = 180.0 / math.Pi
+	const scale = radToDeg / 10000.0
+	return Attitude{
+		PitchDeg: float64(pitch) * scale,
+		RollDeg:  float64(roll) * scale,
+		YawDeg:   float64(yaw) * scale,
+	}, true
+}
+
 func parseFlightMode(b []byte) (FlightMode, bool) {
 	// Layout: null-terminated ASCII string.
 	if len(b) == 0 {
 		return FlightMode{}, false
 	}
-	// Trim at first null.
 	end := len(b)
 	for i, c := range b {
 		if c == 0 {

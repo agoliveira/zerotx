@@ -117,6 +117,41 @@ func TestParseLink_AntennaSelection(t *testing.T) {
 	}
 }
 
+func TestParseAttitude_RoundTrip(t *testing.T) {
+	// Build a known-good attitude frame body. CRSF wire format is
+	// pitch/roll/yaw in 1/10000 of a radian as int16 BE.
+	body := make([]byte, 6)
+	put := func(off int, v int16) {
+		binary.BigEndian.PutUint16(body[off:off+2], uint16(v))
+	}
+	// pitch = 15 deg = 0.2618 rad → 2618 in 1/10000 rad
+	put(0, 2618)
+	// roll = -30 deg = -0.5236 rad → -5236
+	put(2, -5236)
+	// yaw = 90 deg = 1.5708 rad → 15708
+	put(4, 15708)
+
+	a, ok := parseAttitude(body)
+	if !ok {
+		t.Fatal("parseAttitude failed on well-formed input")
+	}
+	if a.PitchDeg < 14.9 || a.PitchDeg > 15.1 {
+		t.Errorf("pitch: got %f, want ~15", a.PitchDeg)
+	}
+	if a.RollDeg < -30.1 || a.RollDeg > -29.9 {
+		t.Errorf("roll: got %f, want ~-30", a.RollDeg)
+	}
+	if a.YawDeg < 89.9 || a.YawDeg > 90.1 {
+		t.Errorf("yaw: got %f, want ~90", a.YawDeg)
+	}
+}
+
+func TestParseAttitude_ShortBuffer(t *testing.T) {
+	if _, ok := parseAttitude(make([]byte, 5)); ok {
+		t.Errorf("parseAttitude should reject 5-byte payload")
+	}
+}
+
 func TestParseFlightMode_NullTerminated(t *testing.T) {
 	// "ANGL\0junk"
 	body := []byte{'A', 'N', 'G', 'L', 0, 'X', 'Y'}

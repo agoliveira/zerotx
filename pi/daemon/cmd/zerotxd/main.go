@@ -38,7 +38,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.23.0-arm-checklist"
+const version = "0.24.0-hud-revamp"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
