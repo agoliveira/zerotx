@@ -928,6 +928,13 @@ func buildAPIProviders(
 		},
 		Acknowledge:    player.Acknowledge,
 		AcknowledgeAll: player.AcknowledgeAll,
+		Speak: func(text, level string) {
+			lvl, ok := audio.ParseLevel(level)
+			if !ok {
+				lvl = audio.LevelNotice
+			}
+			player.Speak(text, lvl)
+		},
 
 		Recordings: func() ([]api.Recording, error) {
 			recs, err := rec.Recordings()

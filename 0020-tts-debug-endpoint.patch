@@ -1,0 +1,87 @@
+diff --git a/pi/daemon/cmd/zerotxd/main.go b/pi/daemon/cmd/zerotxd/main.go
+index 8852aef..093f04b 100644
+--- a/pi/daemon/cmd/zerotxd/main.go
++++ b/pi/daemon/cmd/zerotxd/main.go
+@@ -928,6 +928,13 @@ func buildAPIProviders(
+ 		},
+ 		Acknowledge:    player.Acknowledge,
+ 		AcknowledgeAll: player.AcknowledgeAll,
++		Speak: func(text, level string) {
++			lvl, ok := audio.ParseLevel(level)
++			if !ok {
++				lvl = audio.LevelNotice
++			}
++			player.Speak(text, lvl)
++		},
+ 
+ 		Recordings: func() ([]api.Recording, error) {
+ 			recs, err := rec.Recordings()
+diff --git a/pi/daemon/internal/api/server.go b/pi/daemon/internal/api/server.go
+index 3e914cc..ad3618c 100644
+--- a/pi/daemon/internal/api/server.go
++++ b/pi/daemon/internal/api/server.go
+@@ -61,6 +61,7 @@ func (s *Server) Run(ctx context.Context) error {
+ 	mux.HandleFunc("/api/v1/audio", s.handleAudio)
+ 	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
+ 	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
++	mux.HandleFunc("/api/v1/debug/speak", s.handleDebugSpeak)
+ 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
+ 	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
+ 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
+@@ -297,6 +298,40 @@ func (s *Server) handleAudioAcknowledge(w http.ResponseWriter, r *http.Request)
+ 	w.WriteHeader(http.StatusNoContent)
+ }
+ 
++// handleDebugSpeak accepts {"text": "...", "level": "info|notice|warning|critical"}
++// and runs it through the TTS engine. Useful for verifying voice
++// quality, cache behaviour, and end-to-end TTS plumbing without
++// needing a live arm event. Returns 202 (queued) immediately;
++// synthesis and playback happen asynchronously on the player's
++// worker goroutine. Returns 503 if TTS isn't configured.
++func (s *Server) handleDebugSpeak(w http.ResponseWriter, r *http.Request) {
++	if r.Method != http.MethodPost {
++		http.Error(w, "POST required", http.StatusMethodNotAllowed)
++		return
++	}
++	if s.providers.Speak == nil {
++		http.Error(w, "TTS not configured (start daemon with -piper-binary)", http.StatusServiceUnavailable)
++		return
++	}
++	var body struct {
++		Text  string `json:"text"`
++		Level string `json:"level"`
++	}
++	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
++		http.Error(w, "invalid JSON", http.StatusBadRequest)
++		return
++	}
++	if body.Text == "" {
++		http.Error(w, "text required", http.StatusBadRequest)
++		return
++	}
++	if body.Level == "" {
++		body.Level = "notice"
++	}
++	s.providers.Speak(body.Text, body.Level)
++	w.WriteHeader(http.StatusAccepted)
++}
++
+ // handleRecordings lists saved flight recordings on disk. Newest
+ // first. Empty array when recording is disabled or no flights have
+ // been recorded yet.
+diff --git a/pi/daemon/internal/api/state.go b/pi/daemon/internal/api/state.go
+index 130e8ae..e21168f 100644
+--- a/pi/daemon/internal/api/state.go
++++ b/pi/daemon/internal/api/state.go
+@@ -323,6 +323,11 @@ type Providers struct {
+ 	Acknowledge       func(name string)
+ 	AcknowledgeAll    func()
+ 
++	// Speak runs the given text through the TTS engine and plays
++	// the result. Used by the debug endpoint POST /api/v1/debug/speak.
++	// May be nil if TTS isn't configured; the handler returns 503.
++	Speak func(text string, level string)
++
+ 	// Recordings returns the saved flight recordings on disk
+ 	// (newest first). Empty when recording is disabled.
+ 	Recordings func() ([]Recording, error)

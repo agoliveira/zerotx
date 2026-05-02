@@ -61,6 +61,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/audio", s.handleAudio)
 	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
 	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
+	mux.HandleFunc("/api/v1/debug/speak", s.handleDebugSpeak)
 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
 	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
@@ -295,6 +296,40 @@ func (s *Server) handleAudioAcknowledge(w http.ResponseWriter, r *http.Request) 
 		s.providers.Acknowledge(body.Name)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDebugSpeak accepts {"text": "...", "level": "info|notice|warning|critical"}
+// and runs it through the TTS engine. Useful for verifying voice
+// quality, cache behaviour, and end-to-end TTS plumbing without
+// needing a live arm event. Returns 202 (queued) immediately;
+// synthesis and playback happen asynchronously on the player's
+// worker goroutine. Returns 503 if TTS isn't configured.
+func (s *Server) handleDebugSpeak(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.Speak == nil {
+		http.Error(w, "TTS not configured (start daemon with -piper-binary)", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Text  string `json:"text"`
+		Level string `json:"level"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.Text == "" {
+		http.Error(w, "text required", http.StatusBadRequest)
+		return
+	}
+	if body.Level == "" {
+		body.Level = "notice"
+	}
+	s.providers.Speak(body.Text, body.Level)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // handleRecordings lists saved flight recordings on disk. Newest

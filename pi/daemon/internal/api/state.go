@@ -323,6 +323,11 @@ type Providers struct {
 	Acknowledge       func(name string)
 	AcknowledgeAll    func()
 
+	// Speak runs the given text through the TTS engine and plays
+	// the result. Used by the debug endpoint POST /api/v1/debug/speak.
+	// May be nil if TTS isn't configured; the handler returns 503.
+	Speak func(text string, level string)
+
 	// Recordings returns the saved flight recordings on disk
 	// (newest first). Empty when recording is disabled.
 	Recordings func() ([]Recording, error)
