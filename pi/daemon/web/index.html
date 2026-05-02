@@ -130,6 +130,34 @@ main.content { grid-area: content; overflow-y: auto; padding: 24px; }
 main.content > section.tab { display: none; }
 main.content > section.tab.active { display: block; }
 
+/* === Sub-tabs (within Diagnostics) === */
+nav.subtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+nav.subtabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 10px 16px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  outline: none;
+  margin-bottom: -1px;
+}
+nav.subtabs button:hover { color: var(--text-main); }
+nav.subtabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.subtab { display: none; }
+.subtab.active { display: block; }
+
 /* === Panels === */
 .panel {
   background: var(--bg-surface);
@@ -1508,10 +1536,7 @@ h2.warn { color: var(--warn); }
 
   <nav class="tabs">
     <button data-tab="preflight" class="active">Pre-flight</button>
-    <button data-tab="channels">Channels</button>
-    <button data-tab="logic">Logic</button>
-    <button data-tab="joystick">Joystick</button>
-    <button data-tab="panel">Panel</button>
+    <button data-tab="diagnostics">Diagnostics</button>
     <button data-tab="model">Model</button>
     <button data-tab="recordings">Recordings</button>
     <button data-tab="logs">Logs</button>
@@ -1612,72 +1637,86 @@ h2.warn { color: var(--warn); }
            tab system) so it can hide chrome cleanly. See #hud below. -->
     </section>
 
-    <section id="tab-channels" class="tab">
-      <div class="panel">
-        <div class="tab-subtitle">
-          <h2>Channels</h2>
-          <span class="meta">CRSF range: 172 .. 992 .. 1811</span>
-        </div>
-        <div id="channel-list"></div>
-      </div>
-    </section>
+    <section id="tab-diagnostics" class="tab">
+      <!-- Diagnostics consolidates four operator-facing read-only
+           panels (Channels, Logic, Panel, Joystick) under a single
+           top-level tab to keep the navigation rail focused on
+           flight-critical surfaces. The sub-tab nav lives inline so
+           the operator stays one click away from any of them. -->
+      <nav class="subtabs">
+        <button data-subtab="channels" class="active">Channels</button>
+        <button data-subtab="logic">Logic</button>
+        <button data-subtab="panel">Panel</button>
+        <button data-subtab="joystick">Joystick</button>
+      </nav>
 
-    <section id="tab-logic" class="tab">
-      <div class="panel">
-        <div class="tab-subtitle">
-          <h2>Logic switches</h2>
-          <span class="meta" id="logic-meta">-</span>
-        </div>
-        <div class="logic-grid" id="logic-grid"></div>
-      </div>
-    </section>
-
-    <section id="tab-panel" class="tab">
-      <div class="panel">
-        <div class="tab-subtitle">
-          <h2>GCS panel state</h2>
-          <span class="meta">read-only mirror of daemon's panel state</span>
-        </div>
-        <div class="panel-section">
-          <h3>Switches</h3>
-          <div id="panel-switches"></div>
-        </div>
-        <div class="panel-section">
-          <h3>Selectors</h3>
-          <div id="panel-selectors"></div>
-        </div>
-        <div class="panel-section">
-          <h3>Buttons</h3>
-          <div id="panel-buttons"></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="tab-joystick" class="tab">
-      <div class="panel">
-        <div class="tab-subtitle">
-          <h2>Joystick</h2>
-          <span class="meta" id="joystick-meta">-</span>
-        </div>
-        <div class="joystick-layout">
-          <div>
-            <h3>Stick (axes 0 / 1)</h3>
-            <div class="stick-pad"><div class="stick-dot" id="js-stick-dot"></div></div>
-            <h3 style="margin-top: 16px;">Rudder (axis 3)</h3>
-            <div class="slider-horizontal"><div class="thumb" id="js-slider-rud"></div></div>
+      <div id="subtab-channels" class="subtab active">
+        <div class="panel">
+          <div class="tab-subtitle">
+            <h2>Channels</h2>
+            <span class="meta">CRSF range: 172 .. 992 .. 1811</span>
           </div>
-          <div>
-            <h3>Throttle (axis 2)</h3>
-            <div class="slider-vertical"><div class="thumb" id="js-slider-thr"></div></div>
+          <div id="channel-list"></div>
+        </div>
+      </div>
+
+      <div id="subtab-logic" class="subtab">
+        <div class="panel">
+          <div class="tab-subtitle">
+            <h2>Logic switches</h2>
+            <span class="meta" id="logic-meta">-</span>
+          </div>
+          <div class="logic-grid" id="logic-grid"></div>
+        </div>
+      </div>
+
+      <div id="subtab-panel" class="subtab">
+        <div class="panel">
+          <div class="tab-subtitle">
+            <h2>GCS panel state</h2>
+            <span class="meta">read-only mirror of daemon's panel state</span>
+          </div>
+          <div class="panel-section">
+            <h3>Switches</h3>
+            <div id="panel-switches"></div>
+          </div>
+          <div class="panel-section">
+            <h3>Selectors</h3>
+            <div id="panel-selectors"></div>
+          </div>
+          <div class="panel-section">
+            <h3>Buttons</h3>
+            <div id="panel-buttons"></div>
           </div>
         </div>
-        <div class="panel-section" style="margin-top: 16px;">
-          <h3>All axes</h3>
-          <div class="axis-list" id="js-axis-list"></div>
-        </div>
-        <div class="panel-section">
-          <h3>Buttons</h3>
-          <div class="button-grid" id="js-button-grid"></div>
+      </div>
+
+      <div id="subtab-joystick" class="subtab">
+        <div class="panel">
+          <div class="tab-subtitle">
+            <h2>Joystick</h2>
+            <span class="meta" id="joystick-meta">-</span>
+          </div>
+          <div class="joystick-layout">
+            <div>
+              <h3>Stick (axes 0 / 1)</h3>
+              <div class="stick-pad"><div class="stick-dot" id="js-stick-dot"></div></div>
+              <h3 style="margin-top: 16px;">Rudder (axis 3)</h3>
+              <div class="slider-horizontal"><div class="thumb" id="js-slider-rud"></div></div>
+            </div>
+            <div>
+              <h3>Throttle (axis 2)</h3>
+              <div class="slider-vertical"><div class="thumb" id="js-slider-thr"></div></div>
+            </div>
+          </div>
+          <div class="panel-section" style="margin-top: 16px;">
+            <h3>All axes</h3>
+            <div class="axis-list" id="js-axis-list"></div>
+          </div>
+          <div class="panel-section">
+            <h3>Buttons</h3>
+            <div class="button-grid" id="js-button-grid"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -2111,6 +2150,9 @@ const App = {
   reconnectTimer: null,
   healthTimer: null,
   activeTab: 'preflight',
+  // activeSubTab tracks the visible sub-tab inside the consolidated
+  // Diagnostics tab. Persists in memory only; default 'channels'.
+  activeSubTab: 'channels',
 
   init() {
     document.getElementById('input-address').value = this.state.address;
@@ -2122,6 +2164,9 @@ const App = {
   bindUI() {
     document.querySelectorAll('nav.tabs button').forEach(btn => {
       btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
+    });
+    document.querySelectorAll('nav.subtabs button').forEach(btn => {
+      btn.addEventListener('click', () => this.switchSubTab(btn.dataset.subtab));
     });
     document.getElementById('btn-connect').addEventListener('click', () => this.connect());
     document.getElementById('btn-disconnect').addEventListener('click', () => this.disconnect());
@@ -2203,6 +2248,19 @@ const App = {
       s.classList.toggle('active', s.id === `tab-${name}`));
     if (this.state.lastFrame) this.renderActiveTab(this.state.lastFrame);
     if (name === 'recordings') this.refreshRecordings();
+  },
+
+  // switchSubTab toggles the visible diagnostic sub-panel inside the
+  // Diagnostics tab. Re-renders immediately from the cached frame so
+  // the operator sees current values without waiting for the next
+  // WS tick.
+  switchSubTab(name) {
+    this.activeSubTab = name;
+    document.querySelectorAll('nav.subtabs button').forEach(b =>
+      b.classList.toggle('active', b.dataset.subtab === name));
+    document.querySelectorAll('.subtab').forEach(s =>
+      s.classList.toggle('active', s.id === `subtab-${name}`));
+    if (this.state.lastFrame) this.renderActiveTab(this.state.lastFrame);
   },
 
   async connect() {
@@ -2395,7 +2453,12 @@ const App = {
   },
 
   renderActiveTab(frame) {
-    const r = this.tabRenderers[this.activeTab];
+    // Diagnostics is a meta-tab whose visible content is decided by
+    // the active sub-tab. Dispatch directly to the sub-tab renderer
+    // so the existing per-sub-tab code (channels, logic, panel,
+    // joystick) stays untouched.
+    const key = this.activeTab === 'diagnostics' ? this.activeSubTab : this.activeTab;
+    const r = this.tabRenderers[key];
     if (r) r.call(this, frame);
   },
 
