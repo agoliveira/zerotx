@@ -30,6 +30,8 @@ import (
 	"log"
 	"strings"
 	"sync"
+
+	"go.bug.st/serial"
 )
 
 // Width is the VFD's character columns.
@@ -150,44 +152,103 @@ func (d *LogDriver) Brightness(level int) error {
 
 func (d *LogDriver) Close() error { return nil }
 
-// === SerialDriver: real hardware (stub for now) ===
+// === SerialDriver: real hardware ===
 
 // SerialDriver pushes a line-based ASCII protocol over USB-CDC to
-// the Pro Micro running the VFD firmware. Wire protocol is one
-// command per newline-terminated line:
+// the Pro Micro running the VFD firmware (firmware/vfd/). Wire
+// protocol matches the firmware's processLine() command set:
 //
-//	L row content...    -- write content (truncated to 20 chars)
-//	C                   -- clear
-//	B level             -- brightness 0..3
+//	L<row><sp><content>\n   write content (row=0 or 1).
+//	C\n                     clear.
+//	B<sp><level>\n          brightness 0..3 (0 = max).
 //
-// Connection is opened lazily on first use. Open errors are
-// suppressed (logged once) so a missing/unplugged display does
-// not break the daemon; the driver retries on subsequent writes.
-//
-// Implementation completes when bench hardware lands. For now this
-// is a stub that logs intent and returns success so the daemon
-// can be configured with -vfd-port=/dev/ttyACMX without crashing.
+// Connection is opened lazily on first use and re-opened on the
+// next write after any I/O failure. A missing/unplugged display
+// must NOT crash the daemon; the firehose continues to drive a
+// device that simply doesn't exist yet, and recovers when the
+// Pro Micro reappears.
 type SerialDriver struct {
 	path string
-	mu   sync.Mutex
-	port io.ReadWriteCloser
+
+	mu     sync.Mutex
+	port   io.WriteCloser
+	logged bool // suppress repeated open-error logs
+}
+
+// open opens the serial port at d.path with reasonable USB-CDC
+// defaults (115200 8N1, no flow control). Caller must hold d.mu.
+// Returns nil on success; any error leaves d.port == nil so the
+// next call retries.
+func (d *SerialDriver) open() error {
+	if d.port != nil {
+		return nil
+	}
+	mode := &serial.Mode{
+		BaudRate: 115200,
+		DataBits: 8,
+		Parity:   serial.NoParity,
+		StopBits: serial.OneStopBit,
+	}
+	p, err := serial.Open(d.path, mode)
+	if err != nil {
+		if !d.logged {
+			log.Printf("vfd: open %s: %v (will retry on next write)", d.path, err)
+			d.logged = true
+		}
+		return err
+	}
+	log.Printf("vfd: %s open at 115200", d.path)
+	d.port = p
+	d.logged = false
+	return nil
+}
+
+// close drops the serial handle. Caller must hold d.mu.
+func (d *SerialDriver) closeLocked() {
+	if d.port != nil {
+		_ = d.port.Close()
+		d.port = nil
+	}
+}
+
+// writeCmd writes one newline-terminated command line. Re-opens
+// the port once on transient failure; the second failure surfaces
+// as the returned error and the caller treats it as "device not
+// available right now" without escalating.
+func (d *SerialDriver) writeCmd(line string) error {
+	if err := d.open(); err != nil {
+		return err
+	}
+	if _, err := d.port.Write([]byte(line + "\n")); err != nil {
+		d.closeLocked()
+		// One retry: the most common failure is the Pro Micro
+		// having been replugged since the last open.
+		if openErr := d.open(); openErr != nil {
+			return openErr
+		}
+		if _, retryErr := d.port.Write([]byte(line + "\n")); retryErr != nil {
+			d.closeLocked()
+			return retryErr
+		}
+	}
+	return nil
 }
 
 func (d *SerialDriver) WriteLines(row1, row2 string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// TODO(bench): open d.path with go.bug.st/serial, write
-	//   "L 0 <row1>\nL 1 <row2>\n", retry-on-error logic.
-	_ = padOrTruncate(row1)
-	_ = padOrTruncate(row2)
-	return nil
+	r1 := padOrTruncate(row1)
+	r2 := padOrTruncate(row2)
+	if err := d.writeCmd("L0 " + r1); err != nil {
+		return err
+	}
+	return d.writeCmd("L1 " + r2)
 }
 
 func (d *SerialDriver) Clear() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// TODO(bench): write "C\n"
-	return nil
+	return d.writeCmd("C")
 }
 
 func (d *SerialDriver) Brightness(level int) error {
@@ -199,18 +260,13 @@ func (d *SerialDriver) Brightness(level int) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// TODO(bench): write "B <level>\n"
-	return nil
+	return d.writeCmd(fmt.Sprintf("B %d", level))
 }
 
 func (d *SerialDriver) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.port != nil {
-		err := d.port.Close()
-		d.port = nil
-		return err
-	}
+	d.closeLocked()
 	return nil
 }
 
