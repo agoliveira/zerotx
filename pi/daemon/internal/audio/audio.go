@@ -180,9 +180,9 @@ type Config struct {
 	Policies map[Level]RepeatPolicy
 }
 
-// New picks an available playback backend (paplay, then aplay) and
-// returns a running Player. Returns a NullPlayer with a one-time log
-// warning if no backend is found. Never returns an error.
+// New picks an available playback backend (mpg123, paplay, then
+// aplay) and returns a running Player. Returns a NullPlayer with a
+// one-time log warning if no backend is found. Never returns an error.
 func New(cfg Config) Player {
 	if cfg.QueueDepth <= 0 {
 		cfg.QueueDepth = 16
@@ -201,7 +201,7 @@ func New(cfg Config) Player {
 
 	cmd, args := detectBackend()
 	if cmd == "" {
-		log.Printf("audio: no playback backend found (tried paplay, aplay); audio events will be silent")
+		log.Printf("audio: no playback backend found (tried mpg123, paplay, aplay); audio events will be silent")
 		return &NullPlayer{}
 	}
 	log.Printf("audio: backend=%s sounds-dir=%s lang=%s threshold=%s",
@@ -227,8 +227,9 @@ func detectBackend() (string, []string) {
 		cmd  string
 		args []string
 	}{
-		{"paplay", nil},          // PulseAudio / PipeWire (most desktop systems)
-		{"aplay", []string{"-q"}}, // ALSA fallback (-q to quiet startup banner)
+		{"mpg123", []string{"-q"}}, // MP3-native, ALSA-direct, no audio-server dependency
+		{"paplay", nil},            // PulseAudio / PipeWire (most desktop systems)
+		{"aplay", []string{"-q"}},  // ALSA fallback, WAV-only (-q to quiet startup banner)
 	}
 	for _, c := range candidates {
 		if _, err := exec.LookPath(c.cmd); err == nil {
