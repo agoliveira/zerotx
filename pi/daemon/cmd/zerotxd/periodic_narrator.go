@@ -125,33 +125,51 @@ func narrateFieldNames() []string {
 // goroutine from the arm state machine. The arm transitions reset
 // the tick: on arm we wait one full interval before the first
 // announcement (so it doesn't overlap with the pre-flight summary).
+// runPeriodicNarrator is the goroutine that ticks every interval
+// while armed and speaks a status report. Stops when ctx is cancelled.
+//
+// Armed state is provided via the isArmed callback to decouple the
+// goroutine from the arm state machine. The arm transitions reset
+// the tick: on arm we wait one full interval before the first
+// announcement (so it doesn't overlap with the pre-flight summary).
+//
+// The configuration (interval + fields) is read live from the
+// store on each tick. A POST to the API can swap the config at
+// runtime; the store's Notify channel wakes the goroutine so the
+// new interval takes effect immediately rather than at the end of
+// the previous one.
 func runPeriodicNarrator(
 	ctx context.Context,
 	player audio.Player,
 	tel *telemetry.State,
 	isArmed func() bool,
-	armEvents <-chan struct{}, // pings when arm transitions occur
-	interval time.Duration,
-	fields []narrateField,
+	armEvents <-chan struct{},
+	configStore *narrateConfigStore,
 	lang string,
 ) {
-	if len(fields) == 0 || interval <= 0 {
-		return
+	cfg := configStore.Load()
+	interval := cfg.Interval
+	if interval <= 0 {
+		// No usable interval. Wait for a config change before doing
+		// anything; the loop below handles re-reads.
+		interval = 1 * time.Hour
 	}
-
-	var armStart time.Time
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
-	resetTimer := func() {
+	resetTimer := func(d time.Duration) {
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
 			default:
 			}
 		}
-		timer.Reset(interval)
+		if d <= 0 {
+			d = 1 * time.Hour
+		}
+		timer.Reset(d)
 	}
 
+	var armStart time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,14 +180,20 @@ func runPeriodicNarrator(
 			} else {
 				armStart = time.Time{}
 			}
-			resetTimer()
+			cfg = configStore.Load()
+			resetTimer(cfg.Interval)
+		case <-configStore.Notify():
+			cfg = configStore.Load()
+			resetTimer(cfg.Interval)
+			log.Printf("narrate: config updated interval=%s fields=%v", cfg.Interval, cfg.Fields)
 		case <-timer.C:
-			timer.Reset(interval)
-			if !isArmed() {
+			cfg = configStore.Load()
+			resetTimer(cfg.Interval)
+			if len(cfg.Fields) == 0 || !isArmed() {
 				continue
 			}
 			snap := tel.Snapshot()
-			text := buildPeriodicStatus(snap, fields, time.Since(armStart), lang)
+			text := buildPeriodicStatus(snap, cfg.Fields, time.Since(armStart), lang)
 			if text == "" {
 				continue
 			}

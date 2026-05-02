@@ -334,6 +334,14 @@ type Providers struct {
 	// JSON to avoid an import cycle on the recorder package.
 	FlightEvents func() (interface{}, error)
 
+	// NarrateConfig returns the current periodic-narration
+	// configuration (interval + fields). Used by GET /api/v1/narrate.
+	NarrateConfig func() NarrateConfig
+	// NarrateConfigSet validates and applies a new periodic-narration
+	// configuration, persisting to disk on success. Used by
+	// POST /api/v1/narrate. Returns an error on validation failure.
+	NarrateConfigSet func(NarrateConfig) error
+
 	// Recordings returns the saved flight recordings on disk
 	// (newest first). Empty when recording is disabled.
 	Recordings func() ([]Recording, error)
@@ -396,4 +404,12 @@ func (p *Providers) snapshot() State {
 		out.Arm = p.Arm()
 	}
 	return out
+}
+
+// NarrateConfig is the wire shape for periodic narration settings.
+// Interval is a Go duration string ("60s", "2m"). Fields is a list
+// of canonical field names (see daemon-side narrateField).
+type NarrateConfig struct {
+	Interval string   `json:"interval"`
+	Fields   []string `json:"fields"`
 }

@@ -338,14 +338,9 @@ func main() {
 	// arm, never overlapping the pre-flight summary).
 	var armedFlag atomic.Bool
 	armedPings := make(chan struct{}, 4)
-	narrateConfigPath := defaultNarrateConfigPath()
-	initialCfg := initialNarrateConfig(narrateConfigPath, "", *narrateContent, *narratePreset, *narrateInterval)
-	narrateStore := newNarrateConfigStore(narrateConfigPath, initialCfg)
-	if len(initialCfg.Fields) > 0 {
-		log.Printf("narrate: periodic interval=%s fields=%v (config=%s)",
-			initialCfg.Interval, initialCfg.Fields, narrateConfigPath)
-	} else {
-		log.Printf("narrate: periodic narration disabled (no fields configured); GUI/API can enable at runtime")
+	narrateFields := resolveNarrateContent(*narrateContent, *narratePreset)
+	if len(narrateFields) > 0 {
+		log.Printf("narrate: periodic interval=%s fields=%v", *narrateInterval, narrateFields)
 	}
 
 	// Telemetry sampler: poll the telemetry snapshot at 5Hz and forward
@@ -564,11 +559,11 @@ func main() {
 	// arming-request timeout.
 	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, *soundsLang, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
-	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, narrateStore, *soundsLang)
+	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, *narrateInterval, narrateFields, *soundsLang)
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -843,7 +838,6 @@ func buildAPIProviders(
 	modelDefaultPath string,
 	recordingsDir string,
 	lang string,
-	narrateStore *narrateConfigStore,
 	logBuf *logbuf.Buffer,
 	version string,
 	startedAt time.Time,
@@ -1025,22 +1019,6 @@ func buildAPIProviders(
 		},
 		FlightEvents: func() (interface{}, error) {
 			return rec.CurrentSessionEvents()
-		},
-		NarrateConfig: func() api.NarrateConfig {
-			cfg := narrateStore.Load()
-			return narrateConfigToAPI(cfg)
-		},
-		NarrateConfigSet: func(in api.NarrateConfig) error {
-			cfg, err := narrateConfigFromAPI(in)
-			if err != nil {
-				return err
-			}
-			narrateStore.Set(cfg)
-			if _, err := narrateStore.Save(); err != nil {
-				log.Printf("narrate: persist failed: %v", err)
-				return fmt.Errorf("persist failed: %w", err)
-			}
-			return nil
 		},
 
 		Recordings: func() ([]api.Recording, error) {

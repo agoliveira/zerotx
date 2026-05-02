@@ -63,6 +63,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
 	mux.HandleFunc("/api/v1/debug/speak", s.handleDebugSpeak)
 	mux.HandleFunc("/api/v1/debug/flight-events", s.handleDebugFlightEvents)
+	mux.HandleFunc("/api/v1/narrate", s.handleNarrate)
 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
 	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
@@ -355,6 +356,44 @@ func (s *Server) handleDebugFlightEvents(w http.ResponseWriter, r *http.Request)
 		evs = []interface{}{}
 	}
 	writeJSON(w, http.StatusOK, evs)
+}
+
+// handleNarrate returns or updates the periodic-narration config.
+//
+//	GET  -> {"interval": "60s", "fields": ["battery","distance"]}
+//	POST -> same body shape; on success, persisted to disk and
+//	        applied immediately. Validation errors are 400 with a
+//	        message; everything else is 500.
+func (s *Server) handleNarrate(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		if s.providers.NarrateConfig == nil {
+			writeJSON(w, http.StatusOK, NarrateConfig{Interval: "0s", Fields: []string{}})
+			return
+		}
+		cfg := s.providers.NarrateConfig()
+		if cfg.Fields == nil {
+			cfg.Fields = []string{}
+		}
+		writeJSON(w, http.StatusOK, cfg)
+	case http.MethodPost:
+		if s.providers.NarrateConfigSet == nil {
+			http.Error(w, "narration config not available", http.StatusServiceUnavailable)
+			return
+		}
+		var body NarrateConfig
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if err := s.providers.NarrateConfigSet(body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "GET or POST required", http.StatusMethodNotAllowed)
+	}
 }
 
 // handleRecordings lists saved flight recordings on disk. Newest
