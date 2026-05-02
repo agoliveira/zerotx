@@ -319,6 +319,12 @@ func main() {
 	// duplicate rows when nothing has changed; this goroutine just has
 	// to wake often enough to catch every meaningful update. Stops on
 	// daemon shutdown via the same context as the rest of the daemon.
+	//
+	// Also detects flight-mode edges and narrates them via TTS. Edge
+	// detection is intentionally simple: compare last seen mode string
+	// to current; speak when they differ. The first non-empty mode
+	// after boot also narrates (so the operator hears what mode the
+	// FC is in when telemetry first comes online).
 	telemSamplerStop := make(chan struct{})
 	// dispMgr is initialized after the API setup below; declared here
 	// so the sampler closure can capture it. nil until the display
@@ -327,6 +333,7 @@ func main() {
 	go func() {
 		t := time.NewTicker(200 * time.Millisecond)
 		defer t.Stop()
+		var lastMode string
 		for {
 			select {
 			case <-telemSamplerStop:
@@ -339,6 +346,17 @@ func main() {
 				rec.LogTelemetry(buildTelemetrySample(snap))
 				if dispMgr != nil {
 					dispMgr.SetState(telemetryToDisplayState(snap))
+				}
+				// Flight-mode edge → TTS. Lowercase the mode string
+				// for natural narration (FC sends "ANGL", we say
+				// "angle"). The mode names are FC-defined so this
+				// is best-effort: unknown modes get spoken as-is.
+				if snap.FlightMode != nil {
+					m := snap.FlightMode.Data.Mode
+					if m != "" && m != lastMode {
+						lastMode = m
+						player.Speak("Flight mode: "+humanizeMode(m)+".", audio.LevelInfo)
+					}
 				}
 			}
 		}
@@ -1295,6 +1313,54 @@ func defaultRecordingsDir() string {
 		return filepath.Join(home, ".local", "share", "zerotx", "recordings")
 	}
 	return "recordings"
+}
+
+// humanizeMode converts FC-emitted flight mode codes to natural
+// English for narration. Unknown codes are returned lowercased
+// as-is — the operator will hear something readable even for new
+// FC modes we haven't mapped yet.
+//
+// INAV mode strings come over CRSF in compact short form
+// ("ANGL", "MANU", "RTH"). We map the common ones; uncommon ones
+// fall through to lowercase.
+func humanizeMode(m string) string {
+	switch m {
+	case "ANGL":
+		return "angle"
+	case "HORI":
+		return "horizon"
+	case "MANU":
+		return "manual"
+	case "ACRO":
+		return "acro"
+	case "AIR":
+		return "air mode"
+	case "NAV":
+		return "navigation"
+	case "RTH":
+		return "return to home"
+	case "WP", "MISS":
+		return "waypoint mission"
+	case "LAUN":
+		return "launch"
+	case "PASS":
+		return "passthrough"
+	case "FS":
+		return "failsafe"
+	case "ALTH":
+		return "altitude hold"
+	case "POSH":
+		return "position hold"
+	case "CRUISE":
+		return "cruise"
+	case "STAB":
+		return "stabilized"
+	case "OK":
+		return "ready"
+	case "WAIT":
+		return "waiting for arming"
+	}
+	return strings.ToLower(m)
 }
 
 // buildTelemetrySample converts a telemetry.Snapshot into the
