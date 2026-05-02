@@ -576,7 +576,13 @@ func main() {
 	// Played once at the configured threshold; if -no-audio or audio
 	// threshold filters it out, this is silent. Either way the daemon
 	// keeps booting; the greeting is presentational, never a gate.
-	narr.PlayBootGreeting()
+	{
+		bootModel := ""
+		if s := holder.Load(); s != nil && s.Model != nil {
+			bootModel = s.Model.EdgeTX.Header.Name
+		}
+		narr.SpeakBootGreeting(bootModel)
+	}
 
 	// Goroutines.
 	go func() {
@@ -692,6 +698,7 @@ func main() {
 				lostMs := time.Since(r.LostAt()).Milliseconds()
 				if !jsLossLogged {
 					log.Printf("joystick lost: holding last-known for %dms then failsafe", joystickHoldMs)
+					player.Speak("Joystick disconnected.", audio.LevelWarning)
 					jsLossLogged = true
 				}
 				if lostMs >= joystickHoldMs {
@@ -701,6 +708,7 @@ func main() {
 				// else: fall through and emit last-known values.
 			} else if jsLossLogged && jsHolder.Connected() {
 				log.Printf("joystick: link recovered")
+				player.Speak("Joystick reconnected.", audio.LevelNotice)
 				jsLossLogged = false
 			}
 
@@ -918,14 +926,21 @@ func buildAPIProviders(
 			return nil
 		},
 		UnloadModel: func() {
+			name := ""
 			if s := holder.Load(); s != nil {
-				log.Printf("model unloaded: %s", s.Model.EdgeTX.Header.Name)
+				name = s.Model.EdgeTX.Header.Name
+				log.Printf("model unloaded: %s", name)
 			}
 			holder.Store(nil)
 			telemState.ClearHome()
 			if dispMgr != nil {
 				dispMgr.SetThresholds(nil)
 				dispMgr.SetMode(display.ModeIdle)
+			}
+			if strings.TrimSpace(name) != "" {
+				player.Speak("Model "+name+" unloaded.", audio.LevelInfo)
+			} else {
+				player.Speak("Model unloaded.", audio.LevelInfo)
 			}
 		},
 		Joysticks: func() []api.JoystickDevice {
@@ -1057,6 +1072,11 @@ func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Pane
 		m.EdgeTX.Header.Name,
 		len(m.EdgeTX.MixData), len(m.EdgeTX.LogicalSw),
 		len(m.EdgeTX.CustomFn), len(m.EdgeTX.TelemetrySensors), path)
+	if name := strings.TrimSpace(m.EdgeTX.Header.Name); name != "" {
+		player.Speak("Model loaded: "+name+".", audio.LevelInfo)
+	} else {
+		player.Speak("Model loaded.", audio.LevelInfo)
+	}
 	return nil
 }
 

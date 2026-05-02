@@ -59,6 +59,23 @@ func (n *Narrator) PlayBootGreeting() {
 	n.player.Play("track", "boot-greeting", audio.LevelInfo)
 }
 
+// SpeakBootGreeting announces system readiness via TTS. modelName
+// is included when non-empty ("ZeroTX online, Big Talon ready.")
+// otherwise a generic awaiting-model line is spoken.
+func (n *Narrator) SpeakBootGreeting(modelName string) {
+	if n == nil || n.player == nil {
+		return
+	}
+	modelName = strings.TrimSpace(modelName)
+	var text string
+	if modelName != "" {
+		text = "ZeroTX online. " + modelName + " ready."
+	} else {
+		text = "ZeroTX online. Awaiting model."
+	}
+	n.player.Speak(text, audio.LevelInfo)
+}
+
 // SpeakPostFlight emits the post-flight summary as a single TTS
 // utterance derived from the in-flight event log. Tier 1 narration:
 // duration + peaks + noteworthy events (failsafe, RTH, battery
