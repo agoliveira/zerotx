@@ -1115,6 +1115,18 @@ h2.warn { color: var(--warn); }
 .log-line.state { color: var(--info); }
 .log-line.ok    { color: var(--ok); }
 
+/* === DSEG7 7-segment font (SIL OFL 1.1) === */
+/* Bundled at pi/daemon/web/fonts/DSEG7Classic-Bold.ttf. Used for
+ * numerical readouts in the HUD only; UI chrome stays in the
+ * default sans family. */
+@font-face {
+  font-family: 'DSEG7';
+  src: url('fonts/DSEG7Classic-Bold.ttf') format('truetype');
+  font-weight: bold;
+  font-style: normal;
+  font-display: block;
+}
+
 /* === HUD: full-window flight UI === */
 /* When armed, #app gets .hud-active and the chrome (sidebar + header)
  * is hidden via CSS. The HUD overlay takes the whole window. */
@@ -1124,181 +1136,223 @@ h2.warn { color: var(--warn); }
   display: none;
 }
 
+/* Layout: 12-column grid, 1024px viewport. Horizon spans 7 columns
+ * on the left, telemetry stack 5 columns on the right. Bottom strip
+ * is full-width. The whole HUD is one grid template; tiles live as
+ * grid items so reflow is cheap. */
 .hud {
   position: fixed;
   inset: 0;
   background: var(--bg-body);
-  display: flex;
-  flex-direction: column;
-  padding: 16px;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 7fr 5fr;
+  grid-template-rows: auto 1fr auto auto;
+  grid-template-areas:
+    "horizon  telstack"
+    "horizon  telstack"
+    "homemode minimap"
+    "ticker   ticker";
+  gap: 8px;
+  padding: 12px;
   z-index: 100;
   box-sizing: border-box;
   overflow: hidden;
 }
-.hud.hud-warn  { box-shadow: inset 0 0 0 4px var(--warn); }
-.hud.hud-crit  { box-shadow: inset 0 0 0 4px var(--err); }
 
-/* Top strip: state + mode + battery summary + clock */
-.hud-strip {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  font-family: var(--mono);
-  font-size: 14px;
-  color: var(--text-muted);
-}
-.hud-state {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: var(--warn);
-  background: rgba(217, 153, 0, 0.14);
-  padding: 4px 12px;
-  border-radius: 3px;
-}
-.hud-mode {
-  color: var(--text-main);
-  font-size: 16px;
-  font-weight: 600;
-}
-.hud-strip-spacer { flex: 1; }
-.hud-strip-bat,
-.hud-strip-pct,
-.hud-clock {
-  color: var(--text-main);
-  font-size: 14px;
-}
-.hud-clock {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
-
-/* Three big tiles row */
-.hud-tiles {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  flex: 0 0 auto;
-}
+/* Tile chrome shared across HUD subpanels. Thin border, dark
+ * surface, padded. The tile is the visual unit. */
 .hud-tile {
-  position: relative;
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 14px 18px;
-  font-family: var(--mono);
+  border-radius: 4px;
+  padding: 8px 12px;
+  position: relative;
 }
+.hud-tile.warn  { border-color: var(--warn); }
+.hud-tile.crit  { border-color: var(--err); animation: hud-tile-flicker 0.8s ease-in-out infinite; }
+.hud-tile.stale { border-color: var(--text-dim); opacity: 0.6; }
+.hud-tile.muted { opacity: 0.5; }
+@keyframes hud-tile-flicker {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 89, 89, 0); }
+  50%      { box-shadow: 0 0 0 2px rgba(232, 89, 89, 0.55); }
+}
+
 .hud-tile-label {
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text-dim);
-  margin-bottom: 6px;
-}
-.hud-tile-primary {
-  font-size: 38px;
-  font-weight: 700;
-  color: var(--text-main);
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
-}
-.hud-tile-primary .unit {
-  font-size: 18px;
-  color: var(--text-muted);
-  font-weight: 400;
-  margin-left: 6px;
-}
-.hud-tile-secondary {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-.hud-tile-row {
-  display: flex;
-  gap: 14px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.hud-tile.warn .hud-tile-primary { color: var(--warn); }
-.hud-tile.crit .hud-tile-primary { color: var(--err); }
-.hud-tile.ok   .hud-tile-primary { color: var(--ok); }
-.hud-tile.stale {
-  border-color: var(--err);
-  opacity: 0.6;
+  margin-bottom: 4px;
 }
 .hud-tile-stale {
   position: absolute;
-  top: 8px;
-  right: 12px;
-  font-size: 10px;
+  top: 6px;
+  right: 8px;
+  background: var(--text-dim);
+  color: var(--bg-body);
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 1px;
-  color: var(--err);
-  background: rgba(231, 60, 60, 0.15);
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 2px;
+  letter-spacing: 1px;
 }
-.hud-tile.muted .hud-tile-primary { color: var(--text-dim); }
 
-/* Alarms panel (only present when active alarms exist) */
-.hud-alarms {
-  background: var(--bg-surface);
-  border: 1px solid var(--err);
-  border-radius: 6px;
-  padding: 10px 14px;
-  flex: 0 0 auto;
+/* Numerical readout: DSEG7 font. Used inside .num spans wherever
+ * we want the literal 7-seg look. Small/medium/large size variants
+ * cover the range from inline numbers to the big horizon overlays. */
+.num {
+  font-family: 'DSEG7', monospace;
+  font-feature-settings: 'tnum';
+  letter-spacing: 0.05em;
+  color: var(--text-main);
 }
-.hud-alarms-header {
+.num.sm { font-size: 14px; }
+.num.md { font-size: 22px; }
+.num.lg { font-size: 32px; }
+.num.xl { font-size: 44px; }
+.num.warn { color: var(--warn); }
+.num.crit { color: var(--err); }
+.num.ok   { color: var(--ok); }
+.num-unit {
+  font-family: inherit;
+  font-size: 0.55em;
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  margin-left: 4px;
+  text-transform: uppercase;
+}
+
+/* === Horizon centerpiece === */
+.hud-horizon {
+  grid-area: horizon;
+  display: flex;
+  flex-direction: column;
+}
+.hud-horizon-svg {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  border-radius: 4px;
+  display: block;
+}
+.hud-horizon-overlay {
+  position: absolute;
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-}
-.hud-alarms-title {
-  color: var(--err);
-  font-weight: 700;
-  font-size: 14px;
+  width: 100%;
+  padding: 0 12px;
+  pointer-events: none;
+  box-sizing: border-box;
 }
 
-/* Bottom row: log feed + big disarm button */
-.hud-bottom {
+/* === Telemetry stack (right column) === */
+.hud-telstack {
+  grid-area: telstack;
   display: grid;
-  grid-template-columns: 1fr 280px;
-  gap: 12px;
-  flex: 1 1 auto;
-  min-height: 0;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 8px;
 }
-.hud-log {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 14px;
-  font-family: var(--mono);
-  font-size: 12px;
-  overflow: hidden;
+
+/* Battery, GPS, Link tiles inside the stack. Each renders a
+ * primary big number plus 2-3 secondary readouts. */
+.hud-stack-tile {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.hud-log .log-line {
+.hud-stack-tile .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.hud-stack-tile .row.tight {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* === Bottom row: home/mode tile + minimap === */
+.hud-homemode {
+  grid-area: homemode;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+.hud-minimap {
+  grid-area: minimap;
+  position: relative;
+  min-height: 80px;
+}
+.hud-minimap-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* === Bottom event ticker === */
+.hud-ticker {
+  grid-area: ticker;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  height: 24px;
+  line-height: 1;
 }
-.hud-disarm-label {
+.hud-ticker .tick-time {
   color: var(--text-dim);
+  margin-right: 8px;
+}
+.hud-ticker .tick-msg.warn { color: var(--warn); }
+.hud-ticker .tick-msg.crit { color: var(--err); }
+
+/* Active alarms float on top when present. Acknowledge button
+ * is large enough for touchscreen. */
+.hud-alarms {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--err);
+  border-radius: 4px;
+  padding: 8px 12px;
+  z-index: 10;
+  max-width: 600px;
+  display: none;
+}
+.hud-alarms.visible { display: block; }
+.hud-alarms-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.hud-alarms-title {
+  color: var(--err);
+  font-weight: 600;
   font-size: 13px;
-  font-style: italic;
-  padding: 12px 16px;
-  text-align: center;
 }
 
 .hud-no-telemetry {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
   color: var(--text-dim);
   font-size: 11px;
   text-align: center;
+  background: var(--bg-surface);
+  padding: 6px 12px;
+  border-radius: 3px;
 }
 
 /* === Post-flight summary === */
@@ -1691,52 +1745,179 @@ h2.warn { color: var(--warn); }
        The same overlay handles confirm dialogs and the settings popover. -->
   <!-- HUD: full-window flight UI. Hidden by default; #app gets the
        hud-active class when armed which hides the sidebar/header
-       chrome and reveals this overlay. -->
+       chrome and reveals this overlay. The layout is a 2-column
+       grid: horizon (left, big) and a stack of telemetry tiles
+       (right). Bottom row: home/mode tile + minimap. Bottom strip:
+       scrolling event ticker. -->
   <div id="hud" class="hud" style="display:none">
-    <div class="hud-strip">
-      <span class="hud-state" id="hud-state">ARMED</span>
-      <span class="hud-mode" id="hud-mode">-</span>
-      <span class="hud-strip-spacer"></span>
-      <span class="hud-strip-bat" id="hud-strip-bat">-</span>
-      <span class="hud-strip-pct" id="hud-strip-pct">-</span>
-      <span class="hud-clock" id="hud-clock">--:--</span>
+
+    <!-- Artificial horizon centerpiece. SVG horizon is rotated by
+         roll and translated by pitch; the heading tape sits on top.
+         Pure CSS/SVG transforms; updates are cheap. -->
+    <div class="hud-horizon hud-tile" id="hud-horizon-tile">
+      <div class="hud-tile-label">ATTITUDE</div>
+      <svg class="hud-horizon-svg" id="hud-horizon-svg"
+           viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet">
+        <!-- Clip the moving horizon to the visible disc. -->
+        <defs>
+          <clipPath id="horizon-clip">
+            <rect x="-100" y="-100" width="200" height="200"/>
+          </clipPath>
+        </defs>
+        <!-- Roll group: rotates about origin. -->
+        <g id="horizon-roll" clip-path="url(#horizon-clip)">
+          <!-- Pitch group: translates vertically. -->
+          <g id="horizon-pitch">
+            <!-- Sky -->
+            <rect x="-300" y="-300" width="600" height="300" fill="#1f3a5c"/>
+            <!-- Ground -->
+            <rect x="-300" y="0" width="600" height="300" fill="#5c3a1f"/>
+            <!-- Horizon line -->
+            <line x1="-300" y1="0" x2="300" y2="0" stroke="#fff" stroke-width="0.8"/>
+            <!-- Pitch ladder. Marks every 10 deg. SVG transform
+                 of 1 unit = 1 deg pitch (we set up viewBox so
+                 ±90deg maps to ±90 units). -->
+            <g stroke="#fff" stroke-width="0.4" fill="none">
+              <line x1="-15" y1="-10" x2="15" y2="-10"/>
+              <line x1="-25" y1="-20" x2="25" y2="-20"/>
+              <line x1="-15" y1="-30" x2="15" y2="-30"/>
+              <line x1="-25" y1="-40" x2="25" y2="-40"/>
+              <line x1="-15" y1="10" x2="15" y2="10"/>
+              <line x1="-25" y1="20" x2="25" y2="20"/>
+              <line x1="-15" y1="30" x2="15" y2="30"/>
+              <line x1="-25" y1="40" x2="25" y2="40"/>
+            </g>
+          </g>
+        </g>
+        <!-- Aircraft symbol: fixed to the screen, never rotates. -->
+        <g stroke="var(--warn)" stroke-width="2" fill="none">
+          <line x1="-30" y1="0" x2="-10" y2="0"/>
+          <line x1="10" y1="0" x2="30" y2="0"/>
+          <circle cx="0" cy="0" r="2" fill="var(--warn)"/>
+        </g>
+        <!-- Roll indicator at top: tick at 0, then 10/20/30/45/60 -->
+        <g stroke="#fff" stroke-width="0.4" fill="#fff" font-size="6"
+           font-family="DSEG7, monospace">
+          <line x1="0" y1="-90" x2="0" y2="-85"/>
+          <text x="0" y="-93" text-anchor="middle" id="horizon-roll-text">0°</text>
+        </g>
+        <!-- Heading tape, top -->
+        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="7">
+          <text x="0" y="-72" text-anchor="middle" id="horizon-hdg-text">---°</text>
+        </g>
+      </svg>
     </div>
 
-    <div class="hud-tiles">
-      <div class="hud-tile" id="hud-tile-bat">
+    <!-- Telemetry stack: BAT, GPS, LINK -->
+    <div class="hud-telstack">
+
+      <div class="hud-tile hud-stack-tile" id="hud-tile-bat">
         <div class="hud-tile-stale" style="display:none">STALE</div>
-        <div class="hud-tile-label">Battery</div>
-        <div class="hud-tile-primary" id="hud-bat-volts">-</div>
-        <div class="hud-tile-secondary" id="hud-bat-cells">-</div>
-        <div class="hud-tile-row">
-          <span id="hud-bat-pct">-</span>
-          <span id="hud-bat-amps">-</span>
+        <div class="hud-tile-label">BATTERY</div>
+        <div class="row">
+          <span class="num xl" id="hud-bat-pct">--<span class="num-unit">%</span></span>
+          <span class="num md" id="hud-bat-volts">--.--<span class="num-unit">V</span></span>
+        </div>
+        <div class="row tight">
+          <span><span class="num sm" id="hud-bat-vc">--.--</span> <span class="num-unit">V/CELL</span></span>
+          <span><span class="num sm" id="hud-bat-amps">--.--</span> <span class="num-unit">A</span></span>
+          <span><span class="num sm" id="hud-bat-mah">----</span> <span class="num-unit">mAh</span></span>
         </div>
       </div>
-      <div class="hud-tile" id="hud-tile-gps">
+
+      <div class="hud-tile hud-stack-tile" id="hud-tile-gps">
         <div class="hud-tile-stale" style="display:none">STALE</div>
-        <div class="hud-tile-label">GPS</div>
-        <div class="hud-tile-primary"><span id="hud-gps-sats">-</span><span class="unit">sats</span></div>
-        <div class="hud-tile-secondary" id="hud-gps-coords">-</div>
-        <div class="hud-tile-row">
-          <span>alt <span id="hud-gps-alt">-</span></span>
-          <span>spd <span id="hud-gps-spd">-</span></span>
-          <span>hdg <span id="hud-gps-hdg">-</span></span>
+        <div class="hud-tile-label">GPS / NAV</div>
+        <div class="row">
+          <span class="num lg" id="hud-gps-sats">--<span class="num-unit">SAT</span></span>
+          <span class="num md" id="hud-gps-alt">----<span class="num-unit">M</span></span>
+        </div>
+        <div class="row tight">
+          <span><span class="num sm" id="hud-gps-spd">--</span> <span class="num-unit">km/h</span></span>
+          <span><span class="num sm" id="hud-gps-hdg">---</span><span class="num-unit">°</span></span>
+        </div>
+        <div class="row tight" style="margin-top:2px">
+          <span class="num sm" id="hud-gps-coords">--.------ , --.------</span>
         </div>
       </div>
-      <div class="hud-tile" id="hud-tile-link">
+
+      <div class="hud-tile hud-stack-tile" id="hud-tile-link">
         <div class="hud-tile-stale" style="display:none">STALE</div>
-        <div class="hud-tile-label">Link</div>
-        <div class="hud-tile-primary"><span id="hud-link-rssi">-</span><span class="unit">dBm</span></div>
-        <div class="hud-tile-secondary">LQ <span id="hud-link-lq">-</span>%</div>
-        <div class="hud-tile-row">
-          <span>SNR <span id="hud-link-snr">-</span></span>
-          <span>TX <span id="hud-link-pwr">-</span></span>
+        <div class="hud-tile-label">LINK</div>
+        <div class="row">
+          <span class="num lg" id="hud-link-lq">---<span class="num-unit">%</span></span>
+          <span class="num md" id="hud-link-rssi">---<span class="num-unit">dBm</span></span>
         </div>
+        <div class="row tight">
+          <span>SNR <span class="num sm" id="hud-link-snr">--</span></span>
+          <span>RF <span class="num sm" id="hud-link-rf">--</span></span>
+          <span>TX <span class="num sm" id="hud-link-pwr">--</span></span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Bottom row: home/mode tiles + minimap -->
+    <div class="hud-homemode">
+      <div class="hud-tile">
+        <div class="hud-tile-label">MODE</div>
+        <div class="num lg" id="hud-mode" style="margin-top:2px">----</div>
+        <div class="row tight" style="margin-top:6px">
+          <span>FLT <span class="num sm" id="hud-flighttime">00:00</span></span>
+        </div>
+      </div>
+      <div class="hud-tile">
+        <div class="hud-tile-label">HOME</div>
+        <div class="row" style="margin-top:2px">
+          <span class="num lg" id="hud-home-dist">----<span class="num-unit">M</span></span>
+        </div>
+        <div class="row tight" style="margin-top:4px">
+          <span>BRG <span class="num sm" id="hud-home-bearing">---</span><span class="num-unit">°</span></span>
+        </div>
+      </div>
+      <div class="hud-tile">
+        <div class="hud-tile-label">CLOCK</div>
+        <div class="num lg" id="hud-clock" style="margin-top:2px">--:--</div>
       </div>
     </div>
 
-    <div class="hud-alarms" id="hud-alarms" style="display:none">
+    <div class="hud-tile hud-minimap" id="hud-minimap">
+      <div class="hud-tile-label">TRACK</div>
+      <svg class="hud-minimap-svg" id="hud-minimap-svg"
+           viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet">
+        <!-- Compass rose -->
+        <g stroke="var(--text-dim)" stroke-width="0.3" fill="none">
+          <circle cx="0" cy="0" r="80"/>
+          <line x1="0" y1="-80" x2="0" y2="80"/>
+          <line x1="-80" y1="0" x2="80" y2="0"/>
+        </g>
+        <g fill="var(--text-dim)" font-family="monospace" font-size="8" text-anchor="middle">
+          <text x="0" y="-83">N</text>
+          <text x="83" y="3">E</text>
+          <text x="0" y="92">S</text>
+          <text x="-83" y="3">W</text>
+        </g>
+        <!-- Home marker -->
+        <g id="minimap-home" fill="var(--ok)" stroke="var(--ok)" stroke-width="0.5">
+          <circle cx="0" cy="0" r="3"/>
+        </g>
+        <!-- Breadcrumb path -->
+        <polyline id="minimap-track" fill="none" stroke="var(--info)"
+                  stroke-width="0.8" points=""/>
+        <!-- Aircraft marker (rotates with heading) -->
+        <g id="minimap-aircraft" stroke="var(--warn)" stroke-width="0.5" fill="var(--warn)">
+          <polygon points="0,-4 -2.5,3 0,1.5 2.5,3" />
+        </g>
+      </svg>
+    </div>
+
+    <!-- Event ticker: scrolling narrator/log events. -->
+    <div class="hud-ticker" id="hud-ticker">
+      <span class="muted small">Awaiting events…</span>
+    </div>
+
+    <!-- Floating alarm panel. Shows on top when alarms are active. -->
+    <div class="hud-alarms" id="hud-alarms">
       <div class="hud-alarms-header">
         <span class="hud-alarms-title">⚠ Alarms (<span id="hud-alarms-count">0</span>)</span>
         <button id="hud-alarms-ack-all" class="action small">Acknowledge all</button>
@@ -1744,14 +1925,9 @@ h2.warn { color: var(--warn); }
       <ul class="alarms-list" id="hud-alarms-list"></ul>
     </div>
 
-    <div class="hud-bottom">
-      <div class="hud-log" id="hud-log"></div>
-      <div class="hud-disarm-label">Flip arm key DOWN with throttle at idle to disarm.</div>
-    </div>
-
+    <!-- Subtle "no telemetry" notice; floats over the layout when relevant. -->
     <div class="hud-no-telemetry" id="hud-no-telemetry" style="display:none">
-      No telemetry. Operator flying without telemetry, or link doesn't carry it.
-      FC is still in command of failsafe.
+      No telemetry. FC is still in command of failsafe.
     </div>
   </div>
 
@@ -1856,6 +2032,10 @@ const App = {
     arm: null,
     // armed-state runtime data (not persisted).
     armedRecentLogs: [],
+    // flightArmedAt: ms timestamp when state flipped to ARMED.
+    // Null when not currently armed. Used by the HUD flight-time
+    // clock.
+    flightArmedAt: null,
     // telemetry: latest snapshot from /api/v1/telemetry. Populated on
     // connect (one-shot) and continuously via the WebSocket stream.
     // Null when telemetry has never been received (operator may be
@@ -2104,12 +2284,16 @@ const App = {
       const isArmed = frame.arm && frame.arm.state === 'ARMED';
       this.state.flightArmed = isArmed;
       if (!wasArmed && isArmed) {
-        // Just transitioned into ARMED; seed the armed-state log feed.
+        // Just transitioned into ARMED; seed the armed-state log feed
+        // and record the arm time for the flight clock.
         this.state.armedRecentLogs = (this.state.logs || []).slice(-10);
+        this.state.flightArmedAt = Date.now();
+        this._minimapTrack = [];
       } else if (wasArmed && !isArmed) {
         // Just transitioned out of ARMED; show the post-flight summary.
         // Same race-tolerant approach as the old click handler.
         setTimeout(() => this.showLatestPostflight(), 250);
+        this.state.flightArmedAt = null;
       }
       // Re-render the hero on every frame: changes are cheap (data-state
       // diff) and the countdown ticks down via the same path.
@@ -3095,27 +3279,63 @@ const App = {
     }
   },
 
-  // renderArmedState is the HUD entry point. Called on arm transition
-  // and on each WebSocket frame while armed. Also driven by a 1Hz
-  // ticker for the wall clock.
+  // renderArmedState is the HUD entry point. Called every WS frame
+  // while armed plus on transitions. The render functions are split
+  // by visual area so changes in one don't redraw the whole HUD.
   renderArmedState() {
     if (!this.state.flightArmed) return;
-    this.renderHUDTiles();
+    this.renderHUDHorizon();
+    this.renderHUDStats();
+    this.renderHUDHomeMode();
+    this.renderHUDMinimap();
+    this.renderHUDTicker();
     this.renderActiveAlarms();
-    this.renderHUDLog();
-    this.renderHUDStripAndClock();
   },
 
-  // renderHUDTiles populates the three big tiles (battery, GPS, link)
-  // from the telemetry snapshot. Per-tile visibility: tiles for sensors
-  // that haven't produced data are dimmed but not hidden — the absence
-  // is itself information ("we never got GPS this flight").
-  renderHUDTiles() {
+  // renderHUDHorizon updates the artificial horizon SVG. Roll
+  // rotates the horizon group; pitch translates it vertically. The
+  // pitch ladder lives inside the rotated group so it pitches with
+  // the horizon (correct attitude indicator behaviour). Updates
+  // happen via `transform` attribute, which is GPU-accelerated and
+  // doesn't reflow.
+  renderHUDHorizon() {
+    const t = this.state.telemetry;
+    const att = t && t.attitude && t.attitude.data;
+    const stale = !!(t && t.attitude && t.attitude.stale);
+    const tile = document.getElementById('hud-horizon-tile');
+    if (att && !stale) {
+      tile.classList.remove('muted', 'stale');
+      const roll = att.rollDeg || 0;
+      const pitch = att.pitchDeg || 0;
+      // viewBox is 200x200; pitch unit is 1deg = 1 viewBox unit.
+      // So translate Y by pitch directly. Negative pitch (nose down)
+      // moves the horizon up the screen.
+      const rollGroup = document.getElementById('horizon-roll');
+      const pitchGroup = document.getElementById('horizon-pitch');
+      if (rollGroup) rollGroup.setAttribute('transform', `rotate(${-roll})`);
+      if (pitchGroup) pitchGroup.setAttribute('transform', `translate(0 ${pitch})`);
+      const rt = document.getElementById('horizon-roll-text');
+      if (rt) rt.textContent = `${roll.toFixed(0)}°`;
+    } else {
+      tile.classList.add(stale ? 'stale' : 'muted');
+    }
+
+    // Heading from GPS course (no compass on FC).
+    const hdgEl = document.getElementById('horizon-hdg-text');
+    if (hdgEl && t && t.gps && t.gps.data && typeof t.gps.data.headingDeg === 'number') {
+      hdgEl.textContent = `${t.gps.data.headingDeg.toFixed(0).padStart(3, '0')}°`;
+    } else if (hdgEl) {
+      hdgEl.textContent = '---°';
+    }
+  },
+
+  // renderHUDStats updates BAT, GPS, LINK tiles. Threshold colouring
+  // comes from per-tile rules; overall haveAny gates the no-telemetry
+  // overlay.
+  renderHUDStats() {
     const t = this.state.telemetry;
     const haveAny = !!(t && t.haveAny);
-
-    document.getElementById('hud-no-telemetry').style.display =
-      haveAny ? 'none' : '';
+    document.getElementById('hud-no-telemetry').style.display = haveAny ? 'none' : '';
 
     const setTileMode = (id, mode) => {
       const el = document.getElementById(id);
@@ -3125,41 +3345,37 @@ const App = {
       const staleEl = el.querySelector('.hud-tile-stale');
       if (staleEl) staleEl.style.display = (mode === 'stale') ? '' : 'none';
     };
+    const setNum = (id, value, fallback) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      // We rebuild text content but preserve the .num-unit child.
+      const unit = el.querySelector('.num-unit');
+      el.textContent = (value !== null && value !== undefined) ? value : (fallback || '--');
+      if (unit) el.appendChild(unit);
+    };
 
-    // === Battery ===
+    // === BATTERY ===
     if (t && t.battery) {
       const d = t.battery.data || {};
       const stale = !!t.battery.stale;
-      const v = d.volts;
-      const cells = d.cellCount || 0;
-      const vc = d.voltsCell;
-
-      document.getElementById('hud-bat-volts').textContent =
-        typeof v === 'number' ? v.toFixed(2) + ' V' : '-';
-      document.getElementById('hud-bat-cells').textContent =
-        cells > 0 && typeof vc === 'number'
-          ? `${cells}S · ${vc.toFixed(2)} V/cell` : '';
-      document.getElementById('hud-bat-pct').textContent =
-        typeof d.percent === 'number' ? d.percent + '%' : '-';
+      setNum('hud-bat-pct',
+        typeof d.percent === 'number' ? d.percent : '--');
+      setNum('hud-bat-volts',
+        typeof d.volts === 'number' ? d.volts.toFixed(2) : '--.--');
+      document.getElementById('hud-bat-vc').textContent =
+        typeof d.voltsCell === 'number' ? d.voltsCell.toFixed(2) : '--.--';
       document.getElementById('hud-bat-amps').textContent =
-        typeof d.amps === 'number' ? d.amps.toFixed(1) + ' A' : '-';
-
-      // Color thresholds (LiPo defaults; per-cell). Critical alarm
-      // would reinforce these via the audio path but the visual
-      // thresholds are independent.
+        typeof d.amps === 'number' ? d.amps.toFixed(1) : '--.-';
+      document.getElementById('hud-bat-mah').textContent =
+        typeof d.usedMAh === 'number' ? String(d.usedMAh) : '----';
       let mode = 'ok';
       if (stale) mode = 'stale';
-      else if (typeof vc === 'number') {
-        if (vc < 3.5) mode = 'crit';
-        else if (vc < 3.7) mode = 'warn';
-        else mode = 'ok';
+      else if (typeof d.voltsCell === 'number') {
+        if (d.voltsCell < 3.5) mode = 'crit';
+        else if (d.voltsCell < 3.7) mode = 'warn';
       } else mode = 'muted';
       setTileMode('hud-tile-bat', mode);
     } else {
-      document.getElementById('hud-bat-volts').textContent = '-';
-      document.getElementById('hud-bat-cells').textContent = '';
-      document.getElementById('hud-bat-pct').textContent = '-';
-      document.getElementById('hud-bat-amps').textContent = '-';
       setTileMode('hud-tile-bat', 'muted');
     }
 
@@ -3168,88 +3384,186 @@ const App = {
       const d = t.gps.data || {};
       const stale = !!t.gps.stale;
       const sats = typeof d.sats === 'number' ? d.sats : 0;
-
-      document.getElementById('hud-gps-sats').textContent =
-        typeof d.sats === 'number' ? d.sats : '-';
-      const lat = typeof d.latDeg === 'number' ? d.latDeg.toFixed(5) : '?';
-      const lon = typeof d.lonDeg === 'number' ? d.lonDeg.toFixed(5) : '?';
-      document.getElementById('hud-gps-coords').textContent = `${lat}, ${lon}`;
-      document.getElementById('hud-gps-alt').textContent =
-        typeof d.altMeters === 'number' ? d.altMeters + 'm' : '-';
+      setNum('hud-gps-sats', typeof d.sats === 'number' ? d.sats : '--');
+      setNum('hud-gps-alt',
+        typeof d.altMeters === 'number' ? d.altMeters : '----');
       document.getElementById('hud-gps-spd').textContent =
-        typeof d.groundKmh === 'number' ? d.groundKmh.toFixed(1) + ' km/h' : '-';
+        typeof d.groundKmh === 'number' ? d.groundKmh.toFixed(0) : '--';
       document.getElementById('hud-gps-hdg').textContent =
-        typeof d.headingDeg === 'number' ? d.headingDeg.toFixed(0) + '°' : '-';
-
-      let mode = 'ok';
+        typeof d.headingDeg === 'number' ? d.headingDeg.toFixed(0).padStart(3, '0') : '---';
+      const lat = typeof d.latDeg === 'number' ? d.latDeg.toFixed(6) : '--.------';
+      const lon = typeof d.lonDeg === 'number' ? d.lonDeg.toFixed(6) : '--.------';
+      document.getElementById('hud-gps-coords').textContent = `${lat} , ${lon}`;
+      let mode;
       if (stale) mode = 'stale';
       else if (sats < 4) mode = 'crit';
       else if (sats < 6) mode = 'warn';
       else mode = 'ok';
       setTileMode('hud-tile-gps', mode);
     } else {
-      document.getElementById('hud-gps-sats').textContent = '-';
-      document.getElementById('hud-gps-coords').textContent = '-';
       setTileMode('hud-tile-gps', 'muted');
     }
 
-    // === Link ===
+    // === LINK ===
     if (t && t.link) {
       const d = t.link.data || {};
       const stale = !!t.link.stale;
-      const rssi = typeof d.uplinkRssiDbm === 'number' ? d.uplinkRssiDbm : null;
       const lq = typeof d.uplinkLq === 'number' ? d.uplinkLq : null;
-
-      document.getElementById('hud-link-rssi').textContent = rssi !== null ? rssi : '-';
-      document.getElementById('hud-link-lq').textContent = lq !== null ? lq : '-';
+      setNum('hud-link-lq', lq !== null ? lq : '---');
+      setNum('hud-link-rssi',
+        typeof d.uplinkRssiDbm === 'number' ? d.uplinkRssiDbm : '---');
       document.getElementById('hud-link-snr').textContent =
-        typeof d.uplinkSnr === 'number' ? d.uplinkSnr : '-';
+        typeof d.uplinkSnr === 'number' ? d.uplinkSnr : '--';
+      document.getElementById('hud-link-rf').textContent =
+        typeof d.rfMode === 'number' ? d.rfMode : '--';
       document.getElementById('hud-link-pwr').textContent =
-        typeof d.txPowerIdx === 'number' ? d.txPowerIdx : '-';
-
-      // Color thresholds: LQ is the more reliable single indicator.
-      // Below 70% means the link is degraded; below 50% means we're
-      // probably losing packets.
-      let mode = 'ok';
+        typeof d.txPowerIdx === 'number' ? d.txPowerIdx : '--';
+      let mode;
       if (stale) mode = 'stale';
-      else if (lq !== null) {
-        if (lq < 50) mode = 'crit';
-        else if (lq < 70) mode = 'warn';
-        else mode = 'ok';
-      } else mode = 'muted';
+      else if (lq === null) mode = 'muted';
+      else if (lq < 50) mode = 'crit';
+      else if (lq < 70) mode = 'warn';
+      else mode = 'ok';
       setTileMode('hud-tile-link', mode);
     } else {
-      document.getElementById('hud-link-rssi').textContent = '-';
-      document.getElementById('hud-link-lq').textContent = '-';
       setTileMode('hud-tile-link', 'muted');
     }
   },
 
+  // renderHUDHomeMode updates the MODE / HOME / CLOCK tiles in the
+  // bottom row.
+  renderHUDHomeMode() {
+    const t = this.state.telemetry;
+    document.getElementById('hud-mode').textContent =
+      (t && t.flightMode && t.flightMode.data && t.flightMode.data.mode) || '----';
+
+    if (t && t.home && t.home.data && typeof t.home.data.distanceM === 'number') {
+      document.getElementById('hud-home-dist').textContent = String(t.home.data.distanceM);
+      // Reattach the unit since textContent wiped child.
+      // (Cheap; happens 10x/sec but only changes when distance changes.)
+      const el = document.getElementById('hud-home-dist');
+      if (!el.querySelector('.num-unit')) {
+        const u = document.createElement('span');
+        u.className = 'num-unit';
+        u.textContent = 'M';
+        el.appendChild(u);
+      }
+    }
+
+    // Bearing from current position to home. Computed from GPS +
+    // home; for now leave as ---. Could compute later (haversine
+    // inverse). The number itself is one line of bearing math.
+    if (t && t.gps && t.gps.data && t.home && t.home.data) {
+      const lat1 = t.gps.data.latDeg, lon1 = t.gps.data.lonDeg;
+      const lat2 = t.home.data.latDeg, lon2 = t.home.data.lonDeg;
+      if (typeof lat1 === 'number' && typeof lat2 === 'number') {
+        const bearing = bearingDeg(lat1, lon1, lat2, lon2);
+        document.getElementById('hud-home-bearing').textContent =
+          bearing.toFixed(0).padStart(3, '0');
+      }
+    }
+
+    // Flight time: ms since arm event. We don't track this server-side
+    // yet, so derive from arm.requestedAt if state machine just armed,
+    // or from our local armedAt if we recorded it. Simplest: track
+    // armedAt in state.
+    if (this.state.flightArmedAt) {
+      const elapsed = Math.floor((Date.now() - this.state.flightArmedAt) / 1000);
+      const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const ss = String(elapsed % 60).padStart(2, '0');
+      document.getElementById('hud-flighttime').textContent = `${mm}:${ss}`;
+    }
+
+    const now = new Date();
+    document.getElementById('hud-clock').textContent =
+      String(now.getHours()).padStart(2, '0') + ':' +
+      String(now.getMinutes()).padStart(2, '0');
+  },
+
+  // renderHUDMinimap updates the breadcrumb track and aircraft
+  // marker. The map is centered on home; aircraft position is
+  // projected as relative offset in meters, scaled to fit the
+  // viewBox. No tiles, just topology.
+  renderHUDMinimap() {
+    const t = this.state.telemetry;
+    if (!t || !t.gps || !t.gps.data || !t.home || !t.home.data) return;
+    const home = t.home.data;
+    const gps = t.gps.data;
+
+    // Project current position to (dx, dy) in metres relative to home.
+    // 1 deg lat ≈ 111000m; 1 deg lon ≈ 111000 * cos(lat) m.
+    const dLat = (gps.latDeg - home.latDeg) * 111000;
+    const dLon = (gps.lonDeg - home.lonDeg) * 111000 * Math.cos(home.latDeg * Math.PI / 180);
+
+    // Append to track buffer (capped at 200 points to keep SVG cheap).
+    if (!this._minimapTrack) this._minimapTrack = [];
+    const last = this._minimapTrack[this._minimapTrack.length - 1];
+    if (!last || Math.hypot(dLon - last.x, -dLat - last.y) > 0.5) {
+      this._minimapTrack.push({ x: dLon, y: -dLat });
+      if (this._minimapTrack.length > 200) this._minimapTrack.shift();
+    }
+
+    // Auto-scale: find max |x|,|y| of the points, map to ~70 viewBox
+    // units (leaving room for labels). Minimum scale so the map
+    // doesn't zoom in pointlessly when the aircraft is near home.
+    let maxR = 50; // metres
+    for (const p of this._minimapTrack) {
+      maxR = Math.max(maxR, Math.abs(p.x), Math.abs(p.y));
+    }
+    const scale = 70 / maxR;
+
+    const polyEl = document.getElementById('minimap-track');
+    if (polyEl) {
+      polyEl.setAttribute('points', this._minimapTrack
+        .map(p => `${(p.x * scale).toFixed(1)},${(p.y * scale).toFixed(1)}`)
+        .join(' '));
+    }
+
+    const ac = document.getElementById('minimap-aircraft');
+    if (ac) {
+      const x = dLon * scale;
+      const y = -dLat * scale;
+      const hdg = typeof gps.headingDeg === 'number' ? gps.headingDeg : 0;
+      ac.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${hdg})`);
+    }
+  },
+
+  // renderHUDTicker shows a sliding window of recent log/event lines.
+  // Picks log lines and audio cues since flight start. Newest at the
+  // right (or just below); oldest scrolls off.
+  renderHUDTicker() {
+    const el = document.getElementById('hud-ticker');
+    if (!el) return;
+    const logs = (this.state.logs || []).slice(-3);
+    if (logs.length === 0) {
+      // keep the placeholder
+      return;
+    }
+    el.innerHTML = logs.map(l => {
+      const t = new Date(l.time).toLocaleTimeString();
+      const cls = classifyLogLine(l.msg || '');
+      return `<span class="tick-time">${escapeHtml(t)}</span><span class="tick-msg ${cls}">${escapeHtml(l.msg || '')}</span>`;
+    }).join('  •  ');
+  },
+
   // renderActiveAlarms populates the HUD alarms panel. Hidden when
-  // no alarms are active. The whole HUD also picks up a red/amber
-  // border tint based on the highest-priority alarm.
+  // no alarms are active. The panel floats over the HUD layout
+  // when visible (z-index 10).
   renderActiveAlarms() {
     const panel = document.getElementById('hud-alarms');
     if (!panel) return;
 
     const alarms = (this.state.audio && this.state.audio.activeAlarms) || [];
-    const hud = document.getElementById('hud');
-    hud.classList.remove('hud-warn', 'hud-crit');
-
     if (alarms.length === 0) {
-      panel.style.display = 'none';
+      panel.classList.remove('visible');
       return;
     }
-    panel.style.display = '';
+    panel.classList.add('visible');
     document.getElementById('hud-alarms-count').textContent = alarms.length;
 
     const list = document.getElementById('hud-alarms-list');
     list.innerHTML = '';
-    let hasCrit = false, hasWarn = false;
     for (const a of alarms) {
-      if (a.level === 'critical') hasCrit = true;
-      else if (a.level === 'warning') hasWarn = true;
-
       const li = document.createElement('li');
       li.className = a.level === 'critical' ? 'crit' : 'warn';
       const cycleText = a.maxCycles > 0
@@ -3268,53 +3582,6 @@ const App = {
         this.acknowledgeAlarm(name);
       });
     });
-
-    if (hasCrit) hud.classList.add('hud-crit');
-    else if (hasWarn) hud.classList.add('hud-warn');
-  },
-
-  // renderHUDLog renders the 8 most recent log lines, color-classified
-  // by content. Newest at the bottom.
-  renderHUDLog() {
-    const el = document.getElementById('hud-log');
-    if (!el) return;
-    const logs = (this.state.logs || []).slice(-8);
-    el.innerHTML = logs.map(l => {
-      const t = new Date(l.time).toLocaleTimeString();
-      const cls = classifyLogLine(l.msg || '');
-      return `<div class="log-line ${cls}">${escapeHtml(t)} ${escapeHtml(l.msg || '')}</div>`;
-    }).join('') || '<div class="log-line muted">no entries</div>';
-  },
-
-  // renderHUDStripAndClock updates the top-strip values and the
-  // wall clock. Called every frame for the strip; clock is also
-  // refreshed by a 30s ticker.
-  renderHUDStripAndClock() {
-    const t = this.state.telemetry;
-    const fmEl = document.getElementById('hud-mode');
-    if (t && t.flightMode) {
-      fmEl.textContent = t.flightMode.data?.mode || '-';
-    } else {
-      fmEl.textContent = '-';
-    }
-
-    if (t && t.battery && t.battery.data) {
-      const d = t.battery.data;
-      document.getElementById('hud-strip-bat').textContent =
-        (typeof d.voltsCell === 'number' ? d.voltsCell.toFixed(2) + ' V/cell' : '');
-      document.getElementById('hud-strip-pct').textContent =
-        (typeof d.percent === 'number' ? d.percent + '%' : '');
-    } else {
-      document.getElementById('hud-strip-bat').textContent = '';
-      document.getElementById('hud-strip-pct').textContent = '';
-    }
-
-    // Clock — minute resolution is enough; updated every frame is
-    // wasteful so a 30s timer also calls this method.
-    const now = new Date();
-    document.getElementById('hud-clock').textContent =
-      String(now.getHours()).padStart(2, '0') + ':' +
-      String(now.getMinutes()).padStart(2, '0');
   },
 
   setCheck(id, ok) {
@@ -3833,6 +4100,21 @@ function formatShortcut(shortcut) {
     if (t === 'meta' || t === 'cmd') return 'Cmd';
     return t.toUpperCase();
   }).join('+');
+}
+
+// bearingDeg returns the initial great-circle bearing from point A
+// to point B in degrees [0, 360). Used by the HUD's HOME tile to
+// show "which way is home" relative to true north.
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const toRad = Math.PI / 180;
+  const phi1 = lat1 * toRad;
+  const phi2 = lat2 * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  const y = Math.sin(dLon) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2)
+          - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+  const brg = Math.atan2(y, x) * 180 / Math.PI;
+  return (brg + 360) % 360;
 }
 
 // HTML-escape a string for safe insertion via innerHTML. Used for
