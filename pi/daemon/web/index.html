@@ -620,22 +620,38 @@ table.data-table {
 }
 
 /* === Pre-flight tab === */
-/* Hero panel: status banner + arm/disarm action all in one. The
-   container is the visual anchor of the page. When ready, the panel
-   visually transforms into a "click here" target by the action button
-   filling the bottom edge in green. When armed, the same panel
-   recolors to amber/red and exposes a disarm action. */
-.preflight-hero {
+/* Arm hero: panel that surfaces the daemon's arm state machine to
+   the operator. Four states driven by data-state attribute: idle
+   (gray, pre-flight incomplete), ready (green, you may flip the arm
+   key), arming-requested (amber pulse with a 60s countdown), armed
+   (inverted amber, aircraft is armed). The hero is read-only: the
+   only inputs are the cog (settings) and the keyboard shortcut for
+   arm-confirm. */
+.arm-hero {
   position: relative;
   padding: 24px 24px 16px;
   border-left: 3px solid var(--text-dim);
   transition: border-color 0.2s, background 0.2s;
 }
-.preflight-hero.idle  { border-left-color: var(--text-dim); }
-.preflight-hero.ready { border-left-color: var(--ok); }
-.preflight-hero.armed { border-left-color: var(--warn); background: rgba(217, 153, 0, 0.06); }
+.arm-hero[data-state="idle"]              { border-left-color: var(--text-dim); }
+.arm-hero[data-state="ready"]             { border-left-color: var(--ok); }
+.arm-hero[data-state="arming-requested"]  {
+  border-left-color: var(--warn);
+  background: rgba(217, 153, 0, 0.08);
+  animation: arm-hero-pulse 1.2s ease-in-out infinite;
+}
+.arm-hero[data-state="armed"] {
+  border-left-color: var(--warn);
+  background: var(--warn);
+  color: #1a1a1a;
+}
 
-.preflight-hero .hero-cog {
+@keyframes arm-hero-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 153, 0, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(217, 153, 0, 0.45); }
+}
+
+.arm-hero .hero-cog {
   position: absolute;
   top: 12px;
   right: 12px;
@@ -647,61 +663,82 @@ table.data-table {
   padding: 4px 8px;
   border-radius: 3px;
 }
-.preflight-hero .hero-cog:hover { color: var(--text-main); background: var(--bg-elevated); }
-.preflight-hero .hero-state {
+.arm-hero .hero-cog:hover { color: var(--text-main); background: var(--bg-elevated); }
+.arm-hero[data-state="armed"] .hero-cog { color: #1a1a1a; }
+
+.arm-hero .hero-state {
   display: flex;
   align-items: baseline;
   gap: 12px;
   margin-bottom: 4px;
 }
-.preflight-hero .hero-label {
+.arm-hero .hero-label {
   color: var(--text-dim);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.preflight-hero .hero-value {
+.arm-hero[data-state="armed"] .hero-label { color: rgba(26, 26, 26, 0.6); }
+
+.arm-hero .hero-value {
   font-size: 22px;
   font-weight: 600;
   color: var(--text-dim);
 }
-.preflight-hero.idle  .hero-value { color: var(--text-dim); }
-.preflight-hero.ready .hero-value { color: var(--ok); }
-.preflight-hero.armed .hero-value { color: var(--warn); }
-.preflight-hero .hero-summary {
+.arm-hero[data-state="idle"]              .hero-value { color: var(--text-dim); }
+.arm-hero[data-state="ready"]             .hero-value { color: var(--ok); }
+.arm-hero[data-state="arming-requested"]  .hero-value { color: var(--warn); }
+.arm-hero[data-state="armed"]             .hero-value {
+  color: #1a1a1a;
+  font-size: 28px;
+  letter-spacing: 1px;
+}
+
+.arm-hero .hero-summary {
   color: var(--text-muted);
   font-size: 13px;
   margin-bottom: 16px;
 }
+.arm-hero[data-state="armed"] .hero-summary { color: rgba(26, 26, 26, 0.75); }
 
-.preflight-hero .hero-action {
+/* Arming-requested countdown: progress bar 0..100% over the 60s
+   window plus numeric remaining seconds plus the configured shortcut
+   hint. Hidden by default; shown only when data-state is
+   arming-requested. */
+.arm-hero .hero-progress {
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+.arm-hero .hero-progress-bar {
+  height: 6px;
+  background: rgba(217, 153, 0, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.arm-hero .hero-progress-fill {
+  height: 100%;
+  background: var(--warn);
   width: 100%;
-  padding: 20px;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.1s, transform 0.05s;
+  transition: width 0.5s linear;
 }
-.preflight-hero .hero-action:active:not(:disabled) { transform: translateY(1px); }
-.preflight-hero .hero-action.arm {
-  background: var(--ok);
-  color: #fff;
+.arm-hero .hero-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
 }
-.preflight-hero .hero-action.arm:hover:not(:disabled) { background: #4fc34d; }
-.preflight-hero .hero-action.arm:disabled {
+.arm-hero .hero-progress-meta kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 12px;
   background: var(--bg-elevated);
-  color: var(--text-dim);
-  cursor: not-allowed;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-main);
 }
-.preflight-hero .hero-action.disarm {
-  background: var(--err);
-  color: #fff;
-}
-.preflight-hero .hero-action.disarm:hover { background: #ee5454; }
 
 .check-mark {
   display: inline-block;
@@ -1250,20 +1287,13 @@ h2.warn { color: var(--warn); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.hud-disarm {
-  background: var(--err);
-  color: #fff;
-  border: 0;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 4px;
-  cursor: pointer;
-  font-family: inherit;
+.hud-disarm-label {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+  padding: 12px 16px;
+  text-align: center;
 }
-.hud-disarm:hover { filter: brightness(1.12); }
-.hud-disarm:active { transform: translateY(1px); }
 
 .hud-no-telemetry {
   color: var(--text-dim);
@@ -1394,19 +1424,27 @@ h2.warn { color: var(--warn); }
   <main class="content">
 
     <section id="tab-preflight" class="tab active">
-      <!-- Hero panel: doubles as status banner pre-arm and as the
-           giant ARM button when ready. Post-arm it morphs into a
-           "currently flying" status header. The cog opens settings. -->
-      <div class="panel preflight-hero" id="pf-hero">
-        <button class="hero-cog" id="pf-settings-btn" title="Pre-flight settings">⚙</button>
+      <!-- Arm hero: read-only surface for the daemon's arm state
+           machine. Four states (idle, ready, arming-requested,
+           armed) driven by data-state. Arming is panel-only: the
+           operator flips the physical arm key and presses the
+           configured keyboard shortcut to confirm. The cog opens
+           settings. -->
+      <div class="panel arm-hero" id="arm-hero" data-state="idle">
+        <button class="hero-cog" id="arm-settings-btn" title="Arm settings">⚙</button>
         <div class="hero-state">
           <span class="hero-label">Status</span>
-          <span class="hero-value" id="pf-state-value">disconnected</span>
+          <span class="hero-value" id="arm-state-value">disconnected</span>
         </div>
-        <div class="hero-summary" id="pf-state-summary">Connect to a ZeroTX core to begin.</div>
-        <button id="pf-arm-btn" class="hero-action arm" disabled style="display:none">ARM FLIGHT</button>
-        <button id="pf-disarm-btn" class="hero-action disarm" style="display:none">DISARM</button>
-        <div id="pf-arm-blockers" class="muted small"></div>
+        <div class="hero-summary" id="arm-state-summary">Connect to a ZeroTX core to begin.</div>
+        <div class="hero-progress" id="arm-progress" style="display:none">
+          <div class="hero-progress-bar"><div class="hero-progress-fill" id="arm-progress-fill"></div></div>
+          <div class="hero-progress-meta">
+            <span><span id="arm-countdown">60</span>s remaining</span>
+            <span>Press <kbd id="arm-shortcut-display">Ctrl+Shift+A</kbd> to confirm</span>
+          </div>
+        </div>
+        <div id="arm-blockers" class="muted small"></div>
       </div>
 
       <!-- Pre-arm panels: joystick, model, link, warnings, checklist.
@@ -1708,7 +1746,7 @@ h2.warn { color: var(--warn); }
 
     <div class="hud-bottom">
       <div class="hud-log" id="hud-log"></div>
-      <button id="hud-disarm" class="hud-disarm">DISARM</button>
+      <div class="hud-disarm-label">Flip arm key DOWN with throttle at idle to disarm.</div>
     </div>
 
     <div class="hud-no-telemetry" id="hud-no-telemetry" style="display:none">
@@ -1813,12 +1851,9 @@ const App = {
     // overrides an auto-verified item that didn't auto-pass. Keeps
     // override decisions explicit and auditable.
     overrides: JSON.parse(localStorage.getItem('zerotxOverrides') || '{}'),
-    // operator settings: confirm dialogs for arm/disarm. Default both
-    // to true (safety). Autotakeoff workflows can disable arm-confirm.
-    settings: Object.assign(
-      { confirmArm: true, confirmDisarm: true },
-      JSON.parse(localStorage.getItem('zerotxSettings') || '{}')
-    ),
+    // arm: latest snapshot from the daemon's arm state machine,
+    // pushed over the WebSocket. Null until first frame arrives.
+    arm: null,
     // armed-state runtime data (not persisted).
     armedRecentLogs: [],
     // telemetry: latest snapshot from /api/v1/telemetry. Populated on
@@ -1895,13 +1930,17 @@ const App = {
     document.getElementById('pf-model-select').addEventListener('change', (e) => this.loadModelByPath(e.target.value));
     document.getElementById('pf-model-unload').addEventListener('click', () => this.unloadModel());
 
-    document.getElementById('pf-arm-btn').addEventListener('click', () => this.armFlight());
-    document.getElementById('pf-disarm-btn').addEventListener('click', () => this.disarmFlight());
-    document.getElementById('pf-settings-btn').addEventListener('click', () => this.openSettings());
+    document.getElementById('arm-settings-btn').addEventListener('click', () => this.openSettings());
     document.getElementById('hud-alarms-ack-all').addEventListener('click', () => this.acknowledgeAllAlarms());
-    document.getElementById('hud-disarm').addEventListener('click', () => this.disarmFlight());
     document.getElementById('postflight-done').addEventListener('click', () => this.dismissPostflight());
     document.getElementById('recordings-refresh').addEventListener('click', () => this.refreshRecordings());
+
+    // Global arm-confirm keybind. Configurable via settings; default
+    // Ctrl+Shift+A. Posts to /api/v1/arm/confirm regardless of focus
+    // because the operator may be reviewing telemetry on a different
+    // tab when the arm window opens. The daemon ignores confirm
+    // outside ARMING_REQUESTED so accidental presses are no-ops.
+    this.installArmConfirmKeybind();
 
     // Modal: clicking the backdrop dismisses (cancels). The window
     // itself doesn't bubble click, so clicks inside don't dismiss.
@@ -2052,6 +2091,34 @@ const App = {
     this.state.lastFrameTime = now;
     this.state.fpsWindow.push(now);
     if (this.state.fpsWindow.length > 10) this.state.fpsWindow.shift();
+
+    // Capture arm state from the stream. The daemon's arm state
+    // machine is the single source of truth for flightArmed; we
+    // derive the local mirror from the JSON state name. Transitions
+    // into and out of ARMED switch the GUI between the pre-flight
+    // tab and the HUD overlay.
+    if (frame.arm !== undefined) {
+      const prev = this.state.arm;
+      this.state.arm = frame.arm;
+      const wasArmed = this.state.flightArmed;
+      const isArmed = frame.arm && frame.arm.state === 'ARMED';
+      this.state.flightArmed = isArmed;
+      if (!wasArmed && isArmed) {
+        // Just transitioned into ARMED; seed the armed-state log feed.
+        this.state.armedRecentLogs = (this.state.logs || []).slice(-10);
+      } else if (wasArmed && !isArmed) {
+        // Just transitioned out of ARMED; show the post-flight summary.
+        // Same race-tolerant approach as the old click handler.
+        setTimeout(() => this.showLatestPostflight(), 250);
+      }
+      // Re-render the hero on every frame: changes are cheap (data-state
+      // diff) and the countdown ticks down via the same path.
+      this.renderArmHero();
+      // If armed-ness flipped, the whole pre-flight panel layout
+      // changes (HUD takeover or release).
+      if (wasArmed !== isArmed) this.renderPreflight();
+    }
+
     // Capture telemetry from the stream (daemon pushes it every tick).
     // Empty object same handling as the REST endpoint above.
     if (frame.telemetry !== undefined) {
@@ -2069,7 +2136,6 @@ const App = {
             || wasNull !== isNull) {
           this._lastChecklistRender = now;
           this.renderChecklist();
-          this.renderArmButton();
         }
       }
     }
@@ -2105,15 +2171,12 @@ const App = {
     const btnConnect = document.getElementById('btn-connect');
     const btnDisconnect = document.getElementById('btn-disconnect');
     const inputAddr = document.getElementById('input-address');
-    const banner = document.querySelector('.preflight-banner');
-    const stateValue = document.getElementById('pf-state-value');
-    const stateSummary = document.getElementById('pf-state-summary');
+    const hero = document.getElementById('arm-hero');
+    const stateValue = document.getElementById('arm-state-value');
+    const stateSummary = document.getElementById('arm-state-summary');
 
-    const setBanner = (cls, value, summary) => {
-      if (banner) {
-        banner.classList.remove('idle', 'ready', 'armed');
-        if (cls) banner.classList.add(cls);
-      }
+    const setHero = (state, value, summary) => {
+      if (hero) hero.dataset.state = state;
       if (stateValue) stateValue.textContent = value;
       if (stateSummary) stateSummary.textContent = summary;
     };
@@ -2123,25 +2186,26 @@ const App = {
         this.setIndicator('hdr-conn-dot', 'idle');
         text.textContent = 'disconnected';
         btnConnect.disabled = false; btnDisconnect.disabled = true; inputAddr.disabled = false;
-        setBanner('idle', 'disconnected', 'Connect to a ZeroTX core to begin.');
+        setHero('idle', 'disconnected', 'Connect to a ZeroTX core to begin.');
         break;
       case 'connecting':
         this.setIndicator('hdr-conn-dot', 'warn');
         text.textContent = 'connecting...';
         btnConnect.disabled = true; btnDisconnect.disabled = true; inputAddr.disabled = true;
-        setBanner('idle', 'connecting...', 'Reaching the ZeroTX core...');
+        setHero('idle', 'connecting...', 'Reaching the ZeroTX core...');
         break;
       case 'connected':
         this.setIndicator('hdr-conn-dot', 'ok');
         text.textContent = 'connected';
         btnConnect.disabled = true; btnDisconnect.disabled = false; inputAddr.disabled = true;
-        // Banner state will be refined by renderPreflight() based on /preflight.
+        // Hero state will be refined by renderArmHero() once arm
+        // frames start arriving over the WebSocket.
         break;
       case 'error':
         this.setIndicator('hdr-conn-dot', 'err');
         text.textContent = this.state.lastConnMsg ? `error: ${this.state.lastConnMsg}` : 'error';
         btnConnect.disabled = false; btnDisconnect.disabled = true; inputAddr.disabled = false;
-        setBanner('idle', 'error', this.state.lastConnMsg || 'Connection failed.');
+        setHero('idle', 'error', this.state.lastConnMsg || 'Connection failed.');
         break;
     }
   },
@@ -2494,89 +2558,45 @@ const App = {
     await this.refreshPreflight();
   },
 
-  async armFlight() {
-    // The all-green check is enforced by the button being disabled when
-    // anything is missing. The confirm dialog is a deliberate-pause
-    // moment; users running auto-takeoff can disable it via settings.
-    const proceed = async () => {
-      try {
-        const r = await fetch(`http://${this.state.address}/api/v1/flight/arm`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ armed: true }),
-        });
-        if (r.ok) {
-          this.state.flightArmed = true;
-          // Snapshot recent logs at arm-time as the seed for the
-          // armed-state log feed.
-          this.state.armedRecentLogs = (this.state.logs || []).slice(-10);
-        } else {
-          const body = await r.json().catch(() => ({}));
-          this.modal.alert('Arm failed', body.error || r.statusText);
-        }
-      } catch (e) {
-        this.modal.alert('Network error', e.message);
-      }
-      this.renderPreflight();
-    };
+  // === Arm confirm: keyboard shortcut handling ===
+  // The arm state machine is panel-driven (physical key flip).
+  // Confirm is the second deliberate gesture; a keyboard shortcut
+  // is right for a deliberately-awkward action. The shortcut is
+  // configurable in settings (localStorage); default Ctrl+Shift+A.
 
-    if (!this.state.settings.confirmArm) {
-      proceed();
-      return;
-    }
-    this.modal.confirmAction({
-      title: 'ARM FLIGHT?',
-      body: 'Once armed, the joystick selection is locked. The flight ' +
-            'controller is now responsible for translating channel ' +
-            'intents into actual flight. Confirm everything is ready ' +
-            'and the airplane is in a safe position.',
-      confirmText: 'ARM',
-      confirmStyle: 'warn',
-      onConfirm: proceed,
+  installArmConfirmKeybind() {
+    document.addEventListener('keydown', (e) => {
+      // Ignore while a modal is open or while typing in inputs.
+      if (this.modal && this.modal.isOpen()) return;
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      const shortcut = this.armConfirmShortcut();
+      if (!matchesShortcut(e, shortcut)) return;
+
+      e.preventDefault();
+      this.confirmArm();
     });
+    // Reflect the configured shortcut in the hero hint on init.
+    const display = document.getElementById('arm-shortcut-display');
+    if (display) display.textContent = formatShortcut(this.armConfirmShortcut());
   },
 
-  async disarmFlight() {
-    const proceed = async () => {
-      try {
-        const r = await fetch(`http://${this.state.address}/api/v1/flight/arm`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ armed: false }),
-        });
-        if (r.ok) {
-          this.state.flightArmed = false;
-          // Show post-flight summary for the just-saved recording. The
-          // daemon's auto-save fires a beat before this response, so
-          // there's a small race window — fetching the recordings list
-          // and picking the newest entry is more robust than guessing
-          // a filename. A short delay gives the daemon's VACUUM INTO
-          // time to land before we list.
-          setTimeout(() => this.showLatestPostflight(), 250);
-        } else {
-          const body = await r.json().catch(() => ({}));
-          this.modal.alert('Disarm failed', body.error || r.statusText);
-        }
-      } catch (e) {
-        this.modal.alert('Network error', e.message);
-      }
-      this.renderPreflight();
-    };
+  armConfirmShortcut() {
+    return localStorage.getItem('zerotxArmConfirmShortcut') || 'ctrl+shift+a';
+  },
 
-    if (!this.state.settings.confirmDisarm) {
-      proceed();
-      return;
+  async confirmArm() {
+    if (this.state.connection !== 'connected') return;
+    try {
+      await fetch(`http://${this.state.address}/api/v1/arm/confirm`, { method: 'POST' });
+    } catch (e) {
+      // Non-fatal: the daemon ignores confirm outside ARMING_REQUESTED
+      // and there's no useful UX in surfacing transient network errors
+      // for a fire-and-forget action. The arm state machine's audio cue
+      // tells the operator if the press was effective.
+      console.warn('arm confirm failed:', e);
     }
-    this.modal.confirmAction({
-      title: 'DISARM?',
-      body: 'Disarming releases the flight-locked state. If the airplane ' +
-            'is still in the air, the flight controller will continue ' +
-            'flying based on whatever it last received; failsafe will ' +
-            'engage when the link drops.',
-      confirmText: 'DISARM',
-      confirmStyle: 'err',
-      onConfirm: proceed,
-    });
   },
 
   // === Settings popover ===
@@ -2585,22 +2605,19 @@ const App = {
     const currentThreshold = (this.state.audio && this.state.audio.threshold)
       || localStorage.getItem('zerotxAudioThreshold')
       || 'notice';
+    const currentShortcut = this.armConfirmShortcut();
     const opt = (val, label) => `<option value="${val}"${currentThreshold === val ? ' selected' : ''}>${label}</option>`;
     const html = `
-      <p>Configure pre-flight behaviour. Settings persist across sessions.</p>
-      <div class="checkbox-row">
-        <input type="checkbox" id="set-confirm-arm" ${this.state.settings.confirmArm ? 'checked' : ''}>
-        <label for="set-confirm-arm">Require confirmation to arm flight</label>
+      <p>Settings persist across sessions in this browser.</p>
+
+      <p>Arm-confirm shortcut. Pressed to confirm an arming request
+        after the physical arm key is flipped up. Must include at
+        least one modifier (Ctrl, Shift, or Alt) plus a key. Default:
+        Ctrl+Shift+A.</p>
+      <div class="row" style="margin-top:8px">
+        <span class="label">Shortcut</span>
+        <input type="text" id="set-arm-shortcut" value="${escapeHtml(currentShortcut)}" placeholder="ctrl+shift+a">
       </div>
-      <div class="checkbox-row">
-        <input type="checkbox" id="set-confirm-disarm" ${this.state.settings.confirmDisarm ? 'checked' : ''}>
-        <label for="set-confirm-disarm">Require confirmation to disarm</label>
-      </div>
-      <p class="muted small">
-        Disabling arm-confirmation is appropriate for auto-takeoff
-        workflows. The pre-flight checklist still gates arming
-        regardless of confirmation settings.
-      </p>
 
       <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
 
@@ -2633,11 +2650,17 @@ const App = {
       confirmText: 'Save',
       confirmStyle: 'ok',
       onConfirm: () => {
-        this.state.settings.confirmArm =
-          document.getElementById('set-confirm-arm').checked;
-        this.state.settings.confirmDisarm =
-          document.getElementById('set-confirm-disarm').checked;
-        localStorage.setItem('zerotxSettings', JSON.stringify(this.state.settings));
+        const newShortcut = (document.getElementById('set-arm-shortcut').value || '').trim().toLowerCase();
+        const validation = validateShortcut(newShortcut);
+        if (!validation.ok) {
+          // Modal closed already; surface the failure as a follow-up
+          // alert. Persist nothing; operator can re-open settings.
+          this.modal.alert('Invalid shortcut', validation.error);
+        } else {
+          localStorage.setItem('zerotxArmConfirmShortcut', newShortcut);
+          const display = document.getElementById('arm-shortcut-display');
+          if (display) display.textContent = formatShortcut(newShortcut);
+        }
 
         // Push threshold change to the daemon. Cache locally for
         // snappy display before the next /audio refresh comes back.
@@ -2657,7 +2680,7 @@ const App = {
       localStorage.removeItem('zerotxConfirmations');
       localStorage.removeItem('zerotxOverrides');
       this.renderChecklist();
-      this.renderArmButton();
+      this.renderArmHero();
       // Visual feedback in-place; don't close the modal so the user
       // can also save settings changes in the same dialog session.
       const btn = document.getElementById('set-reset-confirmations');
@@ -2846,7 +2869,7 @@ const App = {
             localStorage.setItem('zerotxOverrides', JSON.stringify(this.state.overrides));
             localStorage.setItem('zerotxConfirmations', JSON.stringify(this.state.confirmations));
             this.renderChecklist();
-            this.renderArmButton();
+            this.renderArmHero();
           });
           li.appendChild(btn);
         }
@@ -2860,7 +2883,7 @@ const App = {
         cb.addEventListener('change', () => {
           this.state.confirmations[item.id] = cb.checked;
           localStorage.setItem('zerotxConfirmations', JSON.stringify(this.state.confirmations));
-          this.renderArmButton();
+          this.renderArmHero();
         });
         const label = document.createElement('label');
         label.htmlFor = cb.id;
@@ -2956,9 +2979,6 @@ const App = {
     this.renderChecklist();
 
     const pf = this.state.preflight;
-    const hero = document.getElementById('pf-hero');
-    const stateValue = document.getElementById('pf-state-value');
-    const stateSummary = document.getElementById('pf-state-summary');
 
     // Joystick check
     const jsOK = !!(pf?.joystick?.selected?.connected);
@@ -2985,24 +3005,94 @@ const App = {
     warnList.innerHTML = warnings.map(w =>
       `<li>${escapeHtml(w.message || w.code || JSON.stringify(w))}</li>`).join('');
 
-    // Hero state
-    hero.classList.remove('idle', 'ready', 'armed');
-    if (armed) {
-      hero.classList.add('armed');
-      stateValue.textContent = 'ARMED';
-      stateSummary.textContent = 'Flight is armed. Joystick and model are locked.';
-    } else if (modelOK && jsOK && linkActive) {
-      hero.classList.add('ready');
-      stateValue.textContent = 'READY';
-      stateSummary.textContent = 'All systems green. Confirm operator items, then ARM FLIGHT.';
+    this.renderArmHero();
+    if (armed) this.renderArmedState();
+  },
+
+  // renderArmHero updates the arm-state hero panel from the
+  // arm-state machine snapshot received over the WebSocket. Four
+  // states drive the data-state attribute:
+  //   idle              - arm not possible (no link / no model / FC not ready)
+  //   ready             - daemon is DISARMED and FC is ready
+  //   arming-requested  - operator flipped the arm key; awaiting confirm
+  //   armed             - aircraft is armed
+  //
+  // Pre-flight checklist completion does NOT gate "ready" anymore; it
+  // is advisory. The daemon owns the gate.
+  renderArmHero() {
+    const hero = document.getElementById('arm-hero');
+    const stateValue = document.getElementById('arm-state-value');
+    const stateSummary = document.getElementById('arm-state-summary');
+    const blockers = document.getElementById('arm-blockers');
+    const progress = document.getElementById('arm-progress');
+    const progressFill = document.getElementById('arm-progress-fill');
+    const countdown = document.getElementById('arm-countdown');
+    if (!hero) return;
+
+    const a = this.state.arm;
+    const pf = this.state.preflight;
+    const machineState = a && a.state;
+    const fcReady = !!(a && a.fcReady);
+
+    const reasons = [];
+    if (this.state.connection !== 'connected') reasons.push('not connected');
+    if (!pf?.joystick?.selected?.connected) reasons.push('joystick');
+    if (!this.state.model?.available) reasons.push('model');
+    if (pf?.groundStation?.linkState !== 'active') reasons.push('link');
+    if (!fcReady && machineState) reasons.push('FC not ready');
+
+    let dataState = 'idle';
+    let value = 'disconnected';
+    let summary = 'Connect to a ZeroTX core to begin.';
+
+    if (machineState === 'ARMED') {
+      dataState = 'armed';
+      value = 'ARMED';
+      summary = 'Aircraft is armed. Flip arm key DOWN with throttle at idle to disarm.';
+    } else if (machineState === 'ARMING_REQUESTED') {
+      dataState = 'arming-requested';
+      value = 'Arming requested';
+      const shortcut = formatShortcut(this.armConfirmShortcut());
+      summary = `Throttle must be at idle. Press ${shortcut} to confirm.`;
+    } else if (machineState === 'DISARMED' && reasons.length === 0) {
+      dataState = 'ready';
+      value = 'Ready';
+      summary = 'Pre-flight complete. Flip arm key UP to begin the arm sequence.';
     } else {
-      hero.classList.add('idle');
-      stateValue.textContent = pf ? 'IDLE' : 'connected';
-      stateSummary.textContent = 'Configure joystick and model below to prepare for flight.';
+      dataState = 'idle';
+      value = 'Pre-flight';
+      summary = reasons.length
+        ? 'Pending: ' + reasons.join(', ') + '.'
+        : 'Configure joystick and model below.';
     }
 
-    this.renderArmButton();
-    if (armed) this.renderArmedState();
+    if (hero.dataset.state !== dataState) hero.dataset.state = dataState;
+    if (stateValue.textContent !== value) stateValue.textContent = value;
+    if (stateSummary.textContent !== summary) stateSummary.textContent = summary;
+
+    // Pre-flight checklist completion is advisory, not gating. Surface
+    // it as a side note when ready or arming-requested.
+    if (this.state.confirmations) {
+      const incomplete = PREFLIGHT_CHECKLIST.filter(it => !this.state.confirmations[it.id]).length;
+      if (incomplete > 0 && (dataState === 'ready' || dataState === 'arming-requested')) {
+        blockers.textContent = `Checklist incomplete: ${incomplete} item${incomplete === 1 ? '' : 's'} unchecked. Operator's call.`;
+      } else {
+        blockers.textContent = '';
+      }
+    } else {
+      blockers.textContent = '';
+    }
+
+    // Countdown: visible only in arming-requested. Updates on every
+    // WS frame (10Hz), which is plenty smooth for a 60s timer.
+    if (dataState === 'arming-requested') {
+      progress.style.display = '';
+      const remaining = (a && a.remainingSeconds) || 0;
+      countdown.textContent = String(remaining);
+      progressFill.style.width = (remaining / 60 * 100) + '%';
+    } else {
+      progress.style.display = 'none';
+    }
   },
 
   // renderArmedState is the HUD entry point. Called on arm transition
@@ -3225,37 +3315,6 @@ const App = {
     document.getElementById('hud-clock').textContent =
       String(now.getHours()).padStart(2, '0') + ':' +
       String(now.getMinutes()).padStart(2, '0');
-  },
-
-  // renderArmButton enables the Ready-to-fly button only when every
-  // gate is green: model loaded, joystick connected, link active,
-  // and every operator confirmation ticked. The button itself lives
-  // inside the hero panel; it's the deliberate-action target.
-  renderArmButton() {
-    const armBtn = document.getElementById('pf-arm-btn');
-    const disarmBtn = document.getElementById('pf-disarm-btn');
-    const blockers = document.getElementById('pf-arm-blockers');
-    if (!armBtn) return;
-
-    const pf = this.state.preflight;
-    const reasons = [];
-    if (this.state.connection !== 'connected') reasons.push('not connected');
-    if (!pf?.joystick?.selected?.connected) reasons.push('joystick');
-    if (!this.state.model?.available) reasons.push('model');
-    if (pf?.groundStation?.linkState !== 'active') reasons.push('link');
-    const allConfirmed = PREFLIGHT_CHECKLIST.every(it => this.state.confirmations[it.id]);
-    if (!allConfirmed) reasons.push('confirmations');
-
-    if (this.state.flightArmed) {
-      armBtn.style.display = 'none';
-      disarmBtn.style.display = '';
-      blockers.textContent = '';
-    } else {
-      armBtn.style.display = '';
-      disarmBtn.style.display = 'none';
-      armBtn.disabled = reasons.length > 0;
-      blockers.textContent = reasons.length ? `Pending: ${reasons.join(', ')}` : '';
-    }
   },
 
   setCheck(id, ok) {
@@ -3721,6 +3780,59 @@ function formatSec(s) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}m ${r}s`;
+}
+
+// validateShortcut checks that a shortcut string is well-formed:
+// at least one modifier (ctrl/shift/alt/meta) and one non-modifier
+// key part. Returns {ok: bool, error?: string}.
+function validateShortcut(s) {
+  if (!s) return { ok: false, error: 'Shortcut is empty.' };
+  const parts = s.toLowerCase().split('+').map(p => p.trim()).filter(Boolean);
+  const mods = parts.filter(p => ['ctrl', 'shift', 'alt', 'meta', 'cmd'].includes(p));
+  const keys = parts.filter(p => !['ctrl', 'shift', 'alt', 'meta', 'cmd'].includes(p));
+  if (mods.length === 0) return { ok: false, error: 'Must include a modifier (Ctrl, Shift, or Alt).' };
+  if (keys.length !== 1) return { ok: false, error: 'Must include exactly one non-modifier key.' };
+  const key = keys[0];
+  if (key.length !== 1 || !/[a-z0-9]/.test(key)) {
+    return { ok: false, error: 'Key must be a single letter or digit (a-z, 0-9).' };
+  }
+  return { ok: true };
+}
+
+// matchesShortcut compares a KeyboardEvent against a shortcut string
+// like "ctrl+shift+a". Modifiers are checked exactly: a shortcut that
+// requires Ctrl will not fire if Alt is also held, etc. The key part
+// is matched case-insensitively against e.key. Empty shortcut never
+// matches (used as a way to disable the keybind).
+function matchesShortcut(e, shortcut) {
+  if (!shortcut) return false;
+  const parts = shortcut.toLowerCase().split('+').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0) return false;
+  const wantCtrl  = parts.includes('ctrl');
+  const wantShift = parts.includes('shift');
+  const wantAlt   = parts.includes('alt');
+  const wantMeta  = parts.includes('meta') || parts.includes('cmd');
+  const key = parts.filter(p => !['ctrl', 'shift', 'alt', 'meta', 'cmd'].includes(p)).pop();
+  if (!key) return false;
+  return e.ctrlKey === wantCtrl
+      && e.shiftKey === wantShift
+      && e.altKey === wantAlt
+      && e.metaKey === wantMeta
+      && e.key.toLowerCase() === key.toLowerCase();
+}
+
+// formatShortcut renders a shortcut string in the canonical
+// human-readable form (Ctrl+Shift+A) for display in the hero hint.
+function formatShortcut(shortcut) {
+  if (!shortcut) return '(none)';
+  return shortcut.split('+').map(p => {
+    const t = p.trim().toLowerCase();
+    if (t === 'ctrl')  return 'Ctrl';
+    if (t === 'shift') return 'Shift';
+    if (t === 'alt')   return 'Alt';
+    if (t === 'meta' || t === 'cmd') return 'Cmd';
+    return t.toUpperCase();
+  }).join('+');
 }
 
 // HTML-escape a string for safe insertion via innerHTML. Used for
