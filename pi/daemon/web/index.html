@@ -1136,6 +1136,17 @@ h2.warn { color: var(--warn); }
   display: none;
 }
 
+/* Override accent colors when the HUD is showing. Brighter and
+ * more saturated than the calmer pre-flight palette so they stay
+ * legible in sunlight. Scoped to .hud so the pre-flight tab is
+ * unaffected. */
+.hud {
+  --hud-accent: #ffaa00;
+  --hud-ok:     #5fdc54;
+  --hud-warn:   #ffb820;
+  --hud-err:    #ff4848;
+}
+
 /* Layout: 12-column grid, 1024px viewport. Horizon spans 7 columns
  * on the left, telemetry stack 5 columns on the right. Bottom strip
  * is full-width. The whole HUD is one grid template; tiles live as
@@ -1146,11 +1157,10 @@ h2.warn { color: var(--warn); }
   background: var(--bg-body);
   display: grid;
   grid-template-columns: 7fr 5fr;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: 3fr 1.2fr 28px;
   grid-template-areas:
     "horizon  telstack"
-    "horizon  telstack"
-    "homemode minimap"
+    "homemap  homemap"
     "ticker   ticker";
   gap: 8px;
   padding: 12px;
@@ -1168,13 +1178,13 @@ h2.warn { color: var(--warn); }
   padding: 8px 12px;
   position: relative;
 }
-.hud-tile.warn  { border-color: var(--warn); }
-.hud-tile.crit  { border-color: var(--err); animation: hud-tile-flicker 0.8s ease-in-out infinite; }
+.hud-tile.warn  { border-color: var(--hud-warn); border-width: 2px; }
+.hud-tile.crit  { border-color: var(--hud-err); border-width: 2px; animation: hud-tile-flicker 0.7s ease-in-out infinite; }
 .hud-tile.stale { border-color: var(--text-dim); opacity: 0.6; }
 .hud-tile.muted { opacity: 0.5; }
 @keyframes hud-tile-flicker {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 89, 89, 0); }
-  50%      { box-shadow: 0 0 0 2px rgba(232, 89, 89, 0.55); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 72, 72, 0); }
+  50%      { box-shadow: 0 0 0 4px rgba(255, 72, 72, 0.55); }
 }
 
 .hud-tile-label {
@@ -1207,13 +1217,13 @@ h2.warn { color: var(--warn); }
   letter-spacing: 0.05em;
   color: var(--text-main);
 }
-.num.sm { font-size: 14px; }
-.num.md { font-size: 22px; }
-.num.lg { font-size: 32px; }
-.num.xl { font-size: 44px; }
-.num.warn { color: var(--warn); }
-.num.crit { color: var(--err); }
-.num.ok   { color: var(--ok); }
+.num.sm { font-size: 16px; }
+.num.md { font-size: 26px; }
+.num.lg { font-size: 40px; }
+.num.xl { font-size: 60px; }
+.num.warn { color: var(--hud-warn); }
+.num.crit { color: var(--hud-err); }
+.num.ok   { color: var(--hud-ok); }
 .num-unit {
   font-family: inherit;
   font-size: 0.55em;
@@ -1273,17 +1283,17 @@ h2.warn { color: var(--warn); }
   color: var(--text-muted);
 }
 
-/* === Bottom row: home/mode tile + minimap === */
-.hud-homemode {
-  grid-area: homemode;
+/* === Bottom row: home/mode/clock + minimap, all in one strip === */
+.hud-homemap {
+  grid-area: homemap;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr 1.4fr;
   gap: 6px;
+  min-height: 0;
 }
 .hud-minimap {
-  grid-area: minimap;
   position: relative;
-  min-height: 80px;
+  min-height: 0;
 }
 .hud-minimap-svg {
   width: 100%;
@@ -1757,11 +1767,11 @@ h2.warn { color: var(--warn); }
     <div class="hud-horizon hud-tile" id="hud-horizon-tile">
       <div class="hud-tile-label">ATTITUDE</div>
       <svg class="hud-horizon-svg" id="hud-horizon-svg"
-           viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet">
+           viewBox="-200 -90 400 180" preserveAspectRatio="xMidYMid slice">
         <!-- Clip the moving horizon to the visible disc. -->
         <defs>
           <clipPath id="horizon-clip">
-            <rect x="-100" y="-100" width="200" height="200"/>
+            <rect x="-200" y="-90" width="400" height="180"/>
           </clipPath>
         </defs>
         <!-- Roll group: rotates about origin. -->
@@ -1769,15 +1779,15 @@ h2.warn { color: var(--warn); }
           <!-- Pitch group: translates vertically. -->
           <g id="horizon-pitch">
             <!-- Sky -->
-            <rect x="-300" y="-300" width="600" height="300" fill="#1f3a5c"/>
+            <rect x="-500" y="-500" width="1000" height="500" fill="#2d5d99"/>
             <!-- Ground -->
-            <rect x="-300" y="0" width="600" height="300" fill="#5c3a1f"/>
+            <rect x="-500" y="0" width="1000" height="500" fill="#8a5a2c"/>
             <!-- Horizon line -->
-            <line x1="-300" y1="0" x2="300" y2="0" stroke="#fff" stroke-width="0.8"/>
+            <line x1="-500" y1="0" x2="500" y2="0" stroke="#fff" stroke-width="1.4"/>
             <!-- Pitch ladder. Marks every 10 deg. SVG transform
                  of 1 unit = 1 deg pitch (we set up viewBox so
                  ±90deg maps to ±90 units). -->
-            <g stroke="#fff" stroke-width="0.4" fill="none">
+            <g stroke="#fff" stroke-width="0.8" fill="none">
               <line x1="-15" y1="-10" x2="15" y2="-10"/>
               <line x1="-25" y1="-20" x2="25" y2="-20"/>
               <line x1="-15" y1="-30" x2="15" y2="-30"/>
@@ -1790,20 +1800,20 @@ h2.warn { color: var(--warn); }
           </g>
         </g>
         <!-- Aircraft symbol: fixed to the screen, never rotates. -->
-        <g stroke="var(--warn)" stroke-width="2" fill="none">
-          <line x1="-30" y1="0" x2="-10" y2="0"/>
-          <line x1="10" y1="0" x2="30" y2="0"/>
-          <circle cx="0" cy="0" r="2" fill="var(--warn)"/>
+        <g stroke="#ffaa00" stroke-width="3" fill="none">
+          <line x1="-40" y1="0" x2="-12" y2="0"/>
+          <line x1="12" y1="0" x2="40" y2="0"/>
+          <circle cx="0" cy="0" r="3" fill="#ffaa00"/>
         </g>
-        <!-- Roll indicator at top: tick at 0, then 10/20/30/45/60 -->
-        <g stroke="#fff" stroke-width="0.4" fill="#fff" font-size="6"
+        <!-- Roll indicator at top. -->
+        <g stroke="#fff" stroke-width="0.8" fill="#fff" font-size="7"
            font-family="DSEG7, monospace">
-          <line x1="0" y1="-90" x2="0" y2="-85"/>
-          <text x="0" y="-93" text-anchor="middle" id="horizon-roll-text">0°</text>
+          <line x1="0" y1="-82" x2="0" y2="-76"/>
+          <text x="0" y="-86" text-anchor="middle" id="horizon-roll-text">0°</text>
         </g>
         <!-- Heading tape, top -->
-        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="7">
-          <text x="0" y="-72" text-anchor="middle" id="horizon-hdg-text">---°</text>
+        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="9">
+          <text x="0" y="-60" text-anchor="middle" id="horizon-hdg-text">---°</text>
         </g>
       </svg>
     </div>
@@ -1857,8 +1867,8 @@ h2.warn { color: var(--warn); }
 
     </div>
 
-    <!-- Bottom row: home/mode tiles + minimap -->
-    <div class="hud-homemode">
+    <!-- Bottom strip: MODE / HOME / CLOCK / minimap -->
+    <div class="hud-homemap">
       <div class="hud-tile">
         <div class="hud-tile-label">MODE</div>
         <div class="num lg" id="hud-mode" style="margin-top:2px">----</div>
@@ -1879,36 +1889,36 @@ h2.warn { color: var(--warn); }
         <div class="hud-tile-label">CLOCK</div>
         <div class="num lg" id="hud-clock" style="margin-top:2px">--:--</div>
       </div>
-    </div>
 
-    <div class="hud-tile hud-minimap" id="hud-minimap">
-      <div class="hud-tile-label">TRACK</div>
-      <svg class="hud-minimap-svg" id="hud-minimap-svg"
-           viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet">
-        <!-- Compass rose -->
-        <g stroke="var(--text-dim)" stroke-width="0.3" fill="none">
-          <circle cx="0" cy="0" r="80"/>
-          <line x1="0" y1="-80" x2="0" y2="80"/>
-          <line x1="-80" y1="0" x2="80" y2="0"/>
-        </g>
-        <g fill="var(--text-dim)" font-family="monospace" font-size="8" text-anchor="middle">
-          <text x="0" y="-83">N</text>
-          <text x="83" y="3">E</text>
-          <text x="0" y="92">S</text>
-          <text x="-83" y="3">W</text>
-        </g>
-        <!-- Home marker -->
-        <g id="minimap-home" fill="var(--ok)" stroke="var(--ok)" stroke-width="0.5">
-          <circle cx="0" cy="0" r="3"/>
-        </g>
-        <!-- Breadcrumb path -->
-        <polyline id="minimap-track" fill="none" stroke="var(--info)"
-                  stroke-width="0.8" points=""/>
-        <!-- Aircraft marker (rotates with heading) -->
-        <g id="minimap-aircraft" stroke="var(--warn)" stroke-width="0.5" fill="var(--warn)">
-          <polygon points="0,-4 -2.5,3 0,1.5 2.5,3" />
-        </g>
-      </svg>
+      <div class="hud-tile hud-minimap" id="hud-minimap">
+        <div class="hud-tile-label">TRACK</div>
+        <svg class="hud-minimap-svg" id="hud-minimap-svg"
+             viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet">
+          <!-- Compass rose -->
+          <g stroke="var(--text-dim)" stroke-width="0.6" fill="none">
+            <circle cx="0" cy="0" r="80"/>
+            <line x1="0" y1="-80" x2="0" y2="80"/>
+            <line x1="-80" y1="0" x2="80" y2="0"/>
+          </g>
+          <g fill="var(--text-muted)" font-family="monospace" font-size="11" text-anchor="middle">
+            <text x="0" y="-83">N</text>
+            <text x="83" y="3">E</text>
+            <text x="0" y="92">S</text>
+            <text x="-83" y="3">W</text>
+          </g>
+          <!-- Home marker -->
+          <g id="minimap-home" fill="#5fdc54" stroke="#5fdc54" stroke-width="0.5">
+            <circle cx="0" cy="0" r="3"/>
+          </g>
+          <!-- Breadcrumb path -->
+          <polyline id="minimap-track" fill="none" stroke="#6cf"
+                    stroke-width="1.4" points=""/>
+          <!-- Aircraft marker (rotates with heading) -->
+          <g id="minimap-aircraft" stroke="#ffaa00" stroke-width="0.6" fill="#ffaa00">
+            <polygon points="0,-5 -3,3 0,1.5 3,3" />
+          </g>
+        </svg>
+      </div>
     </div>
 
     <!-- Event ticker: scrolling narrator/log events. -->
