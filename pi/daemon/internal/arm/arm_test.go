@@ -320,6 +320,35 @@ func TestSnapshot_Reflects(t *testing.T) {
 	}
 }
 
+func TestSnapshot_TimeoutFields(t *testing.T) {
+	m := New()
+	m.Init(false)
+	m.KeyChanged(true)
+
+	s := m.Snapshot()
+	if s.State != StateArmingRequested {
+		t.Fatalf("expected ARMING_REQUESTED, got %v", s.State)
+	}
+	if s.RequestedAt.IsZero() {
+		t.Error("RequestedAt should be set in ARMING_REQUESTED")
+	}
+	if s.RemainingSeconds <= 0 || s.RemainingSeconds > 60 {
+		t.Errorf("RemainingSeconds=%d, want 1..60", s.RemainingSeconds)
+	}
+
+	m.KeyChanged(false)
+	s = m.Snapshot()
+	if s.State != StateDisarmed {
+		t.Fatalf("expected DISARMED after key down, got %v", s.State)
+	}
+	if !s.RequestedAt.IsZero() {
+		t.Error("RequestedAt should be zero outside ARMING_REQUESTED")
+	}
+	if s.RemainingSeconds != 0 {
+		t.Errorf("RemainingSeconds=%d outside ARMING_REQUESTED, want 0", s.RemainingSeconds)
+	}
+}
+
 func TestStateString(t *testing.T) {
 	cases := map[State]string{
 		StateDisarmed:        "DISARMED",

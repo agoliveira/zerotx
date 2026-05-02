@@ -34,6 +34,7 @@ type State struct {
 	Link      LinkSnapshot      `json:"link"`
 	Telemetry interface{}       `json:"telemetry,omitempty"`
 	Audio     *AudioInfo        `json:"audio,omitempty"`
+	Arm       interface{}       `json:"arm,omitempty"`
 }
 
 // AudioInfo summarises the audio subsystem's current state for API
@@ -381,6 +382,9 @@ func (p *Providers) snapshot() State {
 	if p.Audio != nil {
 		ai := p.Audio()
 		out.Audio = &ai
+	}
+	if p.Arm != nil {
+		out.Arm = p.Arm()
 	}
 	return out
 }

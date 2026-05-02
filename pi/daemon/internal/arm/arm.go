@@ -54,6 +54,13 @@ func (s State) String() string {
 	return "UNKNOWN"
 }
 
+// MarshalJSON serializes State as its human string ("DISARMED",
+// "ARMING_REQUESTED", "ARMED") so JSON consumers don't have to keep
+// in sync with the iota numbering.
+func (s State) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + s.String() + `"`), nil
+}
+
 // Event is something the state machine wants the outside world to
 // know about. Events fire as a result of input methods (or Tick).
 // The caller drains events from the channel returned by Events().
@@ -335,24 +342,46 @@ func (m *Machine) Tick(now time.Time) {
 // returned struct is safe to inspect; it doesn't share memory with
 // the Machine.
 type Snapshot struct {
-	State        State
-	KeyUp        bool
-	ThrottleZero bool
-	FCReady      bool
-	Dropped      int
+	State        State `json:"state"`
+	KeyUp        bool  `json:"keyUp"`
+	ThrottleZero bool  `json:"throttleZero"`
+	FCReady      bool  `json:"fcReady"`
+	Dropped      int   `json:"dropped"`
+
+	// RequestedAt is when the machine entered ARMING_REQUESTED. Zero
+	// in any other state. Useful for clients that want to display
+	// the original timestamp rather than the derived remaining.
+	RequestedAt time.Time `json:"requestedAt,omitempty"`
+
+	// RemainingSeconds is the time left before the arming-request
+	// timeout fires. Zero in any state other than ARMING_REQUESTED;
+	// negative is clamped to zero. Computed against time.Now() at
+	// the moment Snapshot was taken.
+	RemainingSeconds int `json:"remainingSeconds,omitempty"`
 }
 
 // Snapshot returns the current state for debugging or GUI display.
 func (m *Machine) Snapshot() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return Snapshot{
+	out := Snapshot{
 		State:        m.state,
 		KeyUp:        m.keyUp,
 		ThrottleZero: m.throttleZero,
 		FCReady:      m.fcReady,
 		Dropped:      m.dropped,
 	}
+	if m.state == StateArmingRequested {
+		out.RequestedAt = m.armRequestedAt
+		remaining := m.timeout - time.Since(m.armRequestedAt)
+		if remaining < 0 {
+			remaining = 0
+		}
+		// Round up so a 59.6s remainder reads as 60 to the operator,
+		// matching the "60 second timer" mental model.
+		out.RemainingSeconds = int((remaining + time.Second - 1) / time.Second)
+	}
+	return out
 }
 
 // emit pushes an event to the events channel. If the channel is
