@@ -64,12 +64,6 @@ tracks:
   arming-blocked:
     en: "Arming blocked."
     pt: "Armar bloqueado."
-  motor-armed:
-    en: "Motors armed."
-    pt: "Motores armados."
-  motor-disarmed:
-    en: "Motors disarmed."
-    pt: "Motores desarmados."
 
   # ============================================================
   # ARM STATE MACHINE EVENTS
@@ -158,23 +152,11 @@ tracks:
     en: "Landing required."
     pt: "Pouso obrigatório."
 
-  # === Battery percentage announcements (whole-phrase pre-renders) ===
-  # Yaapu's bat5/10/.../90 idea adapted. These play instead of stitched
-  # "battery N percent" because the cadence sounds better and they're
-  # called frequently enough to justify the storage.
-  bat-90: { en: "Battery ninety percent.",     pt: "Bateria noventa por cento." }
-  bat-80: { en: "Battery eighty percent.",     pt: "Bateria oitenta por cento." }
-  bat-70: { en: "Battery seventy percent.",    pt: "Bateria setenta por cento." }
-  bat-60: { en: "Battery sixty percent.",      pt: "Bateria sessenta por cento." }
-  bat-50: { en: "Battery fifty percent.",      pt: "Bateria cinquenta por cento." }
-  bat-40: { en: "Battery forty percent.",      pt: "Bateria quarenta por cento." }
-  bat-30: { en: "Battery thirty percent.",     pt: "Bateria trinta por cento." }
-  bat-25: { en: "Battery twenty-five percent.", pt: "Bateria vinte e cinco por cento." }
-  bat-20: { en: "Battery twenty percent.",     pt: "Bateria vinte por cento." }
-  bat-15: { en: "Battery fifteen percent.",    pt: "Bateria quinze por cento." }
-  bat-10: { en: "Battery ten percent.",        pt: "Bateria dez por cento." }
-  bat-5:  { en: "Battery five percent. Land immediately.",
-            pt: "Bateria cinco por cento. Pouse imediatamente." }
+  # === Battery percentage announcements ===
+  # Removed: bat-90 through bat-5 percentage stems. Replaced by TTS
+  # via phrasebook.PeriodicBattery (see internal/phrasebook). The
+  # operator now hears live values like "Battery 78 percent." from
+  # the periodic narrator instead of pre-rendered tier buckets.
 
   # ============================================================
   # GPS / NAVIGATION
@@ -253,29 +235,11 @@ tracks:
   # ============================================================
   # FLIGHT MODES
   # ============================================================
-  # INAV flight mode vocabulary. Some entries (loiter, auto, guided,
-  # mission) are kept as alternate phrasings the operator may prefer.
-  mode-acro:        { en: "Acro.",             pt: "Acro." }
-  mode-angle:       { en: "Angle.",            pt: "Ângulo." }
-  mode-horizon:     { en: "Horizon.",          pt: "Horizonte." }
-  mode-althold:     { en: "Altitude hold.",    pt: "Manter altitude." }
-  mode-poshold:     { en: "Position hold.",    pt: "Manter posição." }
-  mode-loiter:      { en: "Loiter.",           pt: "Loiter." }
-  mode-cruise:      { en: "Cruise.",           pt: "Cruzeiro." }
-  mode-rth:         { en: "Return mode.",      pt: "Modo retorno." }
-  mode-manual:      { en: "Manual.",           pt: "Manual." }
-  mode-launch:      { en: "Launch.",           pt: "Lançamento." }
-  mode-takeoff:     { en: "Takeoff.",          pt: "Decolagem." }
-  mode-land:        { en: "Land.",             pt: "Pouso." }
-  mode-waypoint:    { en: "Waypoint.",         pt: "Waypoint." }
-  mode-mission:     { en: "Mission.",          pt: "Missão." }
-  mode-auto:        { en: "Auto.",             pt: "Automático." }
-  mode-guided:      { en: "Guided.",           pt: "Guiado." }
-  mode-autotune:    { en: "Autotune.",         pt: "Autotune." }
-  mode-autoland:    { en: "Autoland.",         pt: "Pouso automático." }
-  mode-headfree-on: { en: "Headfree on.",      pt: "Headfree ligado." }
-  mode-headfree-off: { en: "Headfree off.",    pt: "Headfree desligado." }
-  mode-headinghold: { en: "Heading hold.",     pt: "Manter direção." }
+  # Removed: pre-baked mode-* stems. Flight mode change announcements
+  # ("Flight mode: angle.") are now produced by TTS via phrasebook
+  # FlightMode/HumanizeMode (see internal/phrasebook), with full
+  # en + pt-BR coverage. The phrasebook map is the canonical source
+  # of mode vocabulary going forward.
 
   # ============================================================
   # AUDIO THRESHOLD TRANSITIONS
@@ -355,8 +319,9 @@ tracks:
   nice-flight:            { en: "Nice flight.",              pt: "Voo bonito." }
 
   # === Pre-flight checklist narration fragments ===
-  joystick-detected:      { en: "Joystick detected.",        pt: "Joystick detectado." }
-  loading-model:          { en: "Loading model",             pt: "Carregando modelo" }
+  # joystick-detected and loading-model removed: replaced by TTS
+  # ("Joystick reconnected." / "Model loaded: <name>.") via the
+  # phrasebook package.
   telemetry-good:         { en: "Telemetry good.",           pt: "Telemetria boa." }
   sensors-good:           { en: "Sensors good.",             pt: "Sensores ok." }
   cleared-to-fly:         { en: "You're cleared to fly.",    pt: "Liberado para voar." }
