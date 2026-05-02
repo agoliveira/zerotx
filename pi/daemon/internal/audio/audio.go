@@ -114,6 +114,15 @@ type Player interface {
 	// Returns immediately. No-op if names is empty.
 	PlaySequence(kind string, names []string, level Level)
 
+	// Speak synthesizes the given text via TTS and plays the result.
+	// Voice is selected from the bank-to-voice mapping in TTSConfig
+	// using the player's current Lang. Cached on disk by hash, so
+	// repeat phrases skip synthesis. Threshold-gated like Play.
+	// Returns immediately; synthesis and playback happen on the
+	// player's worker goroutine. No-op (with a one-time warning)
+	// when TTS is not configured.
+	Speak(text string, level Level)
+
 	// Threshold returns the current minimum level. Events with a
 	// strictly lower level are dropped.
 	Threshold() Level
@@ -180,10 +189,23 @@ type Config struct {
 	Policies map[Level]RepeatPolicy
 }
 
-// New picks an available playback backend (mpg123, paplay, then
-// aplay) and returns a running Player. Returns a NullPlayer with a
-// one-time log warning if no backend is found. Never returns an error.
+// New picks playback backends per file extension and returns a
+// running Player. Selection: mpg123 for MP3, aplay for WAV/OGG with
+// paplay as fallback for either. Returns a NullPlayer with a
+// one-time log warning if no backend is found. Never returns an
+// error.
+//
+// If tts is non-nil, Speak() routes through it; otherwise Speak()
+// is a no-op + warning. tts is owned by the Player after this call;
+// Close() shuts it down.
 func New(cfg Config) Player {
+	return NewWithTTS(cfg, nil)
+}
+
+// NewWithTTS is New plus an optional Piper-based synthesizer. Pass
+// nil when TTS is disabled or unconfigured. The tts engine is owned
+// by the Player after this call.
+func NewWithTTS(cfg Config, tts *ttsEngine) Player {
 	if cfg.QueueDepth <= 0 {
 		cfg.QueueDepth = 16
 	}
@@ -199,18 +221,30 @@ func New(cfg Config) Player {
 		policies[l] = p
 	}
 
-	cmd, args := detectBackend()
-	if cmd == "" {
+	backends, fallback := detectBackends()
+	if len(backends) == 0 {
 		log.Printf("audio: no playback backend found (tried mpg123, paplay, aplay); audio events will be silent")
+		if tts != nil {
+			tts.Close()
+		}
 		return &NullPlayer{}
 	}
-	log.Printf("audio: backend=%s sounds-dir=%s lang=%s threshold=%s",
-		cmd, cfg.SoundsDir, cfg.Lang, cfg.Threshold)
+	// Log which backend handles which extension. Operator wants this
+	// visible; debugging audio without it is painful.
+	var summary []string
+	for _, ext := range []string{".mp3", ".wav", ".ogg"} {
+		if b, ok := backends[ext]; ok {
+			summary = append(summary, fmt.Sprintf("%s=%s", ext, b.cmd))
+		}
+	}
+	log.Printf("audio: backends=[%s] sounds-dir=%s lang=%s threshold=%s",
+		strings.Join(summary, " "), cfg.SoundsDir, cfg.Lang, cfg.Threshold)
 	p := &shellPlayer{
 		cfg:      cfg,
-		cmd:      cmd,
-		args:     args,
+		backends: backends,
+		fallback: fallback,
 		policies: policies,
+		tts:      tts,
 		events:   make(chan playRequest, cfg.QueueDepth),
 		done:     make(chan struct{}),
 		alarms:   make(map[string]*alarmState),
@@ -220,23 +254,68 @@ func New(cfg Config) Player {
 	return p
 }
 
-// detectBackend returns the first available playback command and any
-// fixed arguments to pass before the filename. Empty cmd means none found.
-func detectBackend() (string, []string) {
-	candidates := []struct {
-		cmd  string
-		args []string
-	}{
-		{"mpg123", []string{"-q"}}, // MP3-native, ALSA-direct, no audio-server dependency
-		{"paplay", nil},            // PulseAudio / PipeWire (most desktop systems)
-		{"aplay", []string{"-q"}},  // ALSA fallback, WAV-only (-q to quiet startup banner)
+// detectBackends finds an executable to play each of MP3, WAV, OGG.
+// Preferences:
+//   .mp3  -> mpg123 (native, lean) > paplay > ffplay
+//   .wav  -> aplay (native ALSA) > paplay > ffplay
+//   .ogg  -> paplay > ogg123 > ffplay
+//
+// fallback is whichever single backend can play the most things;
+// used when a file's extension isn't recognised. Returns an empty
+// map if nothing is available at all.
+func detectBackends() (map[string]backend, backend) {
+	// Check each candidate once and cache.
+	have := func(cmd string) bool {
+		_, err := exec.LookPath(cmd)
+		return err == nil
 	}
-	for _, c := range candidates {
-		if _, err := exec.LookPath(c.cmd); err == nil {
-			return c.cmd, c.args
-		}
+	mpg123 := backend{"mpg123", []string{"-q"}}
+	aplay := backend{"aplay", []string{"-q"}}
+	paplay := backend{"paplay", nil}
+	ogg123 := backend{"ogg123", []string{"-q"}}
+	ffplay := backend{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet"}}
+
+	out := map[string]backend{}
+
+	// MP3: prefer mpg123.
+	switch {
+	case have(mpg123.cmd):
+		out[".mp3"] = mpg123
+	case have(paplay.cmd):
+		out[".mp3"] = paplay
+	case have(ffplay.cmd):
+		out[".mp3"] = ffplay
 	}
-	return "", nil
+	// WAV: prefer aplay.
+	switch {
+	case have(aplay.cmd):
+		out[".wav"] = aplay
+	case have(paplay.cmd):
+		out[".wav"] = paplay
+	case have(ffplay.cmd):
+		out[".wav"] = ffplay
+	}
+	// OGG: paplay handles OGG natively; ogg123 if you have it; ffplay.
+	switch {
+	case have(paplay.cmd):
+		out[".ogg"] = paplay
+	case have(ogg123.cmd):
+		out[".ogg"] = ogg123
+	case have(ffplay.cmd):
+		out[".ogg"] = ffplay
+	}
+
+	// Fallback: any of the most-universal first.
+	var fb backend
+	switch {
+	case have(ffplay.cmd):
+		fb = ffplay
+	case have(paplay.cmd):
+		fb = paplay
+	case have(aplay.cmd):
+		fb = aplay
+	}
+	return out, fb
 }
 
 // === NullPlayer ===
@@ -247,6 +326,7 @@ type NullPlayer struct{}
 
 func (n *NullPlayer) Play(string, string, Level)              {}
 func (n *NullPlayer) PlaySequence(string, []string, Level)    {}
+func (n *NullPlayer) Speak(string, Level)                     {}
 func (n *NullPlayer) Threshold() Level              { return LevelInfo }
 func (n *NullPlayer) SetThreshold(Level)            {}
 func (n *NullPlayer) Acknowledge(string)            {}
@@ -258,9 +338,14 @@ func (n *NullPlayer) Close()                        {}
 
 type shellPlayer struct {
 	cfg      Config
-	cmd      string
-	args     []string
+	backends map[string]backend // keyed by file extension (".mp3", ".wav", ".ogg")
+	fallback backend            // used when no extension matches; same as primary preferred backend
 	policies map[Level]RepeatPolicy
+
+	// tts is the optional Piper-based synthesizer. Nil when TTS is
+	// disabled (no piper binary, no voices, etc.). Speak() falls back
+	// to a logged warning when nil.
+	tts *ttsEngine
 
 	events chan playRequest
 	done   chan struct{}
@@ -273,16 +358,24 @@ type shellPlayer struct {
 	alarms  map[string]*alarmState  // active repeating alarms keyed by name
 }
 
+// backend is one playback executable + its fixed argument prefix.
+type backend struct {
+	cmd  string
+	args []string
+}
+
 // playRequest is what flows through the events channel. Stripped of
 // any scheduling concerns; the worker just resolves and plays.
 //
-// If sequence is non-empty, the worker plays each name in order with
-// the standard inter-fragment gap. Otherwise the worker resolves
-// `name` (with whole-phrase-then-decompose semantics).
+// Modes (mutually exclusive):
+//   sequence non-empty: play each fragment with inter-fragment gap.
+//   tts non-empty: synthesize via TTS then play.
+//   otherwise: resolve `name` (whole-phrase-then-decompose semantics).
 type playRequest struct {
 	kind     string
 	name     string
 	sequence []string
+	tts      string // raw text to synthesize; voice is the player's current Lang
 }
 
 // alarmState tracks one currently-scheduled repeating alarm. It owns
@@ -318,6 +411,29 @@ func (p *shellPlayer) PlaySequence(kind string, names []string, level Level) {
 	seq := make([]string, len(names))
 	copy(seq, names)
 	p.enqueue(playRequest{kind: kind, sequence: seq})
+}
+
+// Speak implements Player. Queues a TTS job; the worker synthesizes
+// (or hits cache) and plays the resulting WAV. No alarm scheduling
+// (TTS phrases are narrative, never repeating alarms).
+func (p *shellPlayer) Speak(text string, level Level) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if p.isClosed() {
+		return
+	}
+	thr := Level(atomic.LoadInt32(&p.threshold))
+	if level < thr && level != LevelCritical {
+		log.Printf("audio: dropped tts %q level=%s (threshold=%s)", truncForLog(text), level, thr)
+		return
+	}
+	if p.tts == nil {
+		p.warnTTSDisabled()
+		return
+	}
+	p.enqueue(playRequest{kind: "tts", tts: text})
 }
 
 func (p *shellPlayer) Play(kind, name string, level Level) {
@@ -488,6 +604,9 @@ func (p *shellPlayer) Close() {
 	close(p.events)
 	p.mu.Unlock()
 	<-p.done
+	if p.tts != nil {
+		p.tts.Close()
+	}
 }
 
 func (p *shellPlayer) isClosed() bool {
@@ -499,6 +618,12 @@ func (p *shellPlayer) isClosed() bool {
 func (p *shellPlayer) run() {
 	defer close(p.done)
 	for ev := range p.events {
+		// TTS request: synthesize (or hit cache), then play.
+		if ev.tts != "" {
+			p.runTTS(ev.tts)
+			continue
+		}
+
 		// Sequence request: play each fragment in order, skipping
 		// whole-phrase lookup and decomposition (the caller has
 		// already resolved the list).
@@ -589,11 +714,21 @@ func (p *shellPlayer) play(path string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	args := append([]string{}, p.args...)
+	ext := strings.ToLower(filepath.Ext(path))
+	b, ok := p.backends[ext]
+	if !ok {
+		// Unknown extension. Use the universal fallback.
+		b = p.fallback
+	}
+	if b.cmd == "" {
+		log.Printf("audio: no backend for %s (ext=%s)", path, ext)
+		return
+	}
+	args := append([]string{}, b.args...)
 	args = append(args, path)
-	cmd := exec.CommandContext(ctx, p.cmd, args...)
+	cmd := exec.CommandContext(ctx, b.cmd, args...)
 	if err := cmd.Run(); err != nil {
-		log.Printf("audio: %s %s: %v", p.cmd, path, err)
+		log.Printf("audio: %s %s: %v", b.cmd, path, err)
 	}
 }
 
@@ -610,6 +745,49 @@ func (p *shellPlayer) warnMissing(name string) {
 	p.mu.Unlock()
 	log.Printf("audio: sample not found for %q in %s (lang=%q); event will be silent",
 		name, p.cfg.SoundsDir, p.cfg.Lang)
+}
+
+// runTTS synthesizes the given text in the player's current bank
+// voice and plays the resulting WAV. Errors are logged and the
+// playback is skipped; partial silence is the right failure mode
+// (we never want a TTS failure to crash the worker).
+func (p *shellPlayer) runTTS(text string) {
+	voice, ok := p.tts.voiceFor(p.cfg.Lang)
+	if !ok {
+		log.Printf("audio: tts has no voice for bank=%q; skipping %q", p.cfg.Lang, truncForLog(text))
+		return
+	}
+	path, err := p.tts.Synth(text, voice)
+	if err != nil {
+		log.Printf("audio: tts synth failed (voice=%s): %v", voice, err)
+		return
+	}
+	p.play(path)
+}
+
+// warnTTSDisabled logs once that Speak() was called when TTS isn't
+// configured.
+func (p *shellPlayer) warnTTSDisabled() {
+	p.mu.Lock()
+	if p.missing == nil {
+		p.missing = map[string]bool{}
+	}
+	if p.missing["__tts_disabled__"] {
+		p.mu.Unlock()
+		return
+	}
+	p.missing["__tts_disabled__"] = true
+	p.mu.Unlock()
+	log.Printf("audio: Speak() called but TTS is not configured; install piper and pass -piper-binary")
+}
+
+// truncForLog clips long phrases for log lines.
+func truncForLog(s string) string {
+	const max = 60
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 // fileExists reports whether path is an existing regular file. Package

@@ -63,6 +63,11 @@ func main() {
 	soundsLang := flag.String("sounds-lang", "en", "language subdirectory under -sounds-dir (e.g. en, pt)")
 	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
 	audioThreshold := flag.String("audio-threshold", "notice", "audio threshold: info / notice / warning / critical (critical events ignore threshold)")
+	piperBin := flag.String("piper-binary", "", "path to piper TTS binary (empty disables on-demand TTS)")
+	voicesDir := flag.String("voices-dir", os.ExpandEnv("$HOME/zerotx/voices"), "directory containing piper .onnx + .onnx.json voice files")
+	ttsCacheDir := flag.String("tts-cache-dir", os.ExpandEnv("$HOME/.cache/zerotx/tts"), "where synthesized TTS WAVs are cached on disk")
+	ttsVoiceEN := flag.String("tts-voice-en", "en_US-amy-medium", "voice basename used for the en bank (must exist under -voices-dir)")
+	ttsVoicePT := flag.String("tts-voice-pt", "pt_BR-faber-medium", "voice basename used for the pt bank (must exist under -voices-dir)")
 	recordingsDir := flag.String("recordings-dir", defaultRecordingsDir(), "directory for saved flight recordings")
 	noRecordings := flag.Bool("no-recordings", false, "disable flight recording entirely")
 	keepRecordings := flag.Int("keep-recordings", 10, "number of most-recent recordings to retain (older deleted on save)")
@@ -253,11 +258,33 @@ func main() {
 		if !ok {
 			log.Printf("audio: -audio-threshold %q invalid, defaulting to notice", *audioThreshold)
 		}
-		player = audio.New(audio.Config{
+
+		// Optional TTS bring-up: only attempts if -piper-binary is set.
+		// Failures (missing voices, missing binary) log a warning and
+		// leave TTS disabled; pre-baked playback continues to work.
+		var tts *audio.TTSEngine
+		if *piperBin != "" {
+			t, err := audio.NewTTSEngine(audio.TTSConfig{
+				PiperBinary: *piperBin,
+				VoicesDir:   *voicesDir,
+				CacheDir:    *ttsCacheDir,
+				Voices: map[string]string{
+					"en": *ttsVoiceEN,
+					"pt": *ttsVoicePT,
+				},
+			})
+			if err != nil {
+				log.Printf("audio: tts disabled: %v", err)
+			} else {
+				tts = t
+			}
+		}
+
+		player = audio.NewWithTTS(audio.Config{
 			SoundsDir: *soundsDir,
 			Lang:      *soundsLang,
 			Threshold: thr,
-		})
+		}, tts)
 	}
 	defer player.Close()
 

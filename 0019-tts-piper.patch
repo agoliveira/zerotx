@@ -1,0 +1,863 @@
+diff --git a/.gitignore b/.gitignore
+index f7f50e7..ce6a260 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -31,3 +31,6 @@ rp2040/build/
+ 
+ # Private working notes (Claude session journal)
+ JOURNAL.md
++
++# TTS voice models (downloaded by scripts/fetch-voices.sh, ~130MB)
++/voices/
+diff --git a/pi/daemon/cmd/zerotxd/main.go b/pi/daemon/cmd/zerotxd/main.go
+index ccefe18..8852aef 100644
+--- a/pi/daemon/cmd/zerotxd/main.go
++++ b/pi/daemon/cmd/zerotxd/main.go
+@@ -63,6 +63,11 @@ func main() {
+ 	soundsLang := flag.String("sounds-lang", "en", "language subdirectory under -sounds-dir (e.g. en, pt)")
+ 	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
+ 	audioThreshold := flag.String("audio-threshold", "notice", "audio threshold: info / notice / warning / critical (critical events ignore threshold)")
++	piperBin := flag.String("piper-binary", "", "path to piper TTS binary (empty disables on-demand TTS)")
++	voicesDir := flag.String("voices-dir", os.ExpandEnv("$HOME/zerotx/voices"), "directory containing piper .onnx + .onnx.json voice files")
++	ttsCacheDir := flag.String("tts-cache-dir", os.ExpandEnv("$HOME/.cache/zerotx/tts"), "where synthesized TTS WAVs are cached on disk")
++	ttsVoiceEN := flag.String("tts-voice-en", "en_US-amy-medium", "voice basename used for the en bank (must exist under -voices-dir)")
++	ttsVoicePT := flag.String("tts-voice-pt", "pt_BR-faber-medium", "voice basename used for the pt bank (must exist under -voices-dir)")
+ 	recordingsDir := flag.String("recordings-dir", defaultRecordingsDir(), "directory for saved flight recordings")
+ 	noRecordings := flag.Bool("no-recordings", false, "disable flight recording entirely")
+ 	keepRecordings := flag.Int("keep-recordings", 10, "number of most-recent recordings to retain (older deleted on save)")
+@@ -253,11 +258,33 @@ func main() {
+ 		if !ok {
+ 			log.Printf("audio: -audio-threshold %q invalid, defaulting to notice", *audioThreshold)
+ 		}
+-		player = audio.New(audio.Config{
++
++		// Optional TTS bring-up: only attempts if -piper-binary is set.
++		// Failures (missing voices, missing binary) log a warning and
++		// leave TTS disabled; pre-baked playback continues to work.
++		var tts *audio.TTSEngine
++		if *piperBin != "" {
++			t, err := audio.NewTTSEngine(audio.TTSConfig{
++				PiperBinary: *piperBin,
++				VoicesDir:   *voicesDir,
++				CacheDir:    *ttsCacheDir,
++				Voices: map[string]string{
++					"en": *ttsVoiceEN,
++					"pt": *ttsVoicePT,
++				},
++			})
++			if err != nil {
++				log.Printf("audio: tts disabled: %v", err)
++			} else {
++				tts = t
++			}
++		}
++
++		player = audio.NewWithTTS(audio.Config{
+ 			SoundsDir: *soundsDir,
+ 			Lang:      *soundsLang,
+ 			Threshold: thr,
+-		})
++		}, tts)
+ 	}
+ 	defer player.Close()
+ 
+diff --git a/pi/daemon/internal/audio/audio.go b/pi/daemon/internal/audio/audio.go
+index 889646f..98ed654 100644
+--- a/pi/daemon/internal/audio/audio.go
++++ b/pi/daemon/internal/audio/audio.go
+@@ -114,6 +114,15 @@ type Player interface {
+ 	// Returns immediately. No-op if names is empty.
+ 	PlaySequence(kind string, names []string, level Level)
+ 
++	// Speak synthesizes the given text via TTS and plays the result.
++	// Voice is selected from the bank-to-voice mapping in TTSConfig
++	// using the player's current Lang. Cached on disk by hash, so
++	// repeat phrases skip synthesis. Threshold-gated like Play.
++	// Returns immediately; synthesis and playback happen on the
++	// player's worker goroutine. No-op (with a one-time warning)
++	// when TTS is not configured.
++	Speak(text string, level Level)
++
+ 	// Threshold returns the current minimum level. Events with a
+ 	// strictly lower level are dropped.
+ 	Threshold() Level
+@@ -180,10 +189,23 @@ type Config struct {
+ 	Policies map[Level]RepeatPolicy
+ }
+ 
+-// New picks an available playback backend (mpg123, paplay, then
+-// aplay) and returns a running Player. Returns a NullPlayer with a
+-// one-time log warning if no backend is found. Never returns an error.
++// New picks playback backends per file extension and returns a
++// running Player. Selection: mpg123 for MP3, aplay for WAV/OGG with
++// paplay as fallback for either. Returns a NullPlayer with a
++// one-time log warning if no backend is found. Never returns an
++// error.
++//
++// If tts is non-nil, Speak() routes through it; otherwise Speak()
++// is a no-op + warning. tts is owned by the Player after this call;
++// Close() shuts it down.
+ func New(cfg Config) Player {
++	return NewWithTTS(cfg, nil)
++}
++
++// NewWithTTS is New plus an optional Piper-based synthesizer. Pass
++// nil when TTS is disabled or unconfigured. The tts engine is owned
++// by the Player after this call.
++func NewWithTTS(cfg Config, tts *ttsEngine) Player {
+ 	if cfg.QueueDepth <= 0 {
+ 		cfg.QueueDepth = 16
+ 	}
+@@ -199,18 +221,30 @@ func New(cfg Config) Player {
+ 		policies[l] = p
+ 	}
+ 
+-	cmd, args := detectBackend()
+-	if cmd == "" {
++	backends, fallback := detectBackends()
++	if len(backends) == 0 {
+ 		log.Printf("audio: no playback backend found (tried mpg123, paplay, aplay); audio events will be silent")
++		if tts != nil {
++			tts.Close()
++		}
+ 		return &NullPlayer{}
+ 	}
+-	log.Printf("audio: backend=%s sounds-dir=%s lang=%s threshold=%s",
+-		cmd, cfg.SoundsDir, cfg.Lang, cfg.Threshold)
++	// Log which backend handles which extension. Operator wants this
++	// visible; debugging audio without it is painful.
++	var summary []string
++	for _, ext := range []string{".mp3", ".wav", ".ogg"} {
++		if b, ok := backends[ext]; ok {
++			summary = append(summary, fmt.Sprintf("%s=%s", ext, b.cmd))
++		}
++	}
++	log.Printf("audio: backends=[%s] sounds-dir=%s lang=%s threshold=%s",
++		strings.Join(summary, " "), cfg.SoundsDir, cfg.Lang, cfg.Threshold)
+ 	p := &shellPlayer{
+ 		cfg:      cfg,
+-		cmd:      cmd,
+-		args:     args,
++		backends: backends,
++		fallback: fallback,
+ 		policies: policies,
++		tts:      tts,
+ 		events:   make(chan playRequest, cfg.QueueDepth),
+ 		done:     make(chan struct{}),
+ 		alarms:   make(map[string]*alarmState),
+@@ -220,23 +254,68 @@ func New(cfg Config) Player {
+ 	return p
+ }
+ 
+-// detectBackend returns the first available playback command and any
+-// fixed arguments to pass before the filename. Empty cmd means none found.
+-func detectBackend() (string, []string) {
+-	candidates := []struct {
+-		cmd  string
+-		args []string
+-	}{
+-		{"mpg123", []string{"-q"}}, // MP3-native, ALSA-direct, no audio-server dependency
+-		{"paplay", nil},            // PulseAudio / PipeWire (most desktop systems)
+-		{"aplay", []string{"-q"}},  // ALSA fallback, WAV-only (-q to quiet startup banner)
++// detectBackends finds an executable to play each of MP3, WAV, OGG.
++// Preferences:
++//   .mp3  -> mpg123 (native, lean) > paplay > ffplay
++//   .wav  -> aplay (native ALSA) > paplay > ffplay
++//   .ogg  -> paplay > ogg123 > ffplay
++//
++// fallback is whichever single backend can play the most things;
++// used when a file's extension isn't recognised. Returns an empty
++// map if nothing is available at all.
++func detectBackends() (map[string]backend, backend) {
++	// Check each candidate once and cache.
++	have := func(cmd string) bool {
++		_, err := exec.LookPath(cmd)
++		return err == nil
++	}
++	mpg123 := backend{"mpg123", []string{"-q"}}
++	aplay := backend{"aplay", []string{"-q"}}
++	paplay := backend{"paplay", nil}
++	ogg123 := backend{"ogg123", []string{"-q"}}
++	ffplay := backend{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet"}}
++
++	out := map[string]backend{}
++
++	// MP3: prefer mpg123.
++	switch {
++	case have(mpg123.cmd):
++		out[".mp3"] = mpg123
++	case have(paplay.cmd):
++		out[".mp3"] = paplay
++	case have(ffplay.cmd):
++		out[".mp3"] = ffplay
++	}
++	// WAV: prefer aplay.
++	switch {
++	case have(aplay.cmd):
++		out[".wav"] = aplay
++	case have(paplay.cmd):
++		out[".wav"] = paplay
++	case have(ffplay.cmd):
++		out[".wav"] = ffplay
++	}
++	// OGG: paplay handles OGG natively; ogg123 if you have it; ffplay.
++	switch {
++	case have(paplay.cmd):
++		out[".ogg"] = paplay
++	case have(ogg123.cmd):
++		out[".ogg"] = ogg123
++	case have(ffplay.cmd):
++		out[".ogg"] = ffplay
+ 	}
+-	for _, c := range candidates {
+-		if _, err := exec.LookPath(c.cmd); err == nil {
+-			return c.cmd, c.args
+-		}
++
++	// Fallback: any of the most-universal first.
++	var fb backend
++	switch {
++	case have(ffplay.cmd):
++		fb = ffplay
++	case have(paplay.cmd):
++		fb = paplay
++	case have(aplay.cmd):
++		fb = aplay
+ 	}
+-	return "", nil
++	return out, fb
+ }
+ 
+ // === NullPlayer ===
+@@ -247,6 +326,7 @@ type NullPlayer struct{}
+ 
+ func (n *NullPlayer) Play(string, string, Level)              {}
+ func (n *NullPlayer) PlaySequence(string, []string, Level)    {}
++func (n *NullPlayer) Speak(string, Level)                     {}
+ func (n *NullPlayer) Threshold() Level              { return LevelInfo }
+ func (n *NullPlayer) SetThreshold(Level)            {}
+ func (n *NullPlayer) Acknowledge(string)            {}
+@@ -258,10 +338,15 @@ func (n *NullPlayer) Close()                        {}
+ 
+ type shellPlayer struct {
+ 	cfg      Config
+-	cmd      string
+-	args     []string
++	backends map[string]backend // keyed by file extension (".mp3", ".wav", ".ogg")
++	fallback backend            // used when no extension matches; same as primary preferred backend
+ 	policies map[Level]RepeatPolicy
+ 
++	// tts is the optional Piper-based synthesizer. Nil when TTS is
++	// disabled (no piper binary, no voices, etc.). Speak() falls back
++	// to a logged warning when nil.
++	tts *ttsEngine
++
+ 	events chan playRequest
+ 	done   chan struct{}
+ 
+@@ -273,16 +358,24 @@ type shellPlayer struct {
+ 	alarms  map[string]*alarmState  // active repeating alarms keyed by name
+ }
+ 
++// backend is one playback executable + its fixed argument prefix.
++type backend struct {
++	cmd  string
++	args []string
++}
++
+ // playRequest is what flows through the events channel. Stripped of
+ // any scheduling concerns; the worker just resolves and plays.
+ //
+-// If sequence is non-empty, the worker plays each name in order with
+-// the standard inter-fragment gap. Otherwise the worker resolves
+-// `name` (with whole-phrase-then-decompose semantics).
++// Modes (mutually exclusive):
++//   sequence non-empty: play each fragment with inter-fragment gap.
++//   tts non-empty: synthesize via TTS then play.
++//   otherwise: resolve `name` (whole-phrase-then-decompose semantics).
+ type playRequest struct {
+ 	kind     string
+ 	name     string
+ 	sequence []string
++	tts      string // raw text to synthesize; voice is the player's current Lang
+ }
+ 
+ // alarmState tracks one currently-scheduled repeating alarm. It owns
+@@ -320,6 +413,29 @@ func (p *shellPlayer) PlaySequence(kind string, names []string, level Level) {
+ 	p.enqueue(playRequest{kind: kind, sequence: seq})
+ }
+ 
++// Speak implements Player. Queues a TTS job; the worker synthesizes
++// (or hits cache) and plays the resulting WAV. No alarm scheduling
++// (TTS phrases are narrative, never repeating alarms).
++func (p *shellPlayer) Speak(text string, level Level) {
++	text = strings.TrimSpace(text)
++	if text == "" {
++		return
++	}
++	if p.isClosed() {
++		return
++	}
++	thr := Level(atomic.LoadInt32(&p.threshold))
++	if level < thr && level != LevelCritical {
++		log.Printf("audio: dropped tts %q level=%s (threshold=%s)", truncForLog(text), level, thr)
++		return
++	}
++	if p.tts == nil {
++		p.warnTTSDisabled()
++		return
++	}
++	p.enqueue(playRequest{kind: "tts", tts: text})
++}
++
+ func (p *shellPlayer) Play(kind, name string, level Level) {
+ 	if name == "" {
+ 		return
+@@ -488,6 +604,9 @@ func (p *shellPlayer) Close() {
+ 	close(p.events)
+ 	p.mu.Unlock()
+ 	<-p.done
++	if p.tts != nil {
++		p.tts.Close()
++	}
+ }
+ 
+ func (p *shellPlayer) isClosed() bool {
+@@ -499,6 +618,12 @@ func (p *shellPlayer) isClosed() bool {
+ func (p *shellPlayer) run() {
+ 	defer close(p.done)
+ 	for ev := range p.events {
++		// TTS request: synthesize (or hit cache), then play.
++		if ev.tts != "" {
++			p.runTTS(ev.tts)
++			continue
++		}
++
+ 		// Sequence request: play each fragment in order, skipping
+ 		// whole-phrase lookup and decomposition (the caller has
+ 		// already resolved the list).
+@@ -589,11 +714,21 @@ func (p *shellPlayer) play(path string) {
+ 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+ 	defer cancel()
+ 
+-	args := append([]string{}, p.args...)
++	ext := strings.ToLower(filepath.Ext(path))
++	b, ok := p.backends[ext]
++	if !ok {
++		// Unknown extension. Use the universal fallback.
++		b = p.fallback
++	}
++	if b.cmd == "" {
++		log.Printf("audio: no backend for %s (ext=%s)", path, ext)
++		return
++	}
++	args := append([]string{}, b.args...)
+ 	args = append(args, path)
+-	cmd := exec.CommandContext(ctx, p.cmd, args...)
++	cmd := exec.CommandContext(ctx, b.cmd, args...)
+ 	if err := cmd.Run(); err != nil {
+-		log.Printf("audio: %s %s: %v", p.cmd, path, err)
++		log.Printf("audio: %s %s: %v", b.cmd, path, err)
+ 	}
+ }
+ 
+@@ -612,6 +747,49 @@ func (p *shellPlayer) warnMissing(name string) {
+ 		name, p.cfg.SoundsDir, p.cfg.Lang)
+ }
+ 
++// runTTS synthesizes the given text in the player's current bank
++// voice and plays the resulting WAV. Errors are logged and the
++// playback is skipped; partial silence is the right failure mode
++// (we never want a TTS failure to crash the worker).
++func (p *shellPlayer) runTTS(text string) {
++	voice, ok := p.tts.voiceFor(p.cfg.Lang)
++	if !ok {
++		log.Printf("audio: tts has no voice for bank=%q; skipping %q", p.cfg.Lang, truncForLog(text))
++		return
++	}
++	path, err := p.tts.Synth(text, voice)
++	if err != nil {
++		log.Printf("audio: tts synth failed (voice=%s): %v", voice, err)
++		return
++	}
++	p.play(path)
++}
++
++// warnTTSDisabled logs once that Speak() was called when TTS isn't
++// configured.
++func (p *shellPlayer) warnTTSDisabled() {
++	p.mu.Lock()
++	if p.missing == nil {
++		p.missing = map[string]bool{}
++	}
++	if p.missing["__tts_disabled__"] {
++		p.mu.Unlock()
++		return
++	}
++	p.missing["__tts_disabled__"] = true
++	p.mu.Unlock()
++	log.Printf("audio: Speak() called but TTS is not configured; install piper and pass -piper-binary")
++}
++
++// truncForLog clips long phrases for log lines.
++func truncForLog(s string) string {
++	const max = 60
++	if len(s) <= max {
++		return s
++	}
++	return s[:max] + "..."
++}
++
+ // fileExists reports whether path is an existing regular file. Package
+ // variable so tests can substitute it.
+ var fileExists = func(path string) bool {
+diff --git a/pi/daemon/internal/audio/tts.go b/pi/daemon/internal/audio/tts.go
+new file mode 100644
+index 0000000..0b20376
+--- /dev/null
++++ b/pi/daemon/internal/audio/tts.go
+@@ -0,0 +1,377 @@
++package audio
++
++// tts.go: Piper TTS subprocess management for the audio Player.
++//
++// The synthesizer is an external Piper binary (rhasspy/piper or
++// OHF-Voice/piper1-gpl), launched once per voice at daemon start and
++// kept alive. We feed it phrases via stdin in JSON-input mode; it
++// writes a WAV file to a path we choose, and we then play that WAV
++// through the existing playback path. Synthesised WAVs are cached on
++// disk by hash(text + voice); subsequent identical phrases skip
++// synthesis entirely.
++//
++// Two voices are supported by default: en (en_US-amy-medium) and
++// pt (pt_BR-faber-medium). The voice used per Speak() call is the
++// daemon's current Lang (Config.Lang); the bank-to-voice mapping
++// lives in TTSConfig.
++
++import (
++	"bufio"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"log"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"sync"
++	"time"
++)
++
++// TTSConfig configures the Piper-based TTS synthesizer. Disabled when
++// PiperBinary is empty (typical in CI / non-audio environments).
++type TTSConfig struct {
++	// PiperBinary is the absolute path to the piper executable. Empty
++	// disables TTS entirely; Speak() becomes a no-op + log warning.
++	PiperBinary string
++
++	// VoicesDir holds the .onnx + .onnx.json voice model files. Each
++	// voice is referenced by its basename (without extension).
++	VoicesDir string
++
++	// CacheDir is where synthesized WAVs are stored. Created if
++	// missing. Cache key is hash(text + voice).
++	CacheDir string
++
++	// Voices maps a language bank name ("en", "pt", ...) to a voice
++	// model basename ("en_US-amy-medium", "pt_BR-faber-medium").
++	Voices map[string]string
++}
++
++// pipeProc owns one running Piper subprocess pinned to one voice.
++// Speak() requests are serialised through reqMu; Piper handles them
++// strictly in order anyway (single stdin/stdout stream), so callers
++// don't get parallelism within one voice. Different voices run in
++// parallel because each has its own pipeProc.
++type pipeProc struct {
++	voice string // voice basename, e.g. "en_US-amy-medium"
++	bin   string
++	model string
++
++	mu    sync.Mutex // guards cmd/stdin/stdout and lifecycle
++	cmd   *exec.Cmd
++	stdin io.WriteCloser
++	stdout *bufio.Reader
++
++	reqMu sync.Mutex // serialises Synth requests on this voice
++}
++
++// piperRequest is the JSON line we feed Piper on stdin. We always
++// supply output_file so Piper writes the WAV to a known path; we
++// never read audio from stdout.
++type piperRequest struct {
++	Text       string `json:"text"`
++	OutputFile string `json:"output_file"`
++}
++
++// piperResponse is what Piper emits on stdout per request: a JSON
++// line echoing the request with the file path actually written.
++// We don't strictly need to parse it; we just consume the line to
++// keep stdout drained.
++type piperResponse struct {
++	Text       string `json:"text"`
++	OutputFile string `json:"output_file"`
++}
++
++// newPipeProc constructs a pipeProc for a given voice. Does NOT start
++// the process; Synth() does that lazily on first call (and on respawn
++// after death). Returns nil + error if the model file is missing —
++// no point creating a pipe for a voice the operator never installed.
++func newPipeProc(bin, voicesDir, voice string) (*pipeProc, error) {
++	model := filepath.Join(voicesDir, voice+".onnx")
++	cfg := filepath.Join(voicesDir, voice+".onnx.json")
++	if !fileExists(model) {
++		return nil, fmt.Errorf("voice model not found: %s", model)
++	}
++	if !fileExists(cfg) {
++		return nil, fmt.Errorf("voice config not found: %s", cfg)
++	}
++	return &pipeProc{
++		voice: voice,
++		bin:   bin,
++		model: model,
++	}, nil
++}
++
++// ensureRunning starts Piper if it isn't already alive. Caller must
++// hold p.mu.
++func (p *pipeProc) ensureRunning() error {
++	if p.cmd != nil && p.cmd.Process != nil {
++		// Already running. Verify it didn't quietly die: ProcessState
++		// is nil while running, non-nil after exit.
++		if p.cmd.ProcessState == nil {
++			return nil
++		}
++		log.Printf("audio: piper voice=%s died (state=%s); respawning", p.voice, p.cmd.ProcessState)
++		p.cmd = nil
++		p.stdin = nil
++		p.stdout = nil
++	}
++	// piper --model <path> --json-input
++	// (no --output-raw: we use output_file in JSON, which produces WAV.)
++	cmd := exec.Command(p.bin, "--model", p.model, "--json-input")
++	stdin, err := cmd.StdinPipe()
++	if err != nil {
++		return fmt.Errorf("piper stdin: %w", err)
++	}
++	stdout, err := cmd.StdoutPipe()
++	if err != nil {
++		stdin.Close()
++		return fmt.Errorf("piper stdout: %w", err)
++	}
++	// Stderr goes to our stderr; piper logs progress / errors there.
++	cmd.Stderr = os.Stderr
++	if err := cmd.Start(); err != nil {
++		return fmt.Errorf("piper start: %w", err)
++	}
++	p.cmd = cmd
++	p.stdin = stdin
++	p.stdout = bufio.NewReader(stdout)
++	log.Printf("audio: piper voice=%s started (pid=%d)", p.voice, cmd.Process.Pid)
++	return nil
++}
++
++// Synth renders `text` to the WAV file at `outPath` and returns when
++// Piper has finished writing it. Bounded to 10s; a hung Piper at
++// flight-time is unacceptable.
++func (p *pipeProc) Synth(text, outPath string) error {
++	p.reqMu.Lock()
++	defer p.reqMu.Unlock()
++
++	p.mu.Lock()
++	if err := p.ensureRunning(); err != nil {
++		p.mu.Unlock()
++		return err
++	}
++	stdin := p.stdin
++	stdout := p.stdout
++	p.mu.Unlock()
++
++	req := piperRequest{Text: text, OutputFile: outPath}
++	line, err := json.Marshal(req)
++	if err != nil {
++		return fmt.Errorf("marshal piper req: %w", err)
++	}
++	line = append(line, '\n')
++
++	// Write under a deadline. Piper can hang if its model is borked.
++	doneCh := make(chan error, 1)
++	go func() {
++		if _, err := stdin.Write(line); err != nil {
++			doneCh <- fmt.Errorf("piper write: %w", err)
++			return
++		}
++		// Piper emits one JSON line per request on stdout. Read until
++		// newline to confirm completion. We don't need the contents;
++		// the file is on disk by the time we see this.
++		respLine, err := stdout.ReadString('\n')
++		if err != nil {
++			doneCh <- fmt.Errorf("piper read: %w", err)
++			return
++		}
++		// Parse leniently. If it doesn't parse, that's fine; Piper
++		// has produced the WAV and that's what we care about.
++		var resp piperResponse
++		_ = json.Unmarshal([]byte(strings.TrimSpace(respLine)), &resp)
++		doneCh <- nil
++	}()
++
++	select {
++	case err := <-doneCh:
++		return err
++	case <-time.After(10 * time.Second):
++		// Best effort: kill the process so the next request gets a
++		// fresh one. Synth() returns timeout regardless.
++		p.mu.Lock()
++		if p.cmd != nil && p.cmd.Process != nil {
++			_ = p.cmd.Process.Kill()
++		}
++		p.cmd = nil
++		p.stdin = nil
++		p.stdout = nil
++		p.mu.Unlock()
++		return fmt.Errorf("piper timeout after 10s")
++	}
++}
++
++// Close terminates the subprocess (if any). Safe to call multiple
++// times.
++func (p *pipeProc) Close() {
++	p.mu.Lock()
++	defer p.mu.Unlock()
++	if p.stdin != nil {
++		_ = p.stdin.Close()
++	}
++	if p.cmd != nil && p.cmd.Process != nil {
++		// Give Piper a moment to exit on stdin EOF, then kill.
++		done := make(chan struct{})
++		go func() {
++			_ = p.cmd.Wait()
++			close(done)
++		}()
++		select {
++		case <-done:
++		case <-time.After(500 * time.Millisecond):
++			_ = p.cmd.Process.Kill()
++			<-done
++		}
++	}
++	p.cmd = nil
++	p.stdin = nil
++	p.stdout = nil
++}
++
++// ttsEngine is the per-Player TTS coordinator. Owns one pipeProc per
++// configured voice, the cache directory, and the synth-to-cache logic.
++type ttsEngine struct {
++	cfg      TTSConfig
++	procs    map[string]*pipeProc // keyed by voice basename
++	mu       sync.Mutex           // guards procs map only
++}
++
++// TTSEngine is the exported handle audio.NewWithTTS accepts. The
++// type itself is opaque to callers; construct via NewTTSEngine.
++type TTSEngine = ttsEngine
++
++// NewTTSEngine validates the config and constructs the engine. Returns
++// nil + error if Piper binary isn't executable or no voices are usable.
++// The caller (audio.NewWithTTS) treats nil as "TTS disabled" gracefully.
++func NewTTSEngine(cfg TTSConfig) (*TTSEngine, error) {
++	return newTTSEngine(cfg)
++}
++
++// newTTSEngine validates the config and constructs the engine. Returns
++// nil + error if Piper binary isn't executable or no voices are usable.
++// The caller (audio.New) treats nil as "TTS disabled" gracefully.
++func newTTSEngine(cfg TTSConfig) (*ttsEngine, error) {
++	if cfg.PiperBinary == "" {
++		return nil, fmt.Errorf("PiperBinary not set")
++	}
++	if _, err := exec.LookPath(cfg.PiperBinary); err != nil {
++		// Try absolute path resolution next.
++		if _, statErr := os.Stat(cfg.PiperBinary); statErr != nil {
++			return nil, fmt.Errorf("piper binary not found: %s", cfg.PiperBinary)
++		}
++	}
++	if cfg.VoicesDir == "" {
++		return nil, fmt.Errorf("VoicesDir not set")
++	}
++	if cfg.CacheDir == "" {
++		return nil, fmt.Errorf("CacheDir not set")
++	}
++	if err := os.MkdirAll(cfg.CacheDir, 0o755); err != nil {
++		return nil, fmt.Errorf("create cache dir: %w", err)
++	}
++	if len(cfg.Voices) == 0 {
++		return nil, fmt.Errorf("no voices configured")
++	}
++
++	t := &ttsEngine{cfg: cfg, procs: make(map[string]*pipeProc)}
++	// Pre-create pipeProc for each voice. Subprocesses don't actually
++	// start until first Synth call.
++	usable := 0
++	for bank, voice := range cfg.Voices {
++		p, err := newPipeProc(cfg.PiperBinary, cfg.VoicesDir, voice)
++		if err != nil {
++			log.Printf("audio: tts voice unavailable for bank=%s: %v", bank, err)
++			continue
++		}
++		t.procs[voice] = p
++		usable++
++	}
++	if usable == 0 {
++		return nil, fmt.Errorf("no usable voices in %s", cfg.VoicesDir)
++	}
++	log.Printf("audio: tts ready: %d voice(s), cache=%s", usable, cfg.CacheDir)
++	return t, nil
++}
++
++// voiceFor returns the voice basename mapped to the given lang bank.
++// Falls back to any configured voice if the exact bank isn't mapped.
++// Returns ("", false) if no voices at all.
++func (t *ttsEngine) voiceFor(lang string) (string, bool) {
++	if v, ok := t.cfg.Voices[lang]; ok {
++		if _, ok := t.procs[v]; ok {
++			return v, true
++		}
++	}
++	// Fallback: any voice that has a running pipeProc.
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	for v := range t.procs {
++		return v, true
++	}
++	return "", false
++}
++
++// cachePath returns the WAV file path for a given (text, voice) pair.
++// Stable across runs (sha256 truncated to 16 hex chars).
++func (t *ttsEngine) cachePath(text, voice string) string {
++	sum := sha256.Sum256([]byte(voice + "\x00" + text))
++	hash := hex.EncodeToString(sum[:8]) // 16 hex chars
++	return filepath.Join(t.cfg.CacheDir, voice, hash+".wav")
++}
++
++// Synth returns a path to a WAV containing the synthesized text in
++// the given voice. Cache hit: returns immediately. Cache miss:
++// synthesizes via Piper, writes to cache, returns the path. Errors
++// are returned to the caller; the caller decides whether to skip
++// playback or fall back.
++func (t *ttsEngine) Synth(text, voice string) (string, error) {
++	if text = strings.TrimSpace(text); text == "" {
++		return "", fmt.Errorf("empty text")
++	}
++	path := t.cachePath(text, voice)
++
++	if fileExists(path) {
++		return path, nil
++	}
++
++	// Cache miss. Ensure voice subdirectory exists, then synth.
++	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++		return "", fmt.Errorf("mkdir cache: %w", err)
++	}
++
++	t.mu.Lock()
++	proc, ok := t.procs[voice]
++	t.mu.Unlock()
++	if !ok {
++		return "", fmt.Errorf("voice not loaded: %s", voice)
++	}
++
++	tmp := path + ".partial"
++	defer os.Remove(tmp) // no-op if rename succeeded
++	if err := proc.Synth(text, tmp); err != nil {
++		return "", err
++	}
++	// Verify Piper actually wrote something.
++	if !fileExists(tmp) {
++		return "", fmt.Errorf("piper produced no output for %q", text)
++	}
++	if err := os.Rename(tmp, path); err != nil {
++		return "", fmt.Errorf("rename cache file: %w", err)
++	}
++	return path, nil
++}
++
++// Close terminates all Piper subprocesses.
++func (t *ttsEngine) Close() {
++	t.mu.Lock()
++	defer t.mu.Unlock()
++	for _, p := range t.procs {
++		p.Close()
++	}
++}
+diff --git a/scripts/fetch-voices.sh b/scripts/fetch-voices.sh
+new file mode 100755
+index 0000000..646eb31
+--- /dev/null
++++ b/scripts/fetch-voices.sh
+@@ -0,0 +1,61 @@
++#!/usr/bin/env bash
++#
++# fetch-voices.sh - download Piper voice models for ZeroTX TTS.
++#
++# Idempotent: skips files that already exist. Voices are not committed
++# to the repo (~130MB total); this script fetches them on first setup
++# or after voices/ is wiped.
++#
++# Voices used by the daemon:
++#   en  -> en_US-amy-medium  (rhasspy/piper-voices, female, US English)
++#   pt  -> pt_BR-faber-medium (rhasspy/piper-voices, male, Brazilian Portuguese)
++#
++# Output:
++#   voices/en_US-amy-medium.onnx{,.json}
++#   voices/pt_BR-faber-medium.onnx{,.json}
++
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
++VOICES_DIR="$REPO_ROOT/voices"
++
++mkdir -p "$VOICES_DIR"
++
++# Each entry: <local-name>|<remote-onnx-url>|<remote-json-url>
++voices=(
++  "en_US-amy-medium|https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx|https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json"
++  "pt_BR-faber-medium|https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx|https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json"
++)
++
++fetch_one() {
++  local name="$1" url="$2" outfile="$3"
++  if [[ -s "$outfile" ]]; then
++    echo "  $name: present (skipping)"
++    return 0
++  fi
++  echo "  $name: downloading..."
++  if ! curl -fsSL -o "$outfile.partial" "$url"; then
++    rm -f "$outfile.partial"
++    echo "    FAILED: $url" >&2
++    return 1
++  fi
++  mv "$outfile.partial" "$outfile"
++}
++
++failures=0
++for entry in "${voices[@]}"; do
++  IFS='|' read -r name onnx_url json_url <<<"$entry"
++  echo "=== $name ==="
++  fetch_one "$name (onnx)" "$onnx_url" "$VOICES_DIR/$name.onnx" || failures=$((failures + 1))
++  fetch_one "$name (json)" "$json_url" "$VOICES_DIR/$name.onnx.json" || failures=$((failures + 1))
++done
++
++echo
++if [[ $failures -gt 0 ]]; then
++  echo "done with $failures failure(s)." >&2
++  exit 1
++fi
++
++echo "done. voices in: $VOICES_DIR"
++ls -lh "$VOICES_DIR"/*.onnx 2>/dev/null || true

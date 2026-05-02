@@ -1,0 +1,14 @@
+diff --git a/pi/daemon/internal/audio/audio_test.go b/pi/daemon/internal/audio/audio_test.go
+index 3cbe8e0..af316ad 100644
+--- a/pi/daemon/internal/audio/audio_test.go
++++ b/pi/daemon/internal/audio/audio_test.go
+@@ -433,7 +433,8 @@ func newTestPlayerPolicies(thr Level, custom map[Level]RepeatPolicy) *shellPlaye
+ 	}
+ 	p := &shellPlayer{
+ 		cfg:      Config{Threshold: thr, QueueDepth: 32},
+-		cmd:      "echo", // never invoked since run() isn't started
++		backends: map[string]backend{".wav": {cmd: "echo"}}, // never invoked since run() isn't started
++		fallback: backend{cmd: "echo"},
+ 		policies: policies,
+ 		events:   make(chan playRequest, 32),
+ 		done:     make(chan struct{}),

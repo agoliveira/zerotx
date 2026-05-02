@@ -31,3 +31,6 @@ rp2040/build/
 
 # Private working notes (Claude session journal)
 JOURNAL.md
+
+# TTS voice models (downloaded by scripts/fetch-voices.sh, ~130MB)
+/voices/
