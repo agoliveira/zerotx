@@ -36,17 +36,21 @@ import (
 	"strings"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/phrasebook"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 )
 
 // Narrator emits narrative sequences via an audio.Player.
 type Narrator struct {
 	player audio.Player
+	lang   string
 }
 
-// New constructs a Narrator backed by the given player.
-func New(p audio.Player) *Narrator {
-	return &Narrator{player: p}
+// New constructs a Narrator backed by the given player. Lang
+// controls the language of TTS phrases ("en" / "pt"). Empty / unknown
+// fall back to English at phrase-render time.
+func New(p audio.Player, lang string) *Narrator {
+	return &Narrator{player: p, lang: lang}
 }
 
 // PlayBootGreeting announces system readiness on daemon startup.
@@ -66,14 +70,7 @@ func (n *Narrator) SpeakBootGreeting(modelName string) {
 	if n == nil || n.player == nil {
 		return
 	}
-	modelName = strings.TrimSpace(modelName)
-	var text string
-	if modelName != "" {
-		text = "ZeroTX online. " + modelName + " ready."
-	} else {
-		text = "ZeroTX online. Awaiting model."
-	}
-	n.player.Speak(text, audio.LevelInfo)
+	n.player.Speak(phrasebook.BootGreeting(n.lang, modelName), audio.LevelInfo)
 }
 
 // SpeakPostFlight emits the post-flight summary as a single TTS
@@ -89,7 +86,7 @@ func (n *Narrator) SpeakPostFlight(events []recorder.Event) string {
 	if n == nil || n.player == nil {
 		return ""
 	}
-	text := buildPostFlightTTS(events)
+	text := buildPostFlightTTS(n.lang, events)
 	if text == "" {
 		return ""
 	}
@@ -101,22 +98,22 @@ func (n *Narrator) SpeakPostFlight(events []recorder.Event) string {
 // narration text. Exposed (lowercase) for testing without a player.
 //
 // Output shape:
-//   "Flight complete. <duration>. Peak distance <X> meters.
+//   "<header> <duration>. Peak distance <X> meters.
 //    Peak altitude <Y> meters. <noteworthy clauses>."
 //
-// Always starts with "Flight complete." and ends with a period.
-// Returns "" when events is empty (no flight to narrate).
-func buildPostFlightTTS(events []recorder.Event) string {
+// Always starts with the localized "Flight complete." and ends
+// with a period. Returns "" when events is empty.
+func buildPostFlightTTS(lang string, events []recorder.Event) string {
 	if len(events) == 0 {
 		return ""
 	}
 
-	parts := []string{"Flight complete."}
+	parts := []string{phrasebook.PostFlightHeader(lang)}
 
 	// Duration from first to last event timestamp.
 	durMs := events[len(events)-1].TsMs - events[0].TsMs
 	if durMs >= 1000 {
-		parts = append(parts, durationPhrase(int(durMs/1000))+".")
+		parts = append(parts, phrasebook.DurationSentence(lang, int(durMs/1000)))
 	}
 
 	// Peaks: last peak-distance / peak-altitude wins (events are
@@ -154,60 +151,24 @@ func buildPostFlightTTS(events []recorder.Event) string {
 	}
 
 	if peakDist > 0 {
-		parts = append(parts, fmt.Sprintf("Peak distance %d meters.", peakDist))
+		parts = append(parts, phrasebook.PeakDistance(lang, peakDist))
 	}
 	if peakAlt > 0 {
-		parts = append(parts, fmt.Sprintf("Peak altitude %d meters.", peakAlt))
+		parts = append(parts, phrasebook.PeakAltitude(lang, peakAlt))
 	}
-
-	// Noteworthy events. Order: most-severe first (failsafe), then
-	// RTH, then battery thresholds. Time stamps relative to flight
-	// start, in m:ss form for readability.
 	if failsafeCount > 0 {
-		parts = append(parts, "Failsafe triggered.")
+		parts = append(parts, phrasebook.FailsafeTriggered(lang))
 	}
 	if rthCount > 0 {
-		parts = append(parts, "Return to home triggered.")
+		parts = append(parts, phrasebook.RTHTriggered(lang))
 	}
 	if battCriticalAt >= 0 {
-		parts = append(parts, "Battery critical at "+timestampPhrase(int(battCriticalAt/1000))+".")
+		parts = append(parts, phrasebook.BatteryCriticalAt(lang, int(battCriticalAt/1000)))
 	} else if battLowAt >= 0 {
-		parts = append(parts, "Battery low at "+timestampPhrase(int(battLowAt/1000))+".")
+		parts = append(parts, phrasebook.BatteryLowAt(lang, int(battLowAt/1000)))
 	}
 
 	return strings.Join(parts, " ")
-}
-
-// durationPhrase produces "X minutes Y seconds" / "X seconds" from
-// a duration in seconds. Used for the flight-duration clause.
-func durationPhrase(sec int) string {
-	if sec < 60 {
-		if sec == 1 {
-			return "1 second"
-		}
-		return fmt.Sprintf("%d seconds", sec)
-	}
-	mins := sec / 60
-	rem := sec % 60
-	out := fmt.Sprintf("%d minutes", mins)
-	if mins == 1 {
-		out = "1 minute"
-	}
-	if rem > 0 {
-		if rem == 1 {
-			out += " 1 second"
-		} else {
-			out += fmt.Sprintf(" %d seconds", rem)
-		}
-	}
-	return out
-}
-
-// timestampPhrase produces "X minutes Y seconds" relative to flight
-// start. Used inline for noteworthy-event clauses ("Battery low at
-// 3 minutes 20 seconds.").
-func timestampPhrase(sec int) string {
-	return durationPhrase(sec)
 }
 
 // intDetail extracts an integer field from an Event.Detail map.

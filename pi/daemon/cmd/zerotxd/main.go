@@ -31,6 +31,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logic"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/model"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/narrator"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/phrasebook"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
@@ -295,7 +296,7 @@ func main() {
 	// Narrator builds and emits structured narrative announcements
 	// (boot greeting, post-flight summary). Pure transformation;
 	// owns no goroutines. Backed by the audio Player above.
-	narr := narrator.New(player)
+	narr := narrator.New(player, *soundsLang)
 
 	// Recorder: SQLite-backed flight recording. In-memory while flying,
 	// saved to <recordings-dir> on disarm. Failures here must not
@@ -384,7 +385,7 @@ func main() {
 					m := snap.FlightMode.Data.Mode
 					if m != "" && m != lastMode {
 						lastMode = m
-						player.Speak("Flight mode: "+humanizeMode(m)+".", audio.LevelInfo)
+						player.Speak(phrasebook.FlightMode(*soundsLang, m), audio.LevelInfo)
 					}
 				}
 			}
@@ -556,13 +557,13 @@ func main() {
 	// fires audio cues, runs flight-armed side effects on
 	// EventArmed/EventDisarmed) and a 1Hz Tick driver for the 60s
 	// arming-request timeout.
-	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, flightArmedHandler)
+	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, *soundsLang, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
-	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, *narrateInterval, narrateFields)
+	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, *narrateInterval, narrateFields, *soundsLang)
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		go func() {
@@ -698,7 +699,7 @@ func main() {
 				lostMs := time.Since(r.LostAt()).Milliseconds()
 				if !jsLossLogged {
 					log.Printf("joystick lost: holding last-known for %dms then failsafe", joystickHoldMs)
-					player.Speak("Joystick disconnected.", audio.LevelWarning)
+					player.Speak(phrasebook.JoystickDisconnected(*soundsLang), audio.LevelWarning)
 					jsLossLogged = true
 				}
 				if lostMs >= joystickHoldMs {
@@ -708,7 +709,7 @@ func main() {
 				// else: fall through and emit last-known values.
 			} else if jsLossLogged && jsHolder.Connected() {
 				log.Printf("joystick: link recovered")
-				player.Speak("Joystick reconnected.", audio.LevelNotice)
+				player.Speak(phrasebook.JoystickReconnected(*soundsLang), audio.LevelNotice)
 				jsLossLogged = false
 			}
 
@@ -836,6 +837,7 @@ func buildAPIProviders(
 	modelImagePath string,
 	modelDefaultPath string,
 	recordingsDir string,
+	lang string,
 	logBuf *logbuf.Buffer,
 	version string,
 	startedAt time.Time,
@@ -914,7 +916,7 @@ func buildAPIProviders(
 			return buildPreflight(holder, jsHolder, port, modelDefaultPath)
 		},
 		LoadModel: func(path string) error {
-			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, path); err != nil {
+			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, lang, path); err != nil {
 				return err
 			}
 			if dispMgr != nil {
@@ -937,11 +939,7 @@ func buildAPIProviders(
 				dispMgr.SetThresholds(nil)
 				dispMgr.SetMode(display.ModeIdle)
 			}
-			if strings.TrimSpace(name) != "" {
-				player.Speak("Model "+name+" unloaded.", audio.LevelInfo)
-			} else {
-				player.Speak("Model unloaded.", audio.LevelInfo)
-			}
+			player.Speak(phrasebook.ModelUnloaded(lang, name), audio.LevelInfo)
 		},
 		Joysticks: func() []api.JoystickDevice {
 			devs := joystick.List()
@@ -1058,7 +1056,7 @@ func buildAPIProviders(
 // loadModel parses a YAML at the given path and atomically swaps in
 // the new Stack. Returns an error without touching the active stack if
 // parsing or building fails.
-func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Panel, player audio.Player, rec recorder.Interface, path string) error {
+func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Panel, player audio.Player, rec recorder.Interface, lang, path string) error {
 	m, err := model.LoadZeroTX(path)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", path, err)
@@ -1072,11 +1070,7 @@ func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Pane
 		m.EdgeTX.Header.Name,
 		len(m.EdgeTX.MixData), len(m.EdgeTX.LogicalSw),
 		len(m.EdgeTX.CustomFn), len(m.EdgeTX.TelemetrySensors), path)
-	if name := strings.TrimSpace(m.EdgeTX.Header.Name); name != "" {
-		player.Speak("Model loaded: "+name+".", audio.LevelInfo)
-	} else {
-		player.Speak("Model loaded.", audio.LevelInfo)
-	}
+	player.Speak(phrasebook.ModelLoaded(lang, m.EdgeTX.Header.Name), audio.LevelInfo)
 	return nil
 }
 
@@ -1389,54 +1383,6 @@ func defaultRecordingsDir() string {
 	return "recordings"
 }
 
-// humanizeMode converts FC-emitted flight mode codes to natural
-// English for narration. Unknown codes are returned lowercased
-// as-is — the operator will hear something readable even for new
-// FC modes we haven't mapped yet.
-//
-// INAV mode strings come over CRSF in compact short form
-// ("ANGL", "MANU", "RTH"). We map the common ones; uncommon ones
-// fall through to lowercase.
-func humanizeMode(m string) string {
-	switch m {
-	case "ANGL":
-		return "angle"
-	case "HORI":
-		return "horizon"
-	case "MANU":
-		return "manual"
-	case "ACRO":
-		return "acro"
-	case "AIR":
-		return "air mode"
-	case "NAV":
-		return "navigation"
-	case "RTH":
-		return "return to home"
-	case "WP", "MISS":
-		return "waypoint mission"
-	case "LAUN":
-		return "launch"
-	case "PASS":
-		return "passthrough"
-	case "FS":
-		return "failsafe"
-	case "ALTH":
-		return "altitude hold"
-	case "POSH":
-		return "position hold"
-	case "CRUISE":
-		return "cruise"
-	case "STAB":
-		return "stabilized"
-	case "OK":
-		return "ready"
-	case "WAIT":
-		return "waiting for arming"
-	}
-	return strings.ToLower(m)
-}
-
 // buildTelemetrySample converts a telemetry.Snapshot into the
 // recorder's TelemetrySample shape. Pointer-typed fields preserve
 // "no data" vs "zero": battery 0V is a real reading.
@@ -1560,7 +1506,7 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
 // matching audio cue, and runs flight-armed side effects (recorder,
 // display mode, alarm cleanup, post-flight narration) on EventArmed
 // and EventDisarmed.
-func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, tel *telemetry.State, flightArmedHandler func(bool)) {
+func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, tel *telemetry.State, lang string, flightArmedHandler func(bool)) {
 	events := m.Events()
 	for {
 		select {
@@ -1568,7 +1514,7 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 			return
 		case e := <-events:
 			log.Printf("arm: %s (state=%s)", e, m.State())
-			playArmCue(player, holder, tel, e)
+			playArmCue(player, holder, tel, lang, e)
 			if flightArmedHandler != nil {
 				switch e {
 				case arm.EventArmed:
@@ -1585,12 +1531,12 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 // play a single pre-baked track. ArmingRequested is the exception:
 // it speaks a TTS pre-flight summary built from current telemetry,
 // so the operator hears the live status instead of a generic cue.
-func playArmCue(player audio.Player, holder *stackHolder, tel *telemetry.State, e arm.Event) {
+func playArmCue(player audio.Player, holder *stackHolder, tel *telemetry.State, lang string, e arm.Event) {
 	if player == nil {
 		return
 	}
 	if e == arm.EventArmingRequested {
-		player.Speak(buildPreflightSummary(holder, tel), audio.LevelNotice)
+		player.Speak(buildPreflightSummary(holder, tel, lang), audio.LevelNotice)
 		return
 	}
 	stem := armEventStem(e)
@@ -1601,55 +1547,37 @@ func playArmCue(player audio.Player, holder *stackHolder, tel *telemetry.State, 
 // buildPreflightSummary composes the pre-flight TTS announcement.
 // Fragments are comma-separated to give natural TTS pauses. Missing
 // telemetry is omitted; the announcement says only what's known. The
-// final phrase is always "Ready to arm." so the operator hears a
-// clear closing cue.
-func buildPreflightSummary(holder *stackHolder, tel *telemetry.State) string {
+// final phrase is the localized "Ready to arm." so the operator hears
+// a clear closing cue.
+func buildPreflightSummary(holder *stackHolder, tel *telemetry.State, lang string) string {
 	var parts []string
 
-	// Model name.
 	if name := modelName(holder); name != "" {
-		parts = append(parts, name+".")
+		parts = append(parts, phrasebook.PreflightModelHeader(lang, name))
 	}
 
 	if tel != nil {
 		snap := tel.Snapshot()
 
-		// Battery.
 		if snap.Battery != nil && !snap.Battery.Stale {
 			b := snap.Battery.Data
-			frag := "Battery"
-			if b.CellCount > 0 {
-				frag += fmt.Sprintf(" %d cell", b.CellCount)
+			if frag := phrasebook.PreflightBattery(lang, b.CellCount, b.Volts, b.Percent); frag != "" {
+				parts = append(parts, frag)
 			}
-			if b.Volts > 0 {
-				frag += fmt.Sprintf(", %.1f volts", b.Volts)
-			}
-			if b.Percent > 0 {
-				frag += fmt.Sprintf(", %d percent", b.Percent)
-			}
-			parts = append(parts, frag+".")
 		}
 
-		// GPS.
 		if snap.GPS != nil && !snap.GPS.Stale {
 			g := snap.GPS.Data
-			frag := fmt.Sprintf("%d satellites", g.Sats)
-			if g.Sats >= 6 {
-				frag += ", GPS lock"
-			} else {
-				frag += ", no lock"
-			}
-			parts = append(parts, frag+".")
+			parts = append(parts, phrasebook.PreflightGPS(lang, int(g.Sats), g.Sats >= 6))
 		}
 
-		// Link.
 		if snap.Link != nil && !snap.Link.Stale {
 			l := snap.Link.Data
-			parts = append(parts, fmt.Sprintf("Link %d percent.", l.UplinkLQ))
+			parts = append(parts, phrasebook.PreflightLink(lang, int(l.UplinkLQ)))
 		}
 	}
 
-	parts = append(parts, "Ready to arm.")
+	parts = append(parts, phrasebook.PreflightReady(lang))
 	return strings.Join(parts, " ")
 }
 

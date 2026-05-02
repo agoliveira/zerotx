@@ -13,12 +13,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/phrasebook"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 )
 
@@ -133,6 +133,7 @@ func runPeriodicNarrator(
 	armEvents <-chan struct{}, // pings when arm transitions occur
 	interval time.Duration,
 	fields []narrateField,
+	lang string,
 ) {
 	if len(fields) == 0 || interval <= 0 {
 		return
@@ -156,10 +157,6 @@ func runPeriodicNarrator(
 		case <-ctx.Done():
 			return
 		case <-armEvents:
-			// Arm state changed. If newly armed, mark start time
-			// and restart the timer so the first announcement
-			// comes one full interval after arm. If disarmed,
-			// just reset (next arm starts the cycle clean).
 			if isArmed() {
 				armStart = time.Now()
 			} else {
@@ -172,7 +169,7 @@ func runPeriodicNarrator(
 				continue
 			}
 			snap := tel.Snapshot()
-			text := buildPeriodicStatus(snap, fields, time.Since(armStart))
+			text := buildPeriodicStatus(snap, fields, time.Since(armStart), lang)
 			if text == "" {
 				continue
 			}
@@ -185,12 +182,13 @@ func runPeriodicNarrator(
 // snapshot, including only the requested fields. Missing telemetry
 // for a requested field is silently dropped (we narrate what we
 // know, not what we don't). Returns "" if nothing meaningful is
-// available — the caller skips the announcement entirely.
+// available; the caller skips the announcement entirely.
 //
 // timeAloft is passed in (rather than read from the snapshot) so
 // the caller controls the clock; this also makes the function
-// trivially testable.
-func buildPeriodicStatus(snap telemetry.Snapshot, fields []narrateField, timeAloft time.Duration) string {
+// trivially testable. Phrasing is localized via phrasebook based
+// on the lang argument.
+func buildPeriodicStatus(snap telemetry.Snapshot, fields []narrateField, timeAloft time.Duration, lang string) string {
 	var parts []string
 	for _, f := range fields {
 		switch f {
@@ -199,37 +197,29 @@ func buildPeriodicStatus(snap telemetry.Snapshot, fields []narrateField, timeAlo
 				continue
 			}
 			b := snap.Battery.Data
-			frag := "Battery"
-			if b.Percent > 0 {
-				frag += fmt.Sprintf(" %d percent", b.Percent)
+			if frag := phrasebook.PeriodicBattery(lang, b.Percent, b.Volts); frag != "" {
+				parts = append(parts, frag)
 			}
-			if b.Volts > 0 {
-				frag += fmt.Sprintf(", %.1f volts", b.Volts)
-			}
-			if frag == "Battery" {
-				continue
-			}
-			parts = append(parts, frag+".")
 		case fieldDistance:
 			if snap.Home == nil {
 				continue
 			}
-			parts = append(parts, fmt.Sprintf("Distance %d meters.", snap.Home.Data.DistanceM))
+			parts = append(parts, phrasebook.PeriodicDistance(lang, snap.Home.Data.DistanceM))
 		case fieldAltitude:
 			if snap.GPS == nil || snap.GPS.Stale {
 				continue
 			}
-			parts = append(parts, fmt.Sprintf("Altitude %d meters.", snap.GPS.Data.AltMeters))
+			parts = append(parts, phrasebook.PeriodicAltitude(lang, snap.GPS.Data.AltMeters))
 		case fieldSpeed:
 			if snap.GPS == nil || snap.GPS.Stale {
 				continue
 			}
-			parts = append(parts, fmt.Sprintf("Speed %d kilometers per hour.", int(snap.GPS.Data.GroundKmh+0.5)))
+			parts = append(parts, phrasebook.PeriodicSpeed(lang, int(snap.GPS.Data.GroundKmh+0.5)))
 		case fieldLink:
 			if snap.Link == nil || snap.Link.Stale {
 				continue
 			}
-			parts = append(parts, fmt.Sprintf("Link %d percent.", snap.Link.Data.UplinkLQ))
+			parts = append(parts, phrasebook.PeriodicLink(lang, snap.Link.Data.UplinkLQ))
 		case fieldMode:
 			if snap.FlightMode == nil {
 				continue
@@ -238,41 +228,14 @@ func buildPeriodicStatus(snap telemetry.Snapshot, fields []narrateField, timeAlo
 			if m == "" {
 				continue
 			}
-			parts = append(parts, "Mode "+humanizeMode(m)+".")
+			parts = append(parts, phrasebook.PeriodicMode(lang, m))
 		case fieldTimeAloft:
 			sec := int(timeAloft.Seconds())
 			if sec <= 0 {
 				continue
 			}
-			parts = append(parts, "Aloft "+spokenDuration(sec)+".")
+			parts = append(parts, phrasebook.PeriodicTimeAloft(lang, sec))
 		}
 	}
 	return strings.Join(parts, " ")
-}
-
-// spokenDuration produces "X minutes Y seconds" / "X seconds" for
-// inline narration. Local copy of the same logic used by the
-// post-flight narrator; keeping it here avoids the cmd package
-// importing the narrator package just for one helper.
-func spokenDuration(sec int) string {
-	if sec < 60 {
-		if sec == 1 {
-			return "1 second"
-		}
-		return fmt.Sprintf("%d seconds", sec)
-	}
-	mins := sec / 60
-	rem := sec % 60
-	out := fmt.Sprintf("%d minutes", mins)
-	if mins == 1 {
-		out = "1 minute"
-	}
-	if rem > 0 {
-		if rem == 1 {
-			out += " 1 second"
-		} else {
-			out += fmt.Sprintf(" %d seconds", rem)
-		}
-	}
-	return out
 }

@@ -94,7 +94,7 @@ func TestBuildPeriodicStatus_AllFields(t *testing.T) {
 			Data: telemetry.Home{DistanceM: dist},
 		},
 	}
-	got := buildPeriodicStatus(snap, allNarrateFields, 90*time.Second)
+	got := buildPeriodicStatus(snap, allNarrateFields, 90*time.Second, "en")
 	wantContains := []string{
 		"Battery 78 percent, 16.2 volts.",
 		"Distance 245 meters.",
@@ -114,14 +114,14 @@ func TestBuildPeriodicStatus_AllFields(t *testing.T) {
 func TestBuildPeriodicStatus_MissingTelemetry(t *testing.T) {
 	// No snapshot data at all. We requested fields, but nothing is
 	// available. Should return empty so the caller skips speaking.
-	got := buildPeriodicStatus(telemetry.Snapshot{}, []narrateField{fieldBattery, fieldDistance}, 30*time.Second)
+	got := buildPeriodicStatus(telemetry.Snapshot{}, []narrateField{fieldBattery, fieldDistance}, 30*time.Second, "en")
 	if got != "" {
 		t.Errorf("got %q want empty", got)
 	}
 }
 
 func TestBuildPeriodicStatus_TimeAloftOnly(t *testing.T) {
-	got := buildPeriodicStatus(telemetry.Snapshot{}, []narrateField{fieldTimeAloft}, 65*time.Second)
+	got := buildPeriodicStatus(telemetry.Snapshot{}, []narrateField{fieldTimeAloft}, 65*time.Second, "en")
 	want := "Aloft 1 minute 5 seconds."
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
@@ -135,7 +135,7 @@ func TestBuildPeriodicStatus_StaleSensorIgnored(t *testing.T) {
 			Data:  telemetry.Battery{Volts: 16.2, Percent: 78},
 		},
 	}
-	got := buildPeriodicStatus(snap, []narrateField{fieldBattery}, 30*time.Second)
+	got := buildPeriodicStatus(snap, []narrateField{fieldBattery}, 30*time.Second, "en")
 	if got != "" {
 		t.Errorf("stale battery should be skipped; got %q", got)
 	}
