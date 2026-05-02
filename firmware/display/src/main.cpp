@@ -678,12 +678,17 @@ void run_self_test() {
   dma_display->fillScreen(black);
   dma_display->drawFastVLine(PANEL_WIDTH, 0, LOGICAL_HEIGHT, white);
   // Label each half so you can tell A from B at a glance.
+  // Cursor x=4 (not 2) gives the glyph a 4-pixel left margin.
+  // Some HUB75 chain configs lose the leftmost pixel column on
+  // the first sub-panel; the extra slack avoids visible clipping
+  // of the A's apex and the descenders without upsetting the
+  // visual balance of the test pattern.
   dma_display->setTextColor(red);
   dma_display->setTextSize(1);
-  dma_display->setCursor(2, 12);
+  dma_display->setCursor(4, 12);
   dma_display->print("A");
   dma_display->setTextColor(green);
-  dma_display->setCursor(PANEL_WIDTH + 2, 12);
+  dma_display->setCursor(PANEL_WIDTH + 4, 12);
   dma_display->print("B");
   delay(900);
 
