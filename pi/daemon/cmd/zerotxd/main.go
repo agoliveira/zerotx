@@ -24,6 +24,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/api"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/arm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/crsftee"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
@@ -78,6 +79,7 @@ func main() {
 	keepRecordings := flag.Int("keep-recordings", 10, "number of most-recent recordings to retain (older deleted on save)")
 	displayPort := flag.String("display-port", "", "HUB75 display device serial port (e.g. /dev/ttyACM1); empty disables display output")
 	displayBrightness := flag.Int("display-brightness", 80, "HUB75 display brightness 0-100")
+	mwpTeeAddr := flag.String("mwp-tee-addr", "127.0.0.1:5761", "TCP listen addr for CRSF telemetry tee to mwp; empty disables")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -189,8 +191,16 @@ func main() {
 	// model unload it's reset so cell-count detection re-runs against
 	// the next pack.
 	telemetryState := telemetry.New(log.Printf)
+
+	// CRSF tee: optional TCP listener that forwards reconstructed
+	// CRSF frames to mwptools (left-LCD map). Read-only; mission
+	// upload and other bidirectional features are deferred (would
+	// conflict with the channel intent loop). Empty addr disables.
+	mwpTee := crsftee.New(*mwpTeeAddr, log.Printf)
+
 	link.OnTelemetry = func(payload []byte) {
 		telemetryState.Feed(payload)
+		mwpTee.Forward(payload)
 	}
 
 	// Arm state machine. Tracks the GCS-side arming sequence (panel
@@ -564,6 +574,11 @@ func main() {
 	// arming-request timeout.
 	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, *soundsLang, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
+	go func() {
+		if err := mwpTee.Run(ctx); err != nil {
+			log.Printf("crsftee: %v (continuing without tee)", err)
+		}
+	}()
 	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, narrateStore, *soundsLang)
 
 	// Start the API server if requested.
