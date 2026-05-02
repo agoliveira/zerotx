@@ -23,6 +23,12 @@
   --idle: #6e6e6e;
   --info: #4a9fdb;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Touch target minimum for outdoor 7" LCD use. WCAG/Apple HIG
+     bottom is 44px; Material is 48px. We adopt 44px as the floor
+     for all interactive surfaces and bump primary action buttons
+     to this with explicit min-height. Small/secondary variants
+     can fall below for compact UI but stay above ~32px. */
+  --touch-min: 44px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -118,6 +124,7 @@ nav.tabs button {
   cursor: pointer;
   transition: background 0.1s, color 0.1s, border-color 0.1s;
   outline: none;
+  min-height: var(--touch-min);
 }
 nav.tabs button:hover { background: var(--bg-elevated); color: var(--text-main); }
 nav.tabs button.active {
@@ -149,6 +156,7 @@ nav.subtabs button {
   transition: background 0.1s, color 0.1s, border-color 0.1s;
   outline: none;
   margin-bottom: -1px;
+  min-height: var(--touch-min);
 }
 nav.subtabs button:hover { color: var(--text-main); }
 nav.subtabs button.active {
@@ -198,6 +206,7 @@ input[type="text"], input[type="number"] {
   font-family: var(--mono);
   width: 100%;
   outline: none;
+  min-height: var(--touch-min);
 }
 input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accent); }
 input[disabled] { opacity: 0.5; }
@@ -213,6 +222,7 @@ button.action {
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
   min-width: 120px;
+  min-height: var(--touch-min);
 }
 button.action:hover:not(:disabled) { background: var(--bg-surface); border-color: var(--accent); }
 button.action.primary {
@@ -681,15 +691,17 @@ table.data-table {
 
 .arm-hero .hero-cog {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 8px;
+  right: 8px;
   background: transparent;
   border: 0;
   color: var(--text-dim);
-  font-size: 18px;
+  font-size: 22px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 3px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
 }
 .arm-hero .hero-cog:hover { color: var(--text-main); background: var(--bg-elevated); }
 .arm-hero[data-state="armed"] .hero-cog { color: #1a1a1a; }
@@ -799,9 +811,10 @@ table.data-table {
   border: 1px solid var(--border);
   color: var(--text-main);
   font: inherit;
-  padding: 4px 8px;
+  padding: 8px 12px;
   border-radius: 3px;
   min-width: 0;
+  min-height: var(--touch-min);
 }
 .row input[type=text] { flex: 0 0 200px; }
 
@@ -1031,12 +1044,13 @@ table.data-table {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 3px;
   font-family: var(--mono);
   font-size: 12px;
+  min-height: var(--touch-min);
 }
 .recordings-list .rec-name {
   flex: 1;
@@ -1092,12 +1106,13 @@ table.data-table {
   cursor: pointer;
   user-select: none;
 }
-.modal-body .checkbox-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+.modal-body .checkbox-row input { width: 24px; height: 24px; accent-color: var(--accent); }
+.modal-body input[type="checkbox"] { width: 24px; height: 24px; accent-color: var(--accent); }
 .modal-body .checkbox-row label { cursor: pointer; }
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
 }
 .modal-actions button {
   padding: 8px 18px;
@@ -1105,6 +1120,8 @@ table.data-table {
   border-radius: 3px;
   font: inherit;
   cursor: pointer;
+  min-height: var(--touch-min);
+  min-width: 96px;
 }
 .modal-actions .modal-cancel {
   background: var(--bg-elevated);
