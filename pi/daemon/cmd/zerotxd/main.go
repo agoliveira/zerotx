@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -68,6 +69,9 @@ func main() {
 	ttsCacheDir := flag.String("tts-cache-dir", os.ExpandEnv("$HOME/.cache/zerotx/tts"), "where synthesized TTS WAVs are cached on disk")
 	ttsVoiceEN := flag.String("tts-voice-en", "en_US-amy-medium", "voice basename used for the en bank (must exist under -voices-dir)")
 	ttsVoicePT := flag.String("tts-voice-pt", "pt_BR-faber-medium", "voice basename used for the pt bank (must exist under -voices-dir)")
+	narrateInterval := flag.Duration("narrate-interval", 60*time.Second, "in-flight periodic narration interval (e.g. 60s, 2m)")
+	narrateContent := flag.String("narrate-content", "", "comma-separated periodic narration fields (battery,distance,altitude,speed,link,mode,time-aloft); empty disables")
+	narratePreset := flag.String("narrate-preset", "", "narration preset shortcut: compact (battery+distance+altitude) or full (all). Overridden by -narrate-content if both set")
 	recordingsDir := flag.String("recordings-dir", defaultRecordingsDir(), "directory for saved flight recordings")
 	noRecordings := flag.Bool("no-recordings", false, "disable flight recording entirely")
 	keepRecordings := flag.Int("keep-recordings", 10, "number of most-recent recordings to retain (older deleted on save)")
@@ -322,6 +326,22 @@ func main() {
 	// without TTS being on.
 	flightEvents := newFlightEventDetector(rec)
 
+	// Periodic in-flight narration: while armed, every -narrate-interval,
+	// speak a status report assembled from telemetry. Disabled by
+	// default (empty content); operator opts in via -narrate-content
+	// or -narrate-preset.
+	//
+	// armedFlag is read by the periodic narrator to gate its tick.
+	// armedPings notifies it of arm-state transitions so the timer
+	// resets cleanly (first announcement is one full interval after
+	// arm, never overlapping the pre-flight summary).
+	var armedFlag atomic.Bool
+	armedPings := make(chan struct{}, 4)
+	narrateFields := resolveNarrateContent(*narrateContent, *narratePreset)
+	if len(narrateFields) > 0 {
+		log.Printf("narrate: periodic interval=%s fields=%v", *narrateInterval, narrateFields)
+	}
+
 	// Telemetry sampler: poll the telemetry snapshot at 5Hz and forward
 	// to the recorder. The recorder throttles internally to avoid
 	// duplicate rows when nothing has changed; this goroutine just has
@@ -449,6 +469,11 @@ func main() {
 	// subsystems it touches; called from drainArmEvents on EventArmed
 	// and EventDisarmed.
 	flightArmedHandler := func(armed bool) {
+		armedFlag.Store(armed)
+		select {
+		case armedPings <- struct{}{}:
+		default: // channel full; periodic narrator already has a pending wakeup
+		}
 		if armed {
 			name := ""
 			if s := holder.Load(); s != nil && s.Model != nil {
@@ -533,6 +558,7 @@ func main() {
 	// arming-request timeout.
 	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
+	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, *narrateInterval, narrateFields)
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
