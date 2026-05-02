@@ -328,6 +328,12 @@ type Providers struct {
 	// May be nil if TTS isn't configured; the handler returns 503.
 	Speak func(text string, level string)
 
+	// FlightEvents returns the events logged for the current armed
+	// session (or last session, before rotation). Used by the debug
+	// endpoint GET /api/v1/debug/flight-events. Returned as opaque
+	// JSON to avoid an import cycle on the recorder package.
+	FlightEvents func() (interface{}, error)
+
 	// Recordings returns the saved flight recordings on disk
 	// (newest first). Empty when recording is disabled.
 	Recordings func() ([]Recording, error)

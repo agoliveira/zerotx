@@ -62,6 +62,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
 	mux.HandleFunc("/api/v1/audio/acknowledge", s.handleAudioAcknowledge)
 	mux.HandleFunc("/api/v1/debug/speak", s.handleDebugSpeak)
+	mux.HandleFunc("/api/v1/debug/flight-events", s.handleDebugFlightEvents)
 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
 	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
@@ -330,6 +331,30 @@ func (s *Server) handleDebugSpeak(w http.ResponseWriter, r *http.Request) {
 	}
 	s.providers.Speak(body.Text, body.Level)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleDebugFlightEvents returns the events logged for the current
+// armed session, or empty if not armed / pre-arm. Useful for
+// debugging the flight-event detector without requiring a saved
+// recording. Returns the raw event list as JSON.
+func (s *Server) handleDebugFlightEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.FlightEvents == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	evs, err := s.providers.FlightEvents()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if evs == nil {
+		evs = []interface{}{}
+	}
+	writeJSON(w, http.StatusOK, evs)
 }
 
 // handleRecordings lists saved flight recordings on disk. Newest

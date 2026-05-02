@@ -511,6 +511,75 @@ type Recording struct {
 	ModTime string `json:"modTime"`
 }
 
+// Event is one row from the events table, in the shape callers want
+// to see (timestamp as ISO string relative to flight start; detail
+// already deserialised when possible). Used by the debug events
+// endpoint and (later) by the post-flight narrator.
+type Event struct {
+	TsMs   int64                  `json:"tsMs"`   // ms since flight start (session begin)
+	Kind   string                 `json:"kind"`
+	Name   string                 `json:"name"`
+	Level  string                 `json:"level"`
+	Detail map[string]interface{} `json:"detail,omitempty"`
+}
+
+// CurrentSessionEvents returns the events logged so far for the
+// current armed session, ordered by timestamp. Returns an empty
+// slice when not armed or the working DB hasn't been opened.
+//
+// The session_id used is whichever is currently active; when not
+// armed, this returns events with session_id=0 (pre-arm bookkeeping)
+// or empty. For post-flight narration the daemon should call this
+// just before OnDisarm rotates the session, so the events are
+// captured while still in the working DB.
+func (r *Recorder) CurrentSessionEvents() ([]Event, error) {
+	if r.closed.Load() {
+		return nil, nil
+	}
+	r.mu.Lock()
+	db := r.db
+	sessionID := r.sessionID
+	r.mu.Unlock()
+	if db == nil {
+		return nil, nil
+	}
+	rows, err := db.QueryContext(context.Background(),
+		`SELECT ts_us, kind, name, level, detail FROM events WHERE session_id = ? ORDER BY ts_us ASC`,
+		sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Event{}
+	for rows.Next() {
+		var (
+			tsUs   int64
+			kind   string
+			name   string
+			level  string
+			detail sql.NullString
+		)
+		if err := rows.Scan(&tsUs, &kind, &name, &level, &detail); err != nil {
+			return nil, err
+		}
+		ev := Event{
+			TsMs:  tsUs / 1000,
+			Kind:  kind,
+			Name:  name,
+			Level: level,
+		}
+		if detail.Valid && detail.String != "" {
+			var d map[string]interface{}
+			if err := json.Unmarshal([]byte(detail.String), &d); err == nil {
+				ev.Detail = d
+			}
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
 // Summary is a post-flight summary of a saved recording. Computed on
 // demand by opening the SQLite file, running aggregate queries, and
 // returning the result. Cheap enough to compute live (single-digit
@@ -742,6 +811,7 @@ func (NoOpRecorder) OnDisarm() string         { return "" }
 func (NoOpRecorder) LogEvent(string, string, string, interface{}) {}
 func (NoOpRecorder) LogTelemetry(TelemetrySample) {}
 func (NoOpRecorder) Recordings() ([]Recording, error) { return nil, nil }
+func (NoOpRecorder) CurrentSessionEvents() ([]Event, error) { return nil, nil }
 func (NoOpRecorder) Close()                   {}
 
 // Interface is the surface used by the daemon. Recorder and NoOpRecorder
@@ -753,6 +823,7 @@ type Interface interface {
 	LogEvent(kind, name, level string, detail interface{})
 	LogTelemetry(TelemetrySample)
 	Recordings() ([]Recording, error)
+	CurrentSessionEvents() ([]Event, error)
 	Close()
 }
 

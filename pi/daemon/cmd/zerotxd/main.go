@@ -963,6 +963,9 @@ func buildAPIProviders(
 			}
 			player.Speak(text, lvl)
 		},
+		FlightEvents: func() (interface{}, error) {
+			return rec.CurrentSessionEvents()
+		},
 
 		Recordings: func() ([]api.Recording, error) {
 			recs, err := rec.Recordings()
