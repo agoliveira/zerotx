@@ -48,3 +48,8 @@ JOURNAL.md
 
 # Private session handover (Claude session bootstrap, not for repo)
 HANDOVER.md
+
+# Patch artefacts left behind when patch(1) fuzz-applies a hunk
+# or fails: .orig is the pre-edit copy, .rej is the rejected hunk.
+*.orig
+*.rej

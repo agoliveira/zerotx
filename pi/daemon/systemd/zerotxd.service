@@ -1,0 +1,46 @@
+[Unit]
+Description=ZeroTX FPV ground control daemon
+Documentation=https://github.com/agoliveira/zerotx
+# graphical-session.target ensures we start after the user's login
+# session is fully up. The daemon doesn't need a display itself, but
+# the joystick, serial, and audio it touches are owned by the
+# user-session devices and group memberships.
+After=graphical-session.target
+
+[Service]
+Type=simple
+
+# Per-machine configuration lives in the env file. Copy
+# zerotxd.env.example to ~/.config/zerotx/zerotxd.env and edit.
+# The unit file itself stays identical across machines.
+EnvironmentFile=%h/.config/zerotx/zerotxd.env
+
+# Required flags inline; optional ones go into $EXTRA_FLAGS in the
+# env file so the unit doesn't need to enumerate every possible
+# daemon switch. systemd splits $EXTRA_FLAGS on whitespace just like
+# a shell would for argv expansion.
+ExecStart=%h/zerotx/pi/daemon/bin/zerotxd \
+    -api ${API_ADDR} \
+    -model ${MODEL} \
+    -joystick-name ${JOYSTICK_NAME} \
+    -piper-binary ${PIPER_BINARY} \
+    -web-dir ${WEB_DIR} \
+    -sounds-lang ${SOUNDS_LANG} \
+    $EXTRA_FLAGS
+
+# Crash recovery: restart in 2s on any non-zero exit. Daemon
+# crashes mid-flight should not require human intervention.
+# StartLimit prevents tight crash loops from masking a genuinely
+# broken config: 5 restarts within 60s and we stop trying.
+Restart=on-failure
+RestartSec=2
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Logs go to journald; tail with:
+#   journalctl --user -u zerotxd -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
