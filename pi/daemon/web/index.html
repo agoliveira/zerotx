@@ -1559,8 +1559,7 @@ h2.warn { color: var(--warn); }
             <div class="muted-line">bitmap: <span id="model-bitmap-name">-</span></div>
             <div class="muted-line" id="model-summary-line">-</div>
             <div class="muted-line">
-              FC: <span id="model-fc-type">-</span>
-              · Airframe: <span id="model-airframe">-</span>
+              Airframe: <span id="model-airframe">-</span>
             </div>
           </div>
         </div>
@@ -3285,7 +3284,6 @@ const App = {
     document.getElementById('model-bitmap-name').textContent = d.bitmap || 'none';
     const summary = `${(d.mixes||[]).length} mixes, ${(d.logicSwitches||[]).length} logic, ${(d.customFns||[]).length} CFs, ${(d.sensors||[]).length} sensors`;
     document.getElementById('model-summary-line').textContent = summary;
-    document.getElementById('model-fc-type').textContent = d.fcType || '-';
     document.getElementById('model-airframe').textContent = d.airframe || '-';
 
     // Thresholds panel

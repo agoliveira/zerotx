@@ -49,7 +49,6 @@ zerotx:
       invert: true
       deadband: 0.02
   notes: Big Talon - INAV fixed-wing on T.Flight Hotas X plus GCS panel switches. Throttle slider inverted to match EdgeTX convention (slider down = -100% = idle).
-  fc_type: inav
   airframe: wing
   thresholds:
     battery:

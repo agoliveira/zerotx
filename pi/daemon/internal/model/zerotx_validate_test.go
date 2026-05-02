@@ -24,30 +24,6 @@ func TestValidate_AcceptsLegacyBindingsOnly(t *testing.T) {
 	}
 }
 
-func TestValidate_FCType(t *testing.T) {
-	tests := []struct {
-		name    string
-		fcType  string
-		wantErr bool
-	}{
-		{"empty allowed", "", false},
-		{"inav", "inav", false},
-		{"ardupilot", "ardupilot", false},
-		{"betaflight", "betaflight", false},
-		{"unknown", "px4", true},
-		{"capitalized rejected", "INAV", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &ZeroTXMeta{FCType: tt.fcType}
-			err := m.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("FCType=%q: err=%v wantErr=%v", tt.fcType, err, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestValidate_Airframe(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -2,15 +2,6 @@ package model
 
 import "fmt"
 
-// validFCTypes lists the flight controller firmware families that consumers
-// know how to interpret telemetry from.
-var validFCTypes = map[string]bool{
-	"":           true, // unspecified is allowed
-	"inav":       true,
-	"ardupilot":  true,
-	"betaflight": true,
-}
-
 // validAirframes lists the airframe classes the narrator/HUD recognize.
 var validAirframes = map[string]bool{
 	"":      true, // unspecified is allowed
@@ -30,9 +21,6 @@ var validAirframes = map[string]bool{
 // absent are accepted. When a section IS provided, all its required
 // fields must be set and pass sanity checks.
 func (m *ZeroTXMeta) Validate() error {
-	if !validFCTypes[m.FCType] {
-		return fmt.Errorf("zerotx.fc_type: invalid value %q (want one of: inav, ardupilot, betaflight, or empty)", m.FCType)
-	}
 	if !validAirframes[m.Airframe] {
 		return fmt.Errorf("zerotx.airframe: invalid value %q (want one of: quad, wing, plane, heli, or empty)", m.Airframe)
 	}

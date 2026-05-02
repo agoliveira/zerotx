@@ -37,11 +37,6 @@ zerotx:
     "6POS": { device: "GCS", selector: 0 }
 
   # === Aircraft taxonomy ===
-  # fc_type: identifies FC firmware family. Consumers (narrator, HUD) use
-  # this to interpret telemetry semantics that differ between INAV and
-  # ArduPilot. Valid: inav | ardupilot | betaflight. Optional.
-  fc_type: inav
-
   # airframe: broad airframe class for narrator phrasing and HUD widget
   # defaults. Valid: quad | wing | plane | heli. Optional.
   airframe: wing

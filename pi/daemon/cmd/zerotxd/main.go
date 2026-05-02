@@ -1018,7 +1018,6 @@ func buildModelDetails(m *model.ZeroTXModel, eng *logic.Engine, imgPath string) 
 		Name:      et.Header.Name,
 		Bitmap:    et.Header.Bitmap,
 		HasBitmap: hasBitmap,
-		FCType:    m.ZeroTX.FCType,
 		Airframe:  m.ZeroTX.Airframe,
 	}
 

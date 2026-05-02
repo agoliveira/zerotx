@@ -1,0 +1,164 @@
+diff --git a/pi/daemon/cmd/zerotxd/main.go b/pi/daemon/cmd/zerotxd/main.go
+index f57edf4..0474be0 100644
+--- a/pi/daemon/cmd/zerotxd/main.go
++++ b/pi/daemon/cmd/zerotxd/main.go
+@@ -1018,7 +1018,6 @@ func buildModelDetails(m *model.ZeroTXModel, eng *logic.Engine, imgPath string)
+ 		Name:      et.Header.Name,
+ 		Bitmap:    et.Header.Bitmap,
+ 		HasBitmap: hasBitmap,
+-		FCType:    m.ZeroTX.FCType,
+ 		Airframe:  m.ZeroTX.Airframe,
+ 	}
+ 
+diff --git a/pi/daemon/configs/big_talon_zerotx.yml b/pi/daemon/configs/big_talon_zerotx.yml
+index 8341a3e..7fc304e 100644
+--- a/pi/daemon/configs/big_talon_zerotx.yml
++++ b/pi/daemon/configs/big_talon_zerotx.yml
+@@ -49,7 +49,6 @@ zerotx:
+       invert: true
+       deadband: 0.02
+   notes: Big Talon - INAV fixed-wing on T.Flight Hotas X plus GCS panel switches. Throttle slider inverted to match EdgeTX convention (slider down = -100% = idle).
+-  fc_type: inav
+   airframe: wing
+   thresholds:
+     battery:
+diff --git a/pi/daemon/configs/example_zerotx_model.yml b/pi/daemon/configs/example_zerotx_model.yml
+index 9612f2e..35a3045 100644
+--- a/pi/daemon/configs/example_zerotx_model.yml
++++ b/pi/daemon/configs/example_zerotx_model.yml
+@@ -37,11 +37,6 @@ zerotx:
+     "6POS": { device: "GCS", selector: 0 }
+ 
+   # === Aircraft taxonomy ===
+-  # fc_type: identifies FC firmware family. Consumers (narrator, HUD) use
+-  # this to interpret telemetry semantics that differ between INAV and
+-  # ArduPilot. Valid: inav | ardupilot | betaflight. Optional.
+-  fc_type: inav
+-
+   # airframe: broad airframe class for narrator phrasing and HUD widget
+   # defaults. Valid: quad | wing | plane | heli. Optional.
+   airframe: wing
+diff --git a/pi/daemon/internal/api/state.go b/pi/daemon/internal/api/state.go
+index 471cb17..fd2cb72 100644
+--- a/pi/daemon/internal/api/state.go
++++ b/pi/daemon/internal/api/state.go
+@@ -86,7 +86,6 @@ type ModelDetails struct {
+ 	Name          string              `json:"name"`
+ 	Bitmap        string              `json:"bitmap"`    // YAML-declared filename, e.g. "bigtalon"
+ 	HasBitmap     bool                `json:"hasBitmap"` // server has a file ready to serve
+-	FCType        string              `json:"fcType,omitempty"`
+ 	Airframe      string              `json:"airframe,omitempty"`
+ 	Thresholds    *ThresholdDetails   `json:"thresholds,omitempty"`
+ 	Mixes         []MixDetail         `json:"mixes"`
+diff --git a/pi/daemon/internal/model/zerotx_types.go b/pi/daemon/internal/model/zerotx_types.go
+index 915e163..1b47d6b 100644
+--- a/pi/daemon/internal/model/zerotx_types.go
++++ b/pi/daemon/internal/model/zerotx_types.go
+@@ -9,7 +9,6 @@ package model
+ //	  source_bindings:
+ //	    Thr: { device: "HOTAS X", axis: 2 }
+ //	    SE:  { device: "GCS", switch: 2, kind: 3pos }
+-//	  fc_type: inav
+ //	  airframe: wing
+ //	  thresholds:
+ //	    battery:  { cells: 4, cell_warn_v: 3.6, ... }
+@@ -34,12 +33,6 @@ type ZeroTXMeta struct {
+ 	// Notes is free-form text the user can leave in the file.
+ 	Notes string `yaml:"notes,omitempty"`
+ 
+-	// FCType identifies the flight controller firmware family. Consumers
+-	// (narrator, HUD) use this to interpret telemetry semantics that vary
+-	// between INAV and ArduPilot. Empty means "unspecified". Valid values:
+-	// "inav", "ardupilot", "betaflight".
+-	FCType string `yaml:"fc_type,omitempty"`
+-
+ 	// Airframe describes the broad airframe class. Used by the narrator
+ 	// for context-appropriate phrasing and by the HUD for default widget
+ 	// selection. Empty means "unspecified". Valid values: "quad", "wing",
+diff --git a/pi/daemon/internal/model/zerotx_validate.go b/pi/daemon/internal/model/zerotx_validate.go
+index 9d5cde0..72c5691 100644
+--- a/pi/daemon/internal/model/zerotx_validate.go
++++ b/pi/daemon/internal/model/zerotx_validate.go
+@@ -2,15 +2,6 @@ package model
+ 
+ import "fmt"
+ 
+-// validFCTypes lists the flight controller firmware families that consumers
+-// know how to interpret telemetry from.
+-var validFCTypes = map[string]bool{
+-	"":           true, // unspecified is allowed
+-	"inav":       true,
+-	"ardupilot":  true,
+-	"betaflight": true,
+-}
+-
+ // validAirframes lists the airframe classes the narrator/HUD recognize.
+ var validAirframes = map[string]bool{
+ 	"":      true, // unspecified is allowed
+@@ -30,9 +21,6 @@ var validAirframes = map[string]bool{
+ // absent are accepted. When a section IS provided, all its required
+ // fields must be set and pass sanity checks.
+ func (m *ZeroTXMeta) Validate() error {
+-	if !validFCTypes[m.FCType] {
+-		return fmt.Errorf("zerotx.fc_type: invalid value %q (want one of: inav, ardupilot, betaflight, or empty)", m.FCType)
+-	}
+ 	if !validAirframes[m.Airframe] {
+ 		return fmt.Errorf("zerotx.airframe: invalid value %q (want one of: quad, wing, plane, heli, or empty)", m.Airframe)
+ 	}
+diff --git a/pi/daemon/internal/model/zerotx_validate_test.go b/pi/daemon/internal/model/zerotx_validate_test.go
+index 8284821..c20bed3 100644
+--- a/pi/daemon/internal/model/zerotx_validate_test.go
++++ b/pi/daemon/internal/model/zerotx_validate_test.go
+@@ -24,30 +24,6 @@ func TestValidate_AcceptsLegacyBindingsOnly(t *testing.T) {
+ 	}
+ }
+ 
+-func TestValidate_FCType(t *testing.T) {
+-	tests := []struct {
+-		name    string
+-		fcType  string
+-		wantErr bool
+-	}{
+-		{"empty allowed", "", false},
+-		{"inav", "inav", false},
+-		{"ardupilot", "ardupilot", false},
+-		{"betaflight", "betaflight", false},
+-		{"unknown", "px4", true},
+-		{"capitalized rejected", "INAV", true},
+-	}
+-	for _, tt := range tests {
+-		t.Run(tt.name, func(t *testing.T) {
+-			m := &ZeroTXMeta{FCType: tt.fcType}
+-			err := m.Validate()
+-			if (err != nil) != tt.wantErr {
+-				t.Errorf("FCType=%q: err=%v wantErr=%v", tt.fcType, err, tt.wantErr)
+-			}
+-		})
+-	}
+-}
+-
+ func TestValidate_Airframe(t *testing.T) {
+ 	tests := []struct {
+ 		name     string
+diff --git a/pi/daemon/web/index.html b/pi/daemon/web/index.html
+index fa31fb8..f0184f7 100644
+--- a/pi/daemon/web/index.html
++++ b/pi/daemon/web/index.html
+@@ -1559,8 +1559,7 @@ h2.warn { color: var(--warn); }
+             <div class="muted-line">bitmap: <span id="model-bitmap-name">-</span></div>
+             <div class="muted-line" id="model-summary-line">-</div>
+             <div class="muted-line">
+-              FC: <span id="model-fc-type">-</span>
+-              · Airframe: <span id="model-airframe">-</span>
++              Airframe: <span id="model-airframe">-</span>
+             </div>
+           </div>
+         </div>
+@@ -3285,7 +3284,6 @@ const App = {
+     document.getElementById('model-bitmap-name').textContent = d.bitmap || 'none';
+     const summary = `${(d.mixes||[]).length} mixes, ${(d.logicSwitches||[]).length} logic, ${(d.customFns||[]).length} CFs, ${(d.sensors||[]).length} sensors`;
+     document.getElementById('model-summary-line').textContent = summary;
+-    document.getElementById('model-fc-type').textContent = d.fcType || '-';
+     document.getElementById('model-airframe').textContent = d.airframe || '-';
+ 
+     // Thresholds panel

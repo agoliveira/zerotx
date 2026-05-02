@@ -86,7 +86,6 @@ type ModelDetails struct {
 	Name          string              `json:"name"`
 	Bitmap        string              `json:"bitmap"`    // YAML-declared filename, e.g. "bigtalon"
 	HasBitmap     bool                `json:"hasBitmap"` // server has a file ready to serve
-	FCType        string              `json:"fcType,omitempty"`
 	Airframe      string              `json:"airframe,omitempty"`
 	Thresholds    *ThresholdDetails   `json:"thresholds,omitempty"`
 	Mixes         []MixDetail         `json:"mixes"`

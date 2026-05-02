@@ -9,7 +9,6 @@ package model
 //	  source_bindings:
 //	    Thr: { device: "HOTAS X", axis: 2 }
 //	    SE:  { device: "GCS", switch: 2, kind: 3pos }
-//	  fc_type: inav
 //	  airframe: wing
 //	  thresholds:
 //	    battery:  { cells: 4, cell_warn_v: 3.6, ... }
@@ -33,12 +32,6 @@ type ZeroTXMeta struct {
 
 	// Notes is free-form text the user can leave in the file.
 	Notes string `yaml:"notes,omitempty"`
-
-	// FCType identifies the flight controller firmware family. Consumers
-	// (narrator, HUD) use this to interpret telemetry semantics that vary
-	// between INAV and ArduPilot. Empty means "unspecified". Valid values:
-	// "inav", "ardupilot", "betaflight".
-	FCType string `yaml:"fc_type,omitempty"`
 
 	// Airframe describes the broad airframe class. Used by the narrator
 	// for context-appropriate phrasing and by the HUD for default widget
