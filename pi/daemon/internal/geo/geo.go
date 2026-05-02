@@ -87,6 +87,7 @@ func (l *Lookup) Close() error {
 // Anything not in this map is dropped entirely (we only mention
 // types we've thought about).
 var typeMaxDistanceM = map[string]float64{
+	// Layer A: place=*
 	"isolated_dwelling": 500,
 	"farm":              500,
 	"hamlet":            1000,
@@ -97,20 +98,49 @@ var typeMaxDistanceM = map[string]float64{
 	"village":           3000,
 	"town":              7000,
 	"city":              15000,
+	"island":            3000,
+
+	// Layer A: natural=peak / spring (point landmarks)
+	"peak":   2000,
+	"spring": 800,
+
+	// Layer B: leisure=park / stadium (area features, centroided)
+	"park":    1500,
+	"stadium": 800,
+
+	// Layer B: amenity=university / hospital
+	"university": 1500,
+	"hospital":   1000,
+
+	// Layer B: boundary=protected_area
+	"protected_area": 5000,
+
+	// Layer B: landuse=industrial/residential/commercial (with name)
+	"landuse": 1500,
 }
 
 // typePrecedence ranks specificity. Lower = more specific = preferred
 // when multiple matches exist within their thresholds. Anything not
 // listed here gets a high (less-preferred) value implicitly.
 var typePrecedence = map[string]int{
+	// Most specific landmarks first.
+	"peak":              1,
+	"spring":            1,
 	"isolated_dwelling": 1,
 	"farm":              1,
 	"hamlet":            2,
 	"locality":          2,
+	"stadium":           2,
+	"park":              2,
+	"university":        2,
+	"hospital":          2,
 	"neighbourhood":     3,
 	"suburb":            3,
 	"quarter":           3,
+	"landuse":           3,
+	"island":            3,
 	"village":           4,
+	"protected_area":    5,
 	"town":              5,
 	"city":              6,
 }

@@ -1,64 +1,119 @@
-// Command geobuild reads OSM data in OPL format (one feature per
-// line) on stdin or from -in, filters for place=* nodes, and writes
-// a sqlite database with R-Tree spatial index suitable for
-// internal/geo to query.
+// Command geobuild reads OSM features as line-delimited GeoJSON
+// (RFC 8142 / "geojsonseq") on stdin or from -in, computes a
+// representative point for each feature (Point coords for nodes,
+// bounding-box center for ways/relations), maps OSM tags to the
+// internal place_type taxonomy used by internal/geo, and writes a
+// sqlite database with R-Tree spatial index.
 //
-// OPL format reference:
+// Each input line is one GeoJSON Feature. Features may optionally
+// be prefixed with the RFC 7464 record-separator byte (0x1E); we
+// tolerate it.
 //
-//	https://osmcode.org/opl-file-format/
+// Mapping rules:
 //
-// We only care about node lines. A node line looks like:
+//	place=city/town/village/suburb/neighbourhood/quarter/hamlet/
+//	      locality/isolated_dwelling/farm/island
+//	  -> place_type = the value verbatim
+//	natural=peak / spring
+//	  -> place_type = "peak" / "spring"
+//	leisure=park / stadium
+//	  -> place_type = "park" / "stadium"
+//	amenity=university / hospital
+//	  -> place_type = "university" / "hospital"
+//	boundary=protected_area
+//	  -> place_type = "protected_area"
+//	landuse=industrial / residential / commercial (with name)
+//	  -> place_type = "landuse"
 //
-//	n123456 v1 dV c789 t2024-01-01T00:00:00Z i1 uuser Tname=Salto,place=town x-47.29 y-23.20
-//
-// Field types we read: T (tags) x (lon) y (lat). Everything else is
-// ignored.
-//
-// Tag values that contain commas, equals, percent signs, spaces,
-// or newlines are %-encoded by osmium. The decode is just URL-style
-// percent-decoding restricted to the byte set OPL escapes.
+// Features without a name tag are dropped. Features whose computed
+// geometry has a bounding-box diagonal larger than maxDiagonalKm
+// are also dropped: a 100km-long protected area centroided to a
+// point is more confusing than informative for flight narration.
 //
 // Usage:
 //
-//	# typical pipeline:
-//	osmium tags-filter -o places.opl -f opl brazil-latest.osm.pbf \
-//	    n/place=town,village,suburb,neighbourhood,quarter,hamlet,locality,isolated_dwelling,farm,city
-//	geobuild -in places.opl -out places.db
-//
-// The output schema matches what internal/geo expects.
+//	osmium tags-filter -o filtered.osm.pbf brazil-latest.osm.pbf <tag predicates>
+//	osmium export -f geojsonseq -o features.geojsonseq filtered.osm.pbf
+//	geobuild -in features.geojsonseq -out places.db
 package main
 
 import (
 	"bufio"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
-	"strconv"
-	"strings"
 
 	_ "modernc.org/sqlite"
 )
 
-// kept ranks the place types we care to keep. The set must be a
-// superset of internal/geo's typeMaxDistanceM.
-var kept = map[string]bool{
-	"isolated_dwelling": true,
-	"farm":              true,
-	"hamlet":            true,
-	"locality":          true,
-	"neighbourhood":     true,
-	"suburb":            true,
-	"quarter":           true,
-	"village":           true,
-	"town":              true,
-	"city":              true,
+// maxDiagonalKm caps the bounding-box size of a feature we'll
+// represent as a single point. Beyond this, the "centroid" is too
+// fictional to mention as a place. Tuned by hand: a 10km park is
+// big but its center is still meaningful; a 100km protected area
+// isn't.
+const maxDiagonalKm = 10.0
+
+// placeTypeFromTags maps an OSM tag set to the internal taxonomy.
+// Returns "" if no rule fires.
+func placeTypeFromTags(tags map[string]string) string {
+	if v := tags["place"]; v != "" {
+		switch v {
+		case "city", "town", "village", "suburb", "neighbourhood",
+			"quarter", "hamlet", "locality", "isolated_dwelling",
+			"farm", "island":
+			return v
+		}
+	}
+	if v := tags["natural"]; v != "" {
+		switch v {
+		case "peak", "spring":
+			return v
+		}
+	}
+	if v := tags["leisure"]; v != "" {
+		switch v {
+		case "park", "stadium":
+			return v
+		}
+	}
+	if v := tags["amenity"]; v != "" {
+		switch v {
+		case "university", "hospital":
+			return v
+		}
+	}
+	if tags["boundary"] == "protected_area" {
+		return "protected_area"
+	}
+	if v := tags["landuse"]; v != "" {
+		switch v {
+		case "industrial", "residential", "commercial":
+			return "landuse"
+		}
+	}
+	return ""
+}
+
+// feature is a partial GeoJSON Feature shape. We only read the
+// fields we need.
+type feature struct {
+	Type       string                 `json:"type"`
+	Properties map[string]interface{} `json:"properties"`
+	Geometry   geometry               `json:"geometry"`
+}
+
+type geometry struct {
+	Type        string          `json:"type"`
+	Coordinates json.RawMessage `json:"coordinates"`
 }
 
 func main() {
-	in := flag.String("in", "-", "input OPL file (\"-\" for stdin)")
+	in := flag.String("in", "-", "input geojsonseq file (\"-\" for stdin)")
 	out := flag.String("out", "", "output sqlite path (required)")
 	flag.Parse()
 
@@ -76,8 +131,6 @@ func main() {
 		r = f
 	}
 
-	// Re-create the output file from scratch so a re-run produces
-	// a clean db without stale rows.
 	_ = os.Remove(*out)
 	db, err := sql.Open("sqlite", "file:"+*out)
 	if err != nil {
@@ -86,7 +139,6 @@ func main() {
 	defer db.Close()
 
 	for _, s := range []string{
-		// PRAGMAs for fast bulk insert.
 		`PRAGMA journal_mode = OFF`,
 		`PRAGMA synchronous = OFF`,
 		`PRAGMA temp_store = MEMORY`,
@@ -122,18 +174,41 @@ func main() {
 	defer insR.Close()
 
 	scan := bufio.NewScanner(r)
-	scan.Buffer(make([]byte, 0, 1<<20), 1<<20)
+	// GeoJSON lines can be long for big multipolygons; bump the
+	// scanner buffer well past Go's default 64KB cap.
+	scan.Buffer(make([]byte, 0, 1<<20), 1<<26)
 
-	var read, kept int
+	var read, kept, skipped int
 	id := int64(1)
 	for scan.Scan() {
 		read++
-		line := scan.Text()
-		if len(line) == 0 || line[0] != 'n' {
+		line := scan.Bytes()
+		// Tolerate the optional RFC 7464 0x1E record separator.
+		for len(line) > 0 && line[0] == 0x1E {
+			line = line[1:]
+		}
+		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
-		name, ptype, lat, lon, ok := parseNode(line)
+		var f feature
+		if err := json.Unmarshal(line, &f); err != nil {
+			skipped++
+			continue
+		}
+		name, _ := f.Properties["name"].(string)
+		if name == "" {
+			skipped++
+			continue
+		}
+		tags := stringTags(f.Properties)
+		ptype := placeTypeFromTags(tags)
+		if ptype == "" {
+			skipped++
+			continue
+		}
+		lat, lon, ok := representativePoint(f.Geometry)
 		if !ok {
+			skipped++
 			continue
 		}
 		if _, err := insP.Exec(id, name, ptype, lat, lon); err != nil {
@@ -155,109 +230,116 @@ func main() {
 		log.Fatalf("geobuild: optimize: %v", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "geobuild: read %d lines, kept %d places, wrote %s\n", read, kept, *out)
+	fmt.Fprintf(os.Stderr, "geobuild: read %d features, kept %d, skipped %d, wrote %s\n",
+		read, kept, skipped, *out)
 }
 
-// parseNode pulls the fields we care about from one OPL node line.
-// Returns ok=false if the line lacks a usable name + place tag, or
-// has malformed coordinates, or its place type is not in `kept`.
-func parseNode(line string) (name, ptype string, lat, lon float64, ok bool) {
-	// Fields are separated by spaces but tag values may contain
-	// %-encoded spaces (decoded as 0x20 only after we split).
-	// Iterate field-by-field by leading char.
-	fields := strings.Split(line, " ")
-	var tags string
-	var hasX, hasY bool
-	for _, f := range fields {
-		if len(f) == 0 {
-			continue
-		}
-		switch f[0] {
-		case 'T':
-			tags = f[1:]
-		case 'x':
-			v, err := strconv.ParseFloat(f[1:], 64)
-			if err != nil {
-				return
-			}
-			lon = v
-			hasX = true
-		case 'y':
-			v, err := strconv.ParseFloat(f[1:], 64)
-			if err != nil {
-				return
-			}
-			lat = v
-			hasY = true
+// stringTags reduces the JSON-decoded properties map to a
+// string->string map. OSM tags are always strings; anything that
+// isn't (rare oddball) is dropped.
+func stringTags(props map[string]interface{}) map[string]string {
+	out := make(map[string]string, len(props))
+	for k, v := range props {
+		if s, ok := v.(string); ok {
+			out[k] = s
 		}
 	}
-	if !hasX || !hasY {
-		return
-	}
-	if tags == "" {
-		return
-	}
-	// Tags: comma-separated key=value pairs, %-encoded.
-	// Pull name and place out.
-	for _, kv := range strings.Split(tags, ",") {
-		eq := strings.IndexByte(kv, '=')
-		if eq <= 0 {
-			continue
-		}
-		k := oplDecode(kv[:eq])
-		v := oplDecode(kv[eq+1:])
-		switch k {
-		case "name":
-			name = v
-		case "place":
-			ptype = v
-		}
-	}
-	if name == "" || ptype == "" {
-		return
-	}
-	if !kept[ptype] {
-		return
-	}
-	ok = true
-	return
+	return out
 }
 
-// oplDecode reverses OPL's percent-encoding. OPL escapes the bytes
-// 0x00-0x20, '%', ',', '=' as %XX (uppercase hex). We do a permissive
-// pass: any %XX where XX is two hex digits is decoded; anything else
-// is passed through.
-func oplDecode(s string) string {
-	if !strings.ContainsRune(s, '%') {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	i := 0
-	for i < len(s) {
-		if s[i] == '%' && i+2 < len(s) {
-			h := hexNibble(s[i+1])
-			l := hexNibble(s[i+2])
-			if h >= 0 && l >= 0 {
-				b.WriteByte(byte(h<<4 | l))
-				i += 3
-				continue
+// representativePoint returns a single (lat, lon) that stands in
+// for the feature. For Point, that's the coordinates directly.
+// For other geometries we use the bounding-box center, but only
+// if the bbox diagonal is below maxDiagonalKm. ok=false means the
+// feature is too sprawling or the geometry was unparseable.
+func representativePoint(g geometry) (lat, lon float64, ok bool) {
+	switch g.Type {
+	case "Point":
+		var c [2]float64
+		if err := json.Unmarshal(g.Coordinates, &c); err != nil {
+			return 0, 0, false
+		}
+		// GeoJSON: [lon, lat]
+		return c[1], c[0], true
+	case "Polygon":
+		var rings [][][2]float64
+		if err := json.Unmarshal(g.Coordinates, &rings); err != nil {
+			return 0, 0, false
+		}
+		return centerOfRings(rings)
+	case "MultiPolygon":
+		var polys [][][][2]float64
+		if err := json.Unmarshal(g.Coordinates, &polys); err != nil {
+			return 0, 0, false
+		}
+		// Flatten outer rings of all polygons. Good enough for
+		// "where is this thing" purposes.
+		var all [][][2]float64
+		for _, p := range polys {
+			if len(p) > 0 {
+				all = append(all, p[0])
 			}
 		}
-		b.WriteByte(s[i])
-		i++
+		return centerOfRings(all)
+	case "LineString", "MultiLineString":
+		// Layer A+B doesn't include rivers/streams; if we ever
+		// pick those up we'll need polyline distance, not centroid.
+		return 0, 0, false
 	}
-	return b.String()
+	return 0, 0, false
 }
 
-func hexNibble(c byte) int {
-	switch {
-	case c >= '0' && c <= '9':
-		return int(c - '0')
-	case c >= 'a' && c <= 'f':
-		return int(c-'a') + 10
-	case c >= 'A' && c <= 'F':
-		return int(c-'A') + 10
+// centerOfRings returns the bounding-box center of a polygon's
+// rings (we use the outer ring; holes don't change the bbox much
+// for our purposes). Drops the feature if the bbox diagonal in km
+// is too large.
+func centerOfRings(rings [][][2]float64) (lat, lon float64, ok bool) {
+	if len(rings) == 0 || len(rings[0]) == 0 {
+		return 0, 0, false
 	}
-	return -1
+	minLon, minLat := math.Inf(1), math.Inf(1)
+	maxLon, maxLat := math.Inf(-1), math.Inf(-1)
+	for _, ring := range rings {
+		for _, pt := range ring {
+			lo, la := pt[0], pt[1]
+			if lo < minLon {
+				minLon = lo
+			}
+			if lo > maxLon {
+				maxLon = lo
+			}
+			if la < minLat {
+				minLat = la
+			}
+			if la > maxLat {
+				maxLat = la
+			}
+		}
+	}
+	if math.IsInf(minLon, 0) || math.IsInf(minLat, 0) {
+		return 0, 0, false
+	}
+	cLat := (minLat + maxLat) / 2
+	cLon := (minLon + maxLon) / 2
+	// Bounding-box diagonal in km. If it's too large, the
+	// centroid is misleading.
+	diag := haversineKm(minLat, minLon, maxLat, maxLon)
+	if diag > maxDiagonalKm {
+		return 0, 0, false
+	}
+	return cLat, cLon, true
+}
+
+func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthKm = 6371.0088
+	rad := math.Pi / 180.0
+	dLat := (lat2 - lat1) * rad
+	dLon := (lon2 - lon1) * rad
+	la1 := lat1 * rad
+	la2 := lat2 * rad
+	sLat := math.Sin(dLat / 2)
+	sLon := math.Sin(dLon / 2)
+	a := sLat*sLat + math.Cos(la1)*math.Cos(la2)*sLon*sLon
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earthKm * c
 }

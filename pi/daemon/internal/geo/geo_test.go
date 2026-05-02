@@ -163,6 +163,65 @@ func TestNearest_TieBreakByDistance(t *testing.T) {
 	}
 }
 
+func TestNearest_PeakBeatsTown(t *testing.T) {
+	// A peak is a more specific landmark than a town. Both
+	// in-threshold means peak wins regardless of distance.
+	fx := []Match{
+		{Name: "Distant Town", PlaceType: "town", Lat: -23.203, Lon: -47.293}, // ~0.5km
+		{Name: "Pico do Jaraguá", PlaceType: "peak", Lat: -23.207, Lon: -47.295}, // ~1km, inside 2km threshold
+	}
+	path := buildTestDB(t, fx)
+	g, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	m := g.Nearest(-23.20, -47.29)
+	if m == nil || m.Name != "Pico do Jaraguá" {
+		t.Errorf("got %v, want Pico do Jaraguá (peak beats town)", m)
+	}
+}
+
+func TestNearest_ParkOverNeighbourhood(t *testing.T) {
+	// Park (precedence 2) should beat a co-located neighbourhood
+	// (precedence 3) when both qualify.
+	fx := []Match{
+		{Name: "Some Bairro", PlaceType: "neighbourhood", Lat: -23.20, Lon: -47.29},
+		{Name: "Parque do Centro", PlaceType: "park", Lat: -23.20, Lon: -47.29},
+	}
+	path := buildTestDB(t, fx)
+	g, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	m := g.Nearest(-23.20, -47.29)
+	if m == nil || m.Name != "Parque do Centro" {
+		t.Errorf("got %v, want Parque do Centro (park precedes neighbourhood)", m)
+	}
+}
+
+func TestNearest_ProtectedAreaThreshold(t *testing.T) {
+	// Protected area at 6km is beyond the 5km threshold so it's
+	// dropped even with no competing feature.
+	fx := []Match{
+		{Name: "Reserva Estadual", PlaceType: "protected_area",
+			Lat: -23.254, Lon: -47.290}, // ~6km south
+	}
+	path := buildTestDB(t, fx)
+	g, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	if m := g.Nearest(-23.20, -47.29); m != nil {
+		t.Errorf("expected nil (protected_area beyond threshold), got %v", m)
+	}
+}
+
 func TestOpen_MissingFile(t *testing.T) {
 	if _, err := Open("/nonexistent/path/places.db"); err == nil {
 		t.Error("expected error opening missing file")
