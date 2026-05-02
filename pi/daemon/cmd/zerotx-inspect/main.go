@@ -23,6 +23,7 @@ func main() {
 
 	var m *model.EdgeTXModel
 	var bindings map[string]model.Binding
+	var meta *model.ZeroTXMeta
 	if *wrap {
 		z, err := model.LoadZeroTX(path)
 		if err != nil {
@@ -30,6 +31,7 @@ func main() {
 		}
 		m = &z.EdgeTX
 		bindings = z.ZeroTX.SourceBindings
+		meta = &z.ZeroTX
 	} else {
 		var err error
 		m, err = model.LoadEdgeTX(path)
@@ -45,6 +47,9 @@ func main() {
 	fmt.Printf("custom fn:    %d\n", len(m.CustomFn))
 	fmt.Printf("sensors:      %d\n", len(m.TelemetrySensors))
 	fmt.Printf("extras keys:  %d (preserved as Tier 2)\n", len(m.Extras))
+	if meta != nil && meta.Airframe != "" {
+		fmt.Printf("airframe:     %s\n", meta.Airframe)
+	}
 	fmt.Println()
 
 	fmt.Println("Channels:")
@@ -90,6 +95,60 @@ func main() {
 		}
 		fmt.Println()
 	}
+
+	if meta != nil && meta.Thresholds != nil {
+		printThresholds(meta.Thresholds)
+	}
+
+	if meta != nil && strings.TrimSpace(meta.Notes) != "" {
+		fmt.Println("Notes:")
+		for _, line := range strings.Split(strings.TrimRight(meta.Notes, "\n"), "\n") {
+			fmt.Printf("  %s\n", line)
+		}
+		fmt.Println()
+	}
+}
+
+// printThresholds writes the alarm-band configuration to stdout in
+// the same column-aligned style as the rest of the dump. Domains
+// without thresholds are skipped silently.
+func printThresholds(t *model.Thresholds) {
+	if t == nil {
+		return
+	}
+	hasAny := t.Battery != nil || t.Altitude != nil || t.Distance != nil ||
+		t.Link != nil || t.FlightTime != nil
+	if !hasAny {
+		return
+	}
+	fmt.Println("Thresholds:")
+	if b := t.Battery; b != nil {
+		fmt.Printf("  battery:     %dS\n", b.Cells)
+		// Show per-cell and derived pack voltages so the operator
+		// can sanity-check both at a glance.
+		fmt.Printf("               warn  %.2fV/cell  (pack %.2fV)\n",
+			b.CellWarnV, b.CellWarnV*float64(b.Cells))
+		fmt.Printf("               crit  %.2fV/cell  (pack %.2fV)\n",
+			b.CellCritV, b.CellCritV*float64(b.Cells))
+		fmt.Printf("               min   %.2fV/cell  (pack %.2fV)\n",
+			b.CellMinV, b.CellMinV*float64(b.Cells))
+		fmt.Printf("               full  %.2fV/cell  (pack %.2fV)\n",
+			b.CellFullV, b.CellFullV*float64(b.Cells))
+	}
+	if a := t.Altitude; a != nil {
+		fmt.Printf("  altitude:    warn %dm   crit %dm\n", a.WarnM, a.CritM)
+	}
+	if d := t.Distance; d != nil {
+		fmt.Printf("  distance:    warn %dm   crit %dm\n", d.WarnM, d.CritM)
+	}
+	if l := t.Link; l != nil {
+		fmt.Printf("  link RSSI:   warn %ddBm  crit %ddBm\n", l.RSSIWarnDBM, l.RSSICritDBM)
+		fmt.Printf("  link LQ:     warn %d%%   crit %d%%\n", l.LQWarnPct, l.LQCritPct)
+	}
+	if ft := t.FlightTime; ft != nil {
+		fmt.Printf("  flight_time: warn %ds   crit %ds\n", ft.WarnS, ft.CritS)
+	}
+	fmt.Println()
 }
 
 func describeBinding(b model.Binding) string {
