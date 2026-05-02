@@ -348,10 +348,10 @@ type Snapshot struct {
 	FCReady      bool  `json:"fcReady"`
 	Dropped      int   `json:"dropped"`
 
-	// RequestedAt is when the machine entered ARMING_REQUESTED. Zero
+	// RequestedAt is when the machine entered ARMING_REQUESTED. Nil
 	// in any other state. Useful for clients that want to display
 	// the original timestamp rather than the derived remaining.
-	RequestedAt time.Time `json:"requestedAt,omitempty"`
+	RequestedAt *time.Time `json:"requestedAt,omitempty"`
 
 	// RemainingSeconds is the time left before the arming-request
 	// timeout fires. Zero in any state other than ARMING_REQUESTED;
@@ -372,7 +372,8 @@ func (m *Machine) Snapshot() Snapshot {
 		Dropped:      m.dropped,
 	}
 	if m.state == StateArmingRequested {
-		out.RequestedAt = m.armRequestedAt
+		t := m.armRequestedAt
+		out.RequestedAt = &t
 		remaining := m.timeout - time.Since(m.armRequestedAt)
 		if remaining < 0 {
 			remaining = 0

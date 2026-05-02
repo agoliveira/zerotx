@@ -1,0 +1,316 @@
+diff --git a/pi/daemon/cmd/zerotxd/main.go b/pi/daemon/cmd/zerotxd/main.go
+index 1449329..25b0128 100644
+--- a/pi/daemon/cmd/zerotxd/main.go
++++ b/pi/daemon/cmd/zerotxd/main.go
+@@ -388,10 +388,80 @@ func main() {
+ 		}
+ 	}
+ 
+-	// Arm state machine: launch the event drain (logs transitions and
+-	// fires audio cues) and a 1Hz Tick driver for the 60s
++	// flightArmedHandler runs the daemon-side side effects of an arm
++	// transition: starting/stopping recording, locking joystick swaps,
++	// switching the HUB75 display mode, acknowledging alarms,
++	// triggering post-flight narration. Closure over all the
++	// subsystems it touches; called from drainArmEvents on EventArmed
++	// and EventDisarmed.
++	flightArmedHandler := func(armed bool) {
++		if armed {
++			name := ""
++			if s := holder.Load(); s != nil && s.Model != nil {
++				name = s.Model.EdgeTX.Header.Name
++			}
++			rec.OnArm(name, "")
++			// Record home position if GPS has a fix. Idempotent
++			// across re-arms (force=false) so multiple takeoffs
++			// in one session keep the original home.
++			if telemetryState.SetHome(false) {
++				log.Printf("home position set on arm")
++			}
++			if dispMgr != nil {
++				dispMgr.SetMode(display.ModeFlight)
++			}
++		} else {
++			path := rec.OnDisarm()
++			player.AcknowledgeAll()
++			if dispMgr != nil {
++				dispMgr.SetMode(display.ModePostflight)
++				// Postflight banner sticks for 30s on the device,
++				// then we drop back to PREFLIGHT (model still
++				// loaded) or IDLE.
++				go func() {
++					select {
++					case <-time.After(30 * time.Second):
++					case <-ctx.Done():
++						return
++					}
++					if dispMgr == nil {
++						return
++					}
++					if s := holder.Load(); s != nil && s.Model != nil {
++						dispMgr.SetMode(display.ModePreflight)
++					} else {
++						dispMgr.SetMode(display.ModeIdle)
++					}
++				}()
++			}
++
++			// Post-flight narration. If recording produced a saved
++			// file, summarize it and emit the narrative announcement.
++			// Failures here (file missing, summary error, etc.) are
++			// logged but do not affect any other disarm-side cleanup.
++			// We launch in a goroutine so the disarm path stays
++			// snappy: summary computation is cheap but the audio
++			// queue is async anyway, so launching async matches the
++			// rest of the audio path's contract.
++			if path != "" {
++				go func(p string) {
++					summary, err := recorder.Summarize(p)
++					if err != nil {
++						log.Printf("post-flight: summarize %s: %v", p, err)
++						return
++					}
++					narr.PlayPostFlight(summary)
++				}(path)
++			}
++		}
++		jsHolder.SetFlightArmed(armed)
++	}
++
++	// Arm state machine: launch the event drain (logs transitions,
++	// fires audio cues, runs flight-armed side effects on
++	// EventArmed/EventDisarmed) and a 1Hz Tick driver for the 60s
+ 	// arming-request timeout.
+-	go drainArmEvents(ctx, armMachine, player, holder)
++	go drainArmEvents(ctx, armMachine, player, holder, flightArmedHandler)
+ 	go tickArmMachine(ctx, armMachine)
+ 
+ 	// Start the API server if requested.
+@@ -807,74 +877,6 @@ func buildAPIProviders(
+ 			return nil
+ 		},
+ 		ListModels: listModels,
+-		SetFlightArmed: func(armed bool) {
+-			// Arming starts a recording; disarming closes it (which
+-			// auto-saves and rotates) and auto-acknowledges any active
+-			// audio alarms so the post-flight environment isn't still
+-			// beeping. Recorder failures are logged inside the package
+-			// and never block this code path.
+-			if armed {
+-				name := ""
+-				if s := holder.Load(); s != nil && s.Model != nil {
+-					name = s.Model.EdgeTX.Header.Name
+-				}
+-				rec.OnArm(name, "")
+-				// Record home position if GPS has a fix. Idempotent
+-				// across re-arms (force=false) so multiple takeoffs
+-				// in one session keep the original home.
+-				if telemState.SetHome(false) {
+-					log.Printf("home position set on arm")
+-				}
+-				if dispMgr != nil {
+-					dispMgr.SetMode(display.ModeFlight)
+-				}
+-			} else {
+-				path := rec.OnDisarm()
+-				player.AcknowledgeAll()
+-				if dispMgr != nil {
+-					dispMgr.SetMode(display.ModePostflight)
+-					// Postflight banner sticks for 30s on the device,
+-					// then we drop back to PREFLIGHT (model still
+-					// loaded) or IDLE.
+-					go func() {
+-						select {
+-						case <-time.After(30 * time.Second):
+-						case <-ctx.Done():
+-							return
+-						}
+-						if dispMgr == nil {
+-							return
+-						}
+-						if s := holder.Load(); s != nil && s.Model != nil {
+-							dispMgr.SetMode(display.ModePreflight)
+-						} else {
+-							dispMgr.SetMode(display.ModeIdle)
+-						}
+-					}()
+-				}
+-
+-				// Post-flight narration. If recording produced a
+-				// saved file, summarize it and emit the narrative
+-				// announcement. Failures here (file missing,
+-				// summary error, etc.) are logged but do not
+-				// affect any other disarm-side cleanup. We launch
+-				// in a goroutine so the disarm path stays snappy
+-				// — summary computation is cheap but the audio
+-				// queue is async anyway, so launching async
+-				// matches the rest of the audio path's contract.
+-				if path != "" {
+-					go func(p string) {
+-						summary, err := recorder.Summarize(p)
+-						if err != nil {
+-							log.Printf("post-flight: summarize %s: %v", p, err)
+-							return
+-						}
+-						narr.PlayPostFlight(summary)
+-					}(path)
+-				}
+-			}
+-			jsHolder.SetFlightArmed(armed)
+-		},
+ 		Telemetry: func() interface{} {
+ 			return telemState.Snapshot()
+ 		},
+@@ -1379,10 +1381,11 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
+ }
+ 
+ // drainArmEvents consumes events from the arm state machine and
+-// translates them into side effects: logs every transition and fires
+-// the matching audio cue. The ArmingRequested event tries to read back
+-// the current model name (or airframe class as fallback) for context.
+-func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder) {
++// translates them into side effects: logs every transition, fires the
++// matching audio cue, and runs flight-armed side effects (recorder,
++// display mode, alarm cleanup, post-flight narration) on EventArmed
++// and EventDisarmed.
++func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, flightArmedHandler func(bool)) {
+ 	events := m.Events()
+ 	for {
+ 		select {
+@@ -1391,6 +1394,14 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
+ 		case e := <-events:
+ 			log.Printf("arm: %s (state=%s)", e, m.State())
+ 			playArmCue(player, holder, e)
++			if flightArmedHandler != nil {
++				switch e {
++				case arm.EventArmed:
++					flightArmedHandler(true)
++				case arm.EventDisarmed:
++					flightArmedHandler(false)
++				}
++			}
+ 		}
+ 	}
+ }
+diff --git a/pi/daemon/internal/api/server.go b/pi/daemon/internal/api/server.go
+index da33778..62449a8 100644
+--- a/pi/daemon/internal/api/server.go
++++ b/pi/daemon/internal/api/server.go
+@@ -69,7 +69,6 @@ func (s *Server) Run(ctx context.Context) error {
+ 	mux.HandleFunc("/api/v1/joysticks", s.handleJoysticks)
+ 	mux.HandleFunc("/api/v1/joystick/select", s.handleJoystickSelect)
+ 	mux.HandleFunc("/api/v1/joystick/release", s.handleJoystickRelease)
+-	mux.HandleFunc("/api/v1/flight/arm", s.handleFlightArm)
+ 	mux.HandleFunc("/api/v1/arm", s.handleArm)
+ 	mux.HandleFunc("/api/v1/arm/confirm", s.handleArmConfirm)
+ 
+@@ -458,27 +457,6 @@ func (s *Server) handleJoystickRelease(w http.ResponseWriter, r *http.Request) {
+ 	writeJSON(w, http.StatusOK, map[string]string{"status": "released"})
+ }
+ 
+-// handleFlightArm flips the daemon's committed-to-flight state. Used by
+-// the pre-flight tab when the operator clicks "Ready to fly", and by the
+-// post-flight flow when landing is detected/confirmed.
+-func (s *Server) handleFlightArm(w http.ResponseWriter, r *http.Request) {
+-	if r.Method != http.MethodPost {
+-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+-		return
+-	}
+-	if s.providers.SetFlightArmed == nil {
+-		http.Error(w, "flight arm signal not supported on this daemon", http.StatusNotImplemented)
+-		return
+-	}
+-	var req ArmRequest
+-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+-		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+-		return
+-	}
+-	s.providers.SetFlightArmed(req.Armed)
+-	writeJSON(w, http.StatusOK, map[string]bool{"armed": req.Armed})
+-}
+-
+ // handleArm returns the current arm state machine snapshot (state +
+ // inputs). GET only. Returns 501 if the daemon doesn't have an arm
+ // machine wired up.
+diff --git a/pi/daemon/internal/api/state.go b/pi/daemon/internal/api/state.go
+index 44ce312..dff414d 100644
+--- a/pi/daemon/internal/api/state.go
++++ b/pi/daemon/internal/api/state.go
+@@ -284,11 +284,6 @@ type ModelFile struct {
+ 	Name string `json:"name"` // parsed model name (best-effort; "" if parse failed)
+ }
+ 
+-// ArmRequest is the body for POST /api/v1/flight/arm.
+-type ArmRequest struct {
+-	Armed bool `json:"armed"`
+-}
+-
+ // Providers is the set of sources the API server pulls from. All fields
+ // must be non-nil; pass no-op implementations for unavailable sources.
+ type Providers struct {
+@@ -313,14 +308,6 @@ type Providers struct {
+ 	// Models directory listing.
+ 	ListModels func(dir string) ([]ModelFile, error)
+ 
+-	// SetFlightArmed flips the daemon's "committed to a flight" state.
+-	// While armed, joystick swaps are rejected unless emergency=true.
+-	// The GUI flips this on the pre-flight tab when the operator clicks
+-	// "Ready to fly", and back off after landing/disarm in the post-flight
+-	// flow. Auto-detection from the model's arm logic switch is a future
+-	// refinement.
+-	SetFlightArmed func(armed bool)
+-
+ 	// Telemetry returns the current FC telemetry snapshot (typed in
+ 	// the daemon's internal/telemetry package). Returns nil when no
+ 	// telemetry has ever been received. The api package treats the
+diff --git a/pi/daemon/internal/arm/arm.go b/pi/daemon/internal/arm/arm.go
+index 6141f50..df9d8f7 100644
+--- a/pi/daemon/internal/arm/arm.go
++++ b/pi/daemon/internal/arm/arm.go
+@@ -348,10 +348,10 @@ type Snapshot struct {
+ 	FCReady      bool  `json:"fcReady"`
+ 	Dropped      int   `json:"dropped"`
+ 
+-	// RequestedAt is when the machine entered ARMING_REQUESTED. Zero
++	// RequestedAt is when the machine entered ARMING_REQUESTED. Nil
+ 	// in any other state. Useful for clients that want to display
+ 	// the original timestamp rather than the derived remaining.
+-	RequestedAt time.Time `json:"requestedAt,omitempty"`
++	RequestedAt *time.Time `json:"requestedAt,omitempty"`
+ 
+ 	// RemainingSeconds is the time left before the arming-request
+ 	// timeout fires. Zero in any state other than ARMING_REQUESTED;
+@@ -372,7 +372,8 @@ func (m *Machine) Snapshot() Snapshot {
+ 		Dropped:      m.dropped,
+ 	}
+ 	if m.state == StateArmingRequested {
+-		out.RequestedAt = m.armRequestedAt
++		t := m.armRequestedAt
++		out.RequestedAt = &t
+ 		remaining := m.timeout - time.Since(m.armRequestedAt)
+ 		if remaining < 0 {
+ 			remaining = 0
+diff --git a/pi/daemon/internal/arm/arm_test.go b/pi/daemon/internal/arm/arm_test.go
+index 77dc977..1b2fc18 100644
+--- a/pi/daemon/internal/arm/arm_test.go
++++ b/pi/daemon/internal/arm/arm_test.go
+@@ -329,7 +329,7 @@ func TestSnapshot_TimeoutFields(t *testing.T) {
+ 	if s.State != StateArmingRequested {
+ 		t.Fatalf("expected ARMING_REQUESTED, got %v", s.State)
+ 	}
+-	if s.RequestedAt.IsZero() {
++	if s.RequestedAt == nil {
+ 		t.Error("RequestedAt should be set in ARMING_REQUESTED")
+ 	}
+ 	if s.RemainingSeconds <= 0 || s.RemainingSeconds > 60 {
+@@ -341,8 +341,8 @@ func TestSnapshot_TimeoutFields(t *testing.T) {
+ 	if s.State != StateDisarmed {
+ 		t.Fatalf("expected DISARMED after key down, got %v", s.State)
+ 	}
+-	if !s.RequestedAt.IsZero() {
+-		t.Error("RequestedAt should be zero outside ARMING_REQUESTED")
++	if s.RequestedAt != nil {
++		t.Error("RequestedAt should be nil outside ARMING_REQUESTED")
+ 	}
+ 	if s.RemainingSeconds != 0 {
+ 		t.Errorf("RemainingSeconds=%d outside ARMING_REQUESTED, want 0", s.RemainingSeconds)

@@ -284,11 +284,6 @@ type ModelFile struct {
 	Name string `json:"name"` // parsed model name (best-effort; "" if parse failed)
 }
 
-// ArmRequest is the body for POST /api/v1/flight/arm.
-type ArmRequest struct {
-	Armed bool `json:"armed"`
-}
-
 // Providers is the set of sources the API server pulls from. All fields
 // must be non-nil; pass no-op implementations for unavailable sources.
 type Providers struct {
@@ -312,14 +307,6 @@ type Providers struct {
 
 	// Models directory listing.
 	ListModels func(dir string) ([]ModelFile, error)
-
-	// SetFlightArmed flips the daemon's "committed to a flight" state.
-	// While armed, joystick swaps are rejected unless emergency=true.
-	// The GUI flips this on the pre-flight tab when the operator clicks
-	// "Ready to fly", and back off after landing/disarm in the post-flight
-	// flow. Auto-detection from the model's arm logic switch is a future
-	// refinement.
-	SetFlightArmed func(armed bool)
 
 	// Telemetry returns the current FC telemetry snapshot (typed in
 	// the daemon's internal/telemetry package). Returns nil when no

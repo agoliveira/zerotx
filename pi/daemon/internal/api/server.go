@@ -69,7 +69,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/joysticks", s.handleJoysticks)
 	mux.HandleFunc("/api/v1/joystick/select", s.handleJoystickSelect)
 	mux.HandleFunc("/api/v1/joystick/release", s.handleJoystickRelease)
-	mux.HandleFunc("/api/v1/flight/arm", s.handleFlightArm)
 	mux.HandleFunc("/api/v1/arm", s.handleArm)
 	mux.HandleFunc("/api/v1/arm/confirm", s.handleArmConfirm)
 
@@ -456,27 +455,6 @@ func (s *Server) handleJoystickRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "released"})
-}
-
-// handleFlightArm flips the daemon's committed-to-flight state. Used by
-// the pre-flight tab when the operator clicks "Ready to fly", and by the
-// post-flight flow when landing is detected/confirmed.
-func (s *Server) handleFlightArm(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.providers.SetFlightArmed == nil {
-		http.Error(w, "flight arm signal not supported on this daemon", http.StatusNotImplemented)
-		return
-	}
-	var req ArmRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.providers.SetFlightArmed(req.Armed)
-	writeJSON(w, http.StatusOK, map[string]bool{"armed": req.Armed})
 }
 
 // handleArm returns the current arm state machine snapshot (state +

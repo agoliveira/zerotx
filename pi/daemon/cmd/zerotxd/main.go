@@ -388,10 +388,80 @@ func main() {
 		}
 	}
 
-	// Arm state machine: launch the event drain (logs transitions and
-	// fires audio cues) and a 1Hz Tick driver for the 60s
+	// flightArmedHandler runs the daemon-side side effects of an arm
+	// transition: starting/stopping recording, locking joystick swaps,
+	// switching the HUB75 display mode, acknowledging alarms,
+	// triggering post-flight narration. Closure over all the
+	// subsystems it touches; called from drainArmEvents on EventArmed
+	// and EventDisarmed.
+	flightArmedHandler := func(armed bool) {
+		if armed {
+			name := ""
+			if s := holder.Load(); s != nil && s.Model != nil {
+				name = s.Model.EdgeTX.Header.Name
+			}
+			rec.OnArm(name, "")
+			// Record home position if GPS has a fix. Idempotent
+			// across re-arms (force=false) so multiple takeoffs
+			// in one session keep the original home.
+			if telemetryState.SetHome(false) {
+				log.Printf("home position set on arm")
+			}
+			if dispMgr != nil {
+				dispMgr.SetMode(display.ModeFlight)
+			}
+		} else {
+			path := rec.OnDisarm()
+			player.AcknowledgeAll()
+			if dispMgr != nil {
+				dispMgr.SetMode(display.ModePostflight)
+				// Postflight banner sticks for 30s on the device,
+				// then we drop back to PREFLIGHT (model still
+				// loaded) or IDLE.
+				go func() {
+					select {
+					case <-time.After(30 * time.Second):
+					case <-ctx.Done():
+						return
+					}
+					if dispMgr == nil {
+						return
+					}
+					if s := holder.Load(); s != nil && s.Model != nil {
+						dispMgr.SetMode(display.ModePreflight)
+					} else {
+						dispMgr.SetMode(display.ModeIdle)
+					}
+				}()
+			}
+
+			// Post-flight narration. If recording produced a saved
+			// file, summarize it and emit the narrative announcement.
+			// Failures here (file missing, summary error, etc.) are
+			// logged but do not affect any other disarm-side cleanup.
+			// We launch in a goroutine so the disarm path stays
+			// snappy: summary computation is cheap but the audio
+			// queue is async anyway, so launching async matches the
+			// rest of the audio path's contract.
+			if path != "" {
+				go func(p string) {
+					summary, err := recorder.Summarize(p)
+					if err != nil {
+						log.Printf("post-flight: summarize %s: %v", p, err)
+						return
+					}
+					narr.PlayPostFlight(summary)
+				}(path)
+			}
+		}
+		jsHolder.SetFlightArmed(armed)
+	}
+
+	// Arm state machine: launch the event drain (logs transitions,
+	// fires audio cues, runs flight-armed side effects on
+	// EventArmed/EventDisarmed) and a 1Hz Tick driver for the 60s
 	// arming-request timeout.
-	go drainArmEvents(ctx, armMachine, player, holder)
+	go drainArmEvents(ctx, armMachine, player, holder, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
 
 	// Start the API server if requested.
@@ -807,74 +877,6 @@ func buildAPIProviders(
 			return nil
 		},
 		ListModels: listModels,
-		SetFlightArmed: func(armed bool) {
-			// Arming starts a recording; disarming closes it (which
-			// auto-saves and rotates) and auto-acknowledges any active
-			// audio alarms so the post-flight environment isn't still
-			// beeping. Recorder failures are logged inside the package
-			// and never block this code path.
-			if armed {
-				name := ""
-				if s := holder.Load(); s != nil && s.Model != nil {
-					name = s.Model.EdgeTX.Header.Name
-				}
-				rec.OnArm(name, "")
-				// Record home position if GPS has a fix. Idempotent
-				// across re-arms (force=false) so multiple takeoffs
-				// in one session keep the original home.
-				if telemState.SetHome(false) {
-					log.Printf("home position set on arm")
-				}
-				if dispMgr != nil {
-					dispMgr.SetMode(display.ModeFlight)
-				}
-			} else {
-				path := rec.OnDisarm()
-				player.AcknowledgeAll()
-				if dispMgr != nil {
-					dispMgr.SetMode(display.ModePostflight)
-					// Postflight banner sticks for 30s on the device,
-					// then we drop back to PREFLIGHT (model still
-					// loaded) or IDLE.
-					go func() {
-						select {
-						case <-time.After(30 * time.Second):
-						case <-ctx.Done():
-							return
-						}
-						if dispMgr == nil {
-							return
-						}
-						if s := holder.Load(); s != nil && s.Model != nil {
-							dispMgr.SetMode(display.ModePreflight)
-						} else {
-							dispMgr.SetMode(display.ModeIdle)
-						}
-					}()
-				}
-
-				// Post-flight narration. If recording produced a
-				// saved file, summarize it and emit the narrative
-				// announcement. Failures here (file missing,
-				// summary error, etc.) are logged but do not
-				// affect any other disarm-side cleanup. We launch
-				// in a goroutine so the disarm path stays snappy
-				// — summary computation is cheap but the audio
-				// queue is async anyway, so launching async
-				// matches the rest of the audio path's contract.
-				if path != "" {
-					go func(p string) {
-						summary, err := recorder.Summarize(p)
-						if err != nil {
-							log.Printf("post-flight: summarize %s: %v", p, err)
-							return
-						}
-						narr.PlayPostFlight(summary)
-					}(path)
-				}
-			}
-			jsHolder.SetFlightArmed(armed)
-		},
 		Telemetry: func() interface{} {
 			return telemState.Snapshot()
 		},
@@ -1379,10 +1381,11 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
 }
 
 // drainArmEvents consumes events from the arm state machine and
-// translates them into side effects: logs every transition and fires
-// the matching audio cue. The ArmingRequested event tries to read back
-// the current model name (or airframe class as fallback) for context.
-func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder) {
+// translates them into side effects: logs every transition, fires the
+// matching audio cue, and runs flight-armed side effects (recorder,
+// display mode, alarm cleanup, post-flight narration) on EventArmed
+// and EventDisarmed.
+func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, flightArmedHandler func(bool)) {
 	events := m.Events()
 	for {
 		select {
@@ -1391,6 +1394,14 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 		case e := <-events:
 			log.Printf("arm: %s (state=%s)", e, m.State())
 			playArmCue(player, holder, e)
+			if flightArmedHandler != nil {
+				switch e {
+				case arm.EventArmed:
+					flightArmedHandler(true)
+				case arm.EventDisarmed:
+					flightArmedHandler(false)
+				}
+			}
 		}
 	}
 }

@@ -329,7 +329,7 @@ func TestSnapshot_TimeoutFields(t *testing.T) {
 	if s.State != StateArmingRequested {
 		t.Fatalf("expected ARMING_REQUESTED, got %v", s.State)
 	}
-	if s.RequestedAt.IsZero() {
+	if s.RequestedAt == nil {
 		t.Error("RequestedAt should be set in ARMING_REQUESTED")
 	}
 	if s.RemainingSeconds <= 0 || s.RemainingSeconds > 60 {
@@ -341,8 +341,8 @@ func TestSnapshot_TimeoutFields(t *testing.T) {
 	if s.State != StateDisarmed {
 		t.Fatalf("expected DISARMED after key down, got %v", s.State)
 	}
-	if !s.RequestedAt.IsZero() {
-		t.Error("RequestedAt should be zero outside ARMING_REQUESTED")
+	if s.RequestedAt != nil {
+		t.Error("RequestedAt should be nil outside ARMING_REQUESTED")
 	}
 	if s.RemainingSeconds != 0 {
 		t.Errorf("RemainingSeconds=%d outside ARMING_REQUESTED, want 0", s.RemainingSeconds)
