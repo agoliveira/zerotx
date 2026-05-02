@@ -1805,11 +1805,12 @@ h2.warn { color: var(--warn); }
           <line x1="8" y1="0" x2="25" y2="0"/>
           <circle cx="0" cy="0" r="2" fill="#ffaa00"/>
         </g>
-        <!-- Roll indicator at top. -->
-        <g stroke="#fff" stroke-width="0.4" fill="#fff" font-size="5"
-           font-family="DSEG7, monospace">
+        <!-- Roll reference tick: shows "level" point at top center.
+             The horizon's visual tilt conveys the actual roll; no
+             numeric label needed. -->
+        <g stroke="#fff" stroke-width="0.4" fill="none">
           <line x1="0" y1="-50" x2="0" y2="-46"/>
-          <text x="0" y="-52" text-anchor="middle" id="horizon-roll-text">0°</text>
+          <line x1="-1" y1="-46" x2="1" y2="-46"/>
         </g>
         <!-- Heading tape, top -->
         <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="5">
@@ -3324,8 +3325,6 @@ const App = {
       const pitchGroup = document.getElementById('horizon-pitch');
       if (rollGroup) rollGroup.setAttribute('transform', `rotate(${-roll})`);
       if (pitchGroup) pitchGroup.setAttribute('transform', `translate(0 ${pitch})`);
-      const rt = document.getElementById('horizon-roll-text');
-      if (rt) rt.textContent = `${roll.toFixed(0)}°`;
     } else {
       tile.classList.add(stale ? 'stale' : 'muted');
     }
