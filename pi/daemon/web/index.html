@@ -1248,14 +1248,49 @@ h2.warn { color: var(--warn); }
   border-radius: 4px;
   display: block;
 }
-.hud-horizon-overlay {
+
+/* Side readouts on the horizon. Left = groundspeed, right =
+ * altitude. Positioned absolutely over the SVG so they stay
+ * pinned to the tile edges as the SVG scales. Centered
+ * vertically (around the horizon line at SVG y=0).
+ *
+ * The tile label and these readouts compete for the same top-
+ * left chrome area, so they're placed below the label by ~30px. */
+.hud-horizon-side {
   position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
-  justify-content: space-between;
-  width: 100%;
-  padding: 0 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 8px 12px;
+  border-radius: 3px;
   pointer-events: none;
-  box-sizing: border-box;
+}
+.hud-horizon-side.left  { left: 16px; }
+.hud-horizon-side.right { right: 16px; align-items: flex-end; }
+.hud-horizon-side .side-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.hud-horizon-side .side-value {
+  color: #fff;
+  font-family: 'DSEG7', monospace;
+  font-size: 36px;
+  letter-spacing: 0.05em;
+  line-height: 1;
+}
+.hud-horizon-side .side-unit {
+  color: var(--text-dim);
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-top: 4px;
 }
 
 /* === Telemetry stack (right column) === */
@@ -1766,6 +1801,18 @@ h2.warn { color: var(--warn); }
          Pure CSS/SVG transforms; updates are cheap. -->
     <div class="hud-horizon hud-tile" id="hud-horizon-tile">
       <div class="hud-tile-label">ATTITUDE</div>
+
+      <!-- Side readouts: groundspeed left, altitude right. -->
+      <div class="hud-horizon-side left">
+        <div class="side-label">SPD</div>
+        <div class="side-value" id="hud-horizon-spd">---</div>
+        <div class="side-unit">km/h</div>
+      </div>
+      <div class="hud-horizon-side right">
+        <div class="side-label">ALT</div>
+        <div class="side-value" id="hud-horizon-alt">----</div>
+        <div class="side-unit">m</div>
+      </div>
       <svg class="hud-horizon-svg" id="hud-horizon-svg"
            viewBox="-150 -60 300 120" preserveAspectRatio="xMidYMid slice">
         <!-- Clip the moving horizon to the visible disc. -->
@@ -3335,6 +3382,21 @@ const App = {
       hdgEl.textContent = `${t.gps.data.headingDeg.toFixed(0).padStart(3, '0')}°`;
     } else if (hdgEl) {
       hdgEl.textContent = '---°';
+    }
+
+    // Side readouts: groundspeed (left) and altitude (right) from
+    // GPS. These duplicate values shown in the GPS tile but live on
+    // the horizon for in-flight glance: operator stays on the
+    // horizon and reads speed/alt without scanning to the side.
+    const spdEl = document.getElementById('hud-horizon-spd');
+    if (spdEl) {
+      const v = t && t.gps && t.gps.data && t.gps.data.groundKmh;
+      spdEl.textContent = (typeof v === 'number') ? v.toFixed(0) : '---';
+    }
+    const altEl = document.getElementById('hud-horizon-alt');
+    if (altEl) {
+      const v = t && t.gps && t.gps.data && t.gps.data.altMeters;
+      altEl.textContent = (typeof v === 'number') ? v : '----';
     }
   },
 
