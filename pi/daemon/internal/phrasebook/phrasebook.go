@@ -353,12 +353,44 @@ func PeakDistance(lang string, meters int64) string {
 	return fmt.Sprintf("Peak distance %d meters.", meters)
 }
 
+// PeakDistanceAt is like PeakDistance with an optional location
+// clause. When place is empty it returns the same string as
+// PeakDistance. When non-empty, it appends a localized "near $place"
+// before the trailing period.
+//
+//	PeakDistanceAt("en", 1200, "Vila Industrial")
+//	  -> "Peak distance 1200 meters near Vila Industrial."
+//	PeakDistanceAt("pt", 1200, "Vila Industrial")
+//	  -> "Distância máxima 1200 metros perto de Vila Industrial."
+func PeakDistanceAt(lang string, meters int64, place string) string {
+	if place == "" {
+		return PeakDistance(lang, meters)
+	}
+	switch resolveLang(lang) {
+	case "pt":
+		return fmt.Sprintf("Distância máxima %d metros perto de %s.", meters, place)
+	}
+	return fmt.Sprintf("Peak distance %d meters near %s.", meters, place)
+}
+
 func PeakAltitude(lang string, meters int64) string {
 	switch resolveLang(lang) {
 	case "pt":
 		return fmt.Sprintf("Altitude máxima %d metros.", meters)
 	}
 	return fmt.Sprintf("Peak altitude %d meters.", meters)
+}
+
+// PeakAltitudeAt: see PeakDistanceAt for semantics.
+func PeakAltitudeAt(lang string, meters int64, place string) string {
+	if place == "" {
+		return PeakAltitude(lang, meters)
+	}
+	switch resolveLang(lang) {
+	case "pt":
+		return fmt.Sprintf("Altitude máxima %d metros sobre %s.", meters, place)
+	}
+	return fmt.Sprintf("Peak altitude %d meters over %s.", meters, place)
 }
 
 func FailsafeTriggered(lang string) string {

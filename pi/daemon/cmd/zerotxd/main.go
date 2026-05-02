@@ -38,6 +38,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 
 	"go.bug.st/serial"
 )
@@ -82,6 +83,7 @@ func main() {
 	displayBrightness := flag.Int("display-brightness", 80, "HUB75 display brightness 0-100")
 	mwpTeeAddr := flag.String("mwp-tee-addr", "127.0.0.1:5761", "TCP listen addr for CRSF telemetry tee to mwp; empty disables")
 	vfdPort := flag.String("vfd-port", "", "VFD diagnostic display: serial path (e.g. /dev/ttyACM2), \"log\" to scaffold via daemon log, or empty to disable")
+	geoDB := flag.String("geo-db", "", "Offline place-name database for post-flight narration (built by tools/build-geo.sh). Empty disables location enrichment.")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -305,10 +307,25 @@ func main() {
 	}
 	defer player.Close()
 
+	// Geo: optional offline place-name lookup for post-flight
+	// narration. Soft dependency; if -geo-db is empty or the file
+	// is missing, narration falls back to no-location phrasing.
+	var geoLookup narrator.GeoLookup
+	if *geoDB != "" {
+		gl, err := geo.Open(*geoDB)
+		if err != nil {
+			log.Printf("geo: open %s: %v (continuing without location enrichment)", *geoDB, err)
+		} else {
+			defer gl.Close()
+			geoLookup = geoAdapter{gl}
+			log.Printf("geo: loaded %s", *geoDB)
+		}
+	}
+
 	// Narrator builds and emits structured narrative announcements
 	// (boot greeting, post-flight summary). Pure transformation;
 	// owns no goroutines. Backed by the audio Player above.
-	narr := narrator.New(player, *soundsLang)
+	narr := narrator.New(player, *soundsLang, geoLookup)
 
 	// Recorder: SQLite-backed flight recording. In-memory while flying,
 	// saved to <recordings-dir> on disarm. Failures here must not

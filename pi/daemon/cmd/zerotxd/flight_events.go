@@ -201,6 +201,18 @@ func (d *flightEventDetector) checkMode(snap telemetry.Snapshot) {
 }
 
 func (d *flightEventDetector) checkPosition(snap telemetry.Snapshot) {
+	// Aircraft position at the moment we observed this peak. Used
+	// to enrich post-flight narration ("peak altitude near $place").
+	// Only attached when GPS is fresh; stale readings would point
+	// at a place the aircraft already left.
+	var lat, lon float64
+	var havePos bool
+	if snap.GPS != nil && !snap.GPS.Stale {
+		lat = snap.GPS.Data.LatDeg
+		lon = snap.GPS.Data.LonDeg
+		havePos = true
+	}
+
 	if snap.Home != nil {
 		dist := snap.Home.Data.DistanceM
 		if dist > d.peakDistanceM {
@@ -211,7 +223,12 @@ func (d *flightEventDetector) checkPosition(snap telemetry.Snapshot) {
 			newBucket := dist / 50
 			d.peakDistanceM = dist
 			if newBucket > oldBucket {
-				d.rec.LogEvent("flight", "peak-distance", "info", map[string]interface{}{"meters": dist})
+				detail := map[string]interface{}{"meters": dist}
+				if havePos {
+					detail["lat"] = lat
+					detail["lon"] = lon
+				}
+				d.rec.LogEvent("flight", "peak-distance", "info", detail)
 			}
 		}
 	}
@@ -222,7 +239,11 @@ func (d *flightEventDetector) checkPosition(snap telemetry.Snapshot) {
 			newBucket := alt / 25
 			d.peakAltitudeM = alt
 			if newBucket > oldBucket {
-				d.rec.LogEvent("flight", "peak-altitude", "info", map[string]interface{}{"meters": alt})
+				d.rec.LogEvent("flight", "peak-altitude", "info", map[string]interface{}{
+					"meters": alt,
+					"lat":    lat,
+					"lon":    lon,
+				})
 			}
 		}
 	}

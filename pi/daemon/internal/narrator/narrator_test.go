@@ -318,10 +318,10 @@ func TestBuildPostFlightSequence_CriticalAlarm(t *testing.T) {
 // === TTS post-flight ===
 
 func TestBuildPostFlightTTS_Empty(t *testing.T) {
-	if got := buildPostFlightTTS("en", nil); got != "" {
+	if got := buildPostFlightTTS("en", nil, nil); got != "" {
 		t.Errorf("nil events: got %q want empty", got)
 	}
-	if got := buildPostFlightTTS("en", []recorder.Event{}); got != "" {
+	if got := buildPostFlightTTS("en", []recorder.Event{}, nil); got != "" {
 		t.Errorf("empty events: got %q want empty", got)
 	}
 }
@@ -335,7 +335,7 @@ func TestBuildPostFlightTTS_CleanFlight(t *testing.T) {
 		{TsMs: 120000, Kind: "flight", Name: "peak-altitude", Level: "info", Detail: map[string]interface{}{"meters": float64(95)}},
 		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
 	}
-	got := buildPostFlightTTS("en", events)
+	got := buildPostFlightTTS("en", events, nil)
 	want := "Flight complete. 4 minutes 12 seconds. Peak distance 412 meters. Peak altitude 95 meters."
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -348,7 +348,7 @@ func TestBuildPostFlightTTS_PortugueseClean(t *testing.T) {
 		{TsMs: 90000, Kind: "flight", Name: "peak-distance", Level: "info", Detail: map[string]interface{}{"meters": float64(412)}},
 		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
 	}
-	got := buildPostFlightTTS("pt", events)
+	got := buildPostFlightTTS("pt", events, nil)
 	want := "Voo concluído. 4 minutos 12 segundos. Distância máxima 412 metros."
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -363,7 +363,7 @@ func TestBuildPostFlightTTS_WithRTHAndBatteryLow(t *testing.T) {
 		{TsMs: 230000, Kind: "flight", Name: "rth-active", Level: "warning"},
 		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
 	}
-	got := buildPostFlightTTS("en", events)
+	got := buildPostFlightTTS("en", events, nil)
 	want := "Flight complete. 4 minutes 12 seconds. Peak distance 300 meters. Return to home triggered. Battery low at 3 minutes 20 seconds."
 	if got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
@@ -378,7 +378,7 @@ func TestBuildPostFlightTTS_FailsafeWins(t *testing.T) {
 		{TsMs: 80000, Kind: "flight", Name: "failsafe", Level: "critical"},
 		{TsMs: 90000, Kind: "flight", Name: "disarmed", Level: "info"},
 	}
-	got := buildPostFlightTTS("en", events)
+	got := buildPostFlightTTS("en", events, nil)
 	wantContains := []string{"Failsafe triggered", "Battery critical at 1 minute 10 seconds"}
 	for _, w := range wantContains {
 		if !strings.Contains(got, w) {
@@ -387,5 +387,76 @@ func TestBuildPostFlightTTS_FailsafeWins(t *testing.T) {
 	}
 	if strings.Contains(got, "Battery low") {
 		t.Errorf("should suppress 'Battery low' when 'Battery critical' fired: %q", got)
+	}
+}
+
+// stubGeo is a test-only GeoLookup that returns a predetermined
+// name regardless of position. Used to verify the narrator's
+// enrichment plumbing without needing a real sqlite database.
+type stubGeo struct {
+	name string
+}
+
+func (s stubGeo) NearestName(_, _ float64) string { return s.name }
+
+func TestBuildPostFlightTTS_GeoEnrichment(t *testing.T) {
+	events := []recorder.Event{
+		{TsMs: 0, Kind: "flight", Name: "armed", Level: "info"},
+		{TsMs: 90000, Kind: "flight", Name: "peak-distance", Level: "info",
+			Detail: map[string]interface{}{
+				"meters": float64(412),
+				"lat":    float64(-23.20),
+				"lon":    float64(-47.29),
+			}},
+		{TsMs: 120000, Kind: "flight", Name: "peak-altitude", Level: "info",
+			Detail: map[string]interface{}{
+				"meters": float64(95),
+				"lat":    float64(-23.20),
+				"lon":    float64(-47.29),
+			}},
+		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
+	}
+	got := buildPostFlightTTS("en", events, stubGeo{name: "Vila Industrial"})
+	want := "Flight complete. 4 minutes 12 seconds. Peak distance 412 meters near Vila Industrial. Peak altitude 95 meters over Vila Industrial."
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestBuildPostFlightTTS_GeoMissingPos(t *testing.T) {
+	// Old recordings pre-date lat/lon enrichment of peak events.
+	// Should fall back to no-location phrasing even when geo is set.
+	events := []recorder.Event{
+		{TsMs: 0, Kind: "flight", Name: "armed", Level: "info"},
+		{TsMs: 90000, Kind: "flight", Name: "peak-distance", Level: "info",
+			Detail: map[string]interface{}{"meters": float64(412)}},
+		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
+	}
+	got := buildPostFlightTTS("en", events, stubGeo{name: "Should Not Appear"})
+	if strings.Contains(got, "Should Not Appear") {
+		t.Errorf("should not enrich when lat/lon missing: %q", got)
+	}
+	if !strings.Contains(got, "Peak distance 412 meters.") {
+		t.Errorf("expected unenriched form: %q", got)
+	}
+}
+
+func TestBuildPostFlightTTS_GeoEmptyName(t *testing.T) {
+	// When the lookup returns "" (no place in threshold), the
+	// narrator should omit the location phrase rather than say
+	// "near nothing."
+	events := []recorder.Event{
+		{TsMs: 0, Kind: "flight", Name: "armed", Level: "info"},
+		{TsMs: 90000, Kind: "flight", Name: "peak-distance", Level: "info",
+			Detail: map[string]interface{}{
+				"meters": float64(412),
+				"lat":    float64(-23.20),
+				"lon":    float64(-47.29),
+			}},
+		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
+	}
+	got := buildPostFlightTTS("en", events, stubGeo{name: ""})
+	if !strings.Contains(got, "Peak distance 412 meters.") {
+		t.Errorf("expected unenriched form when geo returns empty: %q", got)
 	}
 }

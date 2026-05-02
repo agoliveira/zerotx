@@ -44,13 +44,26 @@ import (
 type Narrator struct {
 	player audio.Player
 	lang   string
+	geo    GeoLookup
+}
+
+// GeoLookup resolves a (lat, lon) point to a place name suitable
+// for speaking. Implementations return "" when no nearby place is
+// worth mentioning (the narrator falls back to no-location phrasing).
+//
+// Decoupled from the geo package by an interface so the narrator
+// can be tested without sqlite, and so a future swap of geo backend
+// (e.g. online geocoder for indoor testing) doesn't ripple here.
+type GeoLookup interface {
+	NearestName(lat, lon float64) string
 }
 
 // New constructs a Narrator backed by the given player. Lang
 // controls the language of TTS phrases ("en" / "pt"). Empty / unknown
-// fall back to English at phrase-render time.
-func New(p audio.Player, lang string) *Narrator {
-	return &Narrator{player: p, lang: lang}
+// fall back to English at phrase-render time. geo is optional; pass
+// nil to disable location enrichment.
+func New(p audio.Player, lang string, geo GeoLookup) *Narrator {
+	return &Narrator{player: p, lang: lang, geo: geo}
 }
 
 // PlayBootGreeting announces system readiness on daemon startup.
@@ -86,7 +99,7 @@ func (n *Narrator) SpeakPostFlight(events []recorder.Event) string {
 	if n == nil || n.player == nil {
 		return ""
 	}
-	text := buildPostFlightTTS(n.lang, events)
+	text := buildPostFlightTTS(n.lang, events, n.geo)
 	if text == "" {
 		return ""
 	}
@@ -103,7 +116,7 @@ func (n *Narrator) SpeakPostFlight(events []recorder.Event) string {
 //
 // Always starts with the localized "Flight complete." and ends
 // with a period. Returns "" when events is empty.
-func buildPostFlightTTS(lang string, events []recorder.Event) string {
+func buildPostFlightTTS(lang string, events []recorder.Event, geo GeoLookup) string {
 	if len(events) == 0 {
 		return ""
 	}
@@ -117,8 +130,12 @@ func buildPostFlightTTS(lang string, events []recorder.Event) string {
 	}
 
 	// Peaks: last peak-distance / peak-altitude wins (events are
-	// ordered ascending and only emitted on new peaks).
+	// ordered ascending and only emitted on new peaks). Track the
+	// lat/lon attached to the winning event for geo enrichment.
 	var peakDist, peakAlt int64
+	var peakDistLat, peakDistLon float64
+	var peakAltLat, peakAltLon float64
+	var peakDistHasPos, peakAltHasPos bool
 	var battLowAt, battCriticalAt int64 = -1, -1
 	rthCount := 0
 	failsafeCount := 0
@@ -130,10 +147,20 @@ func buildPostFlightTTS(lang string, events []recorder.Event) string {
 		case "peak-distance":
 			if v, ok := intDetail(e.Detail, "meters"); ok && v > peakDist {
 				peakDist = v
+				if la, lo, hp := posFromDetail(e.Detail); hp {
+					peakDistLat, peakDistLon, peakDistHasPos = la, lo, true
+				} else {
+					peakDistHasPos = false
+				}
 			}
 		case "peak-altitude":
 			if v, ok := intDetail(e.Detail, "meters"); ok && v > peakAlt {
 				peakAlt = v
+				if la, lo, hp := posFromDetail(e.Detail); hp {
+					peakAltLat, peakAltLon, peakAltHasPos = la, lo, true
+				} else {
+					peakAltHasPos = false
+				}
 			}
 		case "battery-low":
 			if battLowAt < 0 {
@@ -151,10 +178,18 @@ func buildPostFlightTTS(lang string, events []recorder.Event) string {
 	}
 
 	if peakDist > 0 {
-		parts = append(parts, phrasebook.PeakDistance(lang, peakDist))
+		place := ""
+		if geo != nil && peakDistHasPos {
+			place = geo.NearestName(peakDistLat, peakDistLon)
+		}
+		parts = append(parts, phrasebook.PeakDistanceAt(lang, peakDist, place))
 	}
 	if peakAlt > 0 {
-		parts = append(parts, phrasebook.PeakAltitude(lang, peakAlt))
+		place := ""
+		if geo != nil && peakAltHasPos {
+			place = geo.NearestName(peakAltLat, peakAltLon)
+		}
+		parts = append(parts, phrasebook.PeakAltitudeAt(lang, peakAlt, place))
 	}
 	if failsafeCount > 0 {
 		parts = append(parts, phrasebook.FailsafeTriggered(lang))
@@ -169,6 +204,41 @@ func buildPostFlightTTS(lang string, events []recorder.Event) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// posFromDetail extracts (lat, lon) from an event's detail map if
+// both keys are present and parseable. Returns hasPos=false when the
+// event predates lat/lon enrichment or carries malformed values.
+func posFromDetail(d map[string]interface{}) (lat, lon float64, hasPos bool) {
+	if d == nil {
+		return 0, 0, false
+	}
+	la, laOK := floatDetail(d, "lat")
+	lo, loOK := floatDetail(d, "lon")
+	if !laOK || !loOK {
+		return 0, 0, false
+	}
+	return la, lo, true
+}
+
+// floatDetail extracts a float64 from a detail map, accepting both
+// the JSON-unmarshalled float64 and a few integer-ish forms.
+func floatDetail(d map[string]interface{}, key string) (float64, bool) {
+	v, ok := d[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
 }
 
 // intDetail extracts an integer field from an Event.Detail map.
