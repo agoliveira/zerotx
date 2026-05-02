@@ -6,22 +6,27 @@ VFD wired in 4-bit HD44780 mode.
 
 ## Wiring
 
-See the comment block at the top of `platformio.ini`. Summary:
+The Noritake CU20025ECPB-W1J is a 14-pin HD44780-compatible
+parallel module. We wire it in 4-bit mode (6 GPIOs).
 
-| VFD pin | VFD function | Pro Micro |
-| ------- | ------------ | --------- |
-| 1       | VSS          | GND       |
-| 2       | VDD          | +5V       |
-| 3       | VO (contrast)| GND (unused on VFD) |
-| 4       | RS           | D7        |
-| 5       | R/W          | GND (write-only) |
-| 6       | E            | D8        |
-| 7-10    | D0-D3        | NC (4-bit mode) |
-| 11      | D4           | D9        |
-| 12      | D5           | D10       |
-| 13      | D6           | D11       |
-| 14      | D7           | D12       |
-| 15-16   | LED+/-       | NC (no backlight on VFD) |
+| VFD pin | Function     | Connect to    | Notes |
+| ------- | ------------ | ------------- | ----- |
+| 1       | VSS          | GND           | red wire on the supplied flat cable (pin 1 convention) |
+| 2       | VDD          | +5V           | from CCTV PSU rail |
+| 3       | VO (contrast)| GND           | unused on VFD; tie to GND so input doesn't float |
+| 4       | RS           | Pro Micro D4  | |
+| 5       | R/W          | GND           | write-only mode |
+| 6       | E            | Pro Micro D5  | |
+| 7-10    | D0-D3        | NC            | 4-bit mode, leave open |
+| 11      | D4           | Pro Micro D6  | |
+| 12      | D5           | Pro Micro D7  | |
+| 13      | D6           | Pro Micro D8  | |
+| 14      | D7           | Pro Micro D9  | |
+
+The Pro Micro 5V/16MHz only breaks out D0-D10, D14-D16, and the
+analog block (D18-D21). D11/D12/D13 exist on the 32u4 die but
+not on the headers. D4-D9 form a clean six-pin contiguous block
+on the left edge of the board, perfect for ribbon routing.
 
 Power the VFD VDD from the case 5V CCTV PSU rail. The Pro Micro
 draws its own power from the Pi USB host port.

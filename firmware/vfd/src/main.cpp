@@ -27,13 +27,17 @@
 
 constexpr const char FW_VERSION[] = "0.1.0";
 
-// 4-bit parallel pin assignment (per HANDOVER.md Hardware section).
-constexpr uint8_t PIN_RS = 7;
-constexpr uint8_t PIN_EN = 8;
-constexpr uint8_t PIN_D4 = 9;
-constexpr uint8_t PIN_D5 = 10;
-constexpr uint8_t PIN_D6 = 11;
-constexpr uint8_t PIN_D7 = 12;
+// 4-bit parallel pin assignment.
+// SparkFun Pro Micro 5V/16MHz only breaks out D0-D10, D14-D16,
+// D18-D21 on the headers; D11, D12, D13 exist in the 32u4 but
+// aren't accessible on the board. We use D4-D9 (six contiguous
+// pins on the left edge) so the ribbon routing stays clean.
+constexpr uint8_t PIN_RS = 4;
+constexpr uint8_t PIN_EN = 5;
+constexpr uint8_t PIN_D4 = 6;
+constexpr uint8_t PIN_D5 = 7;
+constexpr uint8_t PIN_D6 = 8;
+constexpr uint8_t PIN_D7 = 9;
 
 constexpr uint8_t LCD_COLS = 20;
 constexpr uint8_t LCD_ROWS = 2;
