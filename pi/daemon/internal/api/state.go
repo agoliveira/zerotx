@@ -344,8 +344,19 @@ type Providers struct {
 	// arm-state events, which the GUI also subscribes to.
 	ArmConfirm func()
 
+	// ArmChecklist updates the operator-checklist gate on the arm
+	// state machine. Defaults to false at boot; arming is denied
+	// until a consumer (typically the GUI) says the checklist is
+	// satisfied or the operator has disabled the checklist policy.
+	ArmChecklist func(ok bool)
+
 	Version string
 	Uptime  func() time.Duration
+}
+
+// ArmChecklistRequest is the body for POST /api/v1/arm/checklist.
+type ArmChecklistRequest struct {
+	Ok bool `json:"ok"`
 }
 
 // snapshot assembles the current State from the providers.

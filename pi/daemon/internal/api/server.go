@@ -71,6 +71,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/joystick/release", s.handleJoystickRelease)
 	mux.HandleFunc("/api/v1/arm", s.handleArm)
 	mux.HandleFunc("/api/v1/arm/confirm", s.handleArmConfirm)
+	mux.HandleFunc("/api/v1/arm/checklist", s.handleArmChecklist)
 
 	// Static GUI at /. The embed.FS path is rooted; for dev iteration,
 	// SetWebDir bypasses it.
@@ -488,6 +489,29 @@ func (s *Server) handleArmConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	s.providers.ArmConfirm()
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "confirm"})
+}
+
+// handleArmChecklist updates the operator-checklist gate on the arm
+// state machine. POST { "ok": bool }. The default at boot is false:
+// arming is denied until something explicitly says the checklist is
+// satisfied (or the operator has opted out of the checklist
+// policy entirely, in which case the GUI sends true).
+func (s *Server) handleArmChecklist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.ArmChecklist == nil {
+		http.Error(w, "arm checklist not supported on this daemon", http.StatusNotImplemented)
+		return
+	}
+	var req ArmChecklistRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.providers.ArmChecklist(req.Ok)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": req.Ok})
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {

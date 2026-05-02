@@ -94,6 +94,11 @@ const (
 	// State unchanged.
 	EventArmDeniedNotReady
 
+	// EventArmDeniedChecklist: confirm pressed, throttle is zero
+	// and FC is ready, but the operator's pre-flight checklist is
+	// not satisfied. State unchanged.
+	EventArmDeniedChecklist
+
 	// EventDisarmed: ARMED -> DISARMED via key flip down with
 	// throttle zero.
 	EventDisarmed
@@ -120,6 +125,8 @@ func (e Event) String() string {
 		return "arm-denied-throttle"
 	case EventArmDeniedNotReady:
 		return "arm-denied-not-ready"
+	case EventArmDeniedChecklist:
+		return "arm-denied-checklist"
 	case EventDisarmed:
 		return "disarmed"
 	case EventDisarmDeniedInFlight:
@@ -147,6 +154,13 @@ type Machine struct {
 	keyUp        bool
 	throttleZero bool
 	fcReady      bool
+	// checklistOk is the GUI's (or any other consumer's) signal that
+	// the operator's pre-flight checklist is satisfied. Defaults to
+	// false: arming is denied until something explicitly says it's
+	// safe. The GUI sends "true" when items are complete (or the
+	// operator has disabled the checklist policy entirely). Headless
+	// usage must also send "true" to arm.
+	checklistOk bool
 
 	// armRequestedAt is the time when state became
 	// ARMING_REQUESTED. Used to compute timeout.
@@ -274,12 +288,15 @@ func (m *Machine) KeyChanged(keyUp bool) {
 //
 // Transitions (only from ARMING_REQUESTED):
 //
-//	throttle=0 + ready=true  -> ARMED
-//	throttle=0 + ready=false -> stay (EventArmDeniedNotReady)
-//	throttle!=0              -> stay (EventArmDeniedThrottle)
+//	throttle!=0                              -> stay (EventArmDeniedThrottle)
+//	throttle=0 + ready=false                 -> stay (EventArmDeniedNotReady)
+//	throttle=0 + ready=true + checklist=false -> stay (EventArmDeniedChecklist)
+//	throttle=0 + ready=true + checklist=true  -> ARMED
 //
-// Throttle takes precedence over readiness in the denial cue
-// because throttle is the simpler, more visceral safety check.
+// Throttle takes precedence in the denial cue because it's the
+// simpler, more visceral safety check. FC-readiness takes precedence
+// over the checklist because if the FC won't arm, the checklist is
+// moot.
 func (m *Machine) Confirm() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -292,6 +309,10 @@ func (m *Machine) Confirm() {
 	}
 	if !m.fcReady {
 		m.emit(EventArmDeniedNotReady)
+		return
+	}
+	if !m.checklistOk {
+		m.emit(EventArmDeniedChecklist)
 		return
 	}
 	m.state = StateArmed
@@ -317,6 +338,18 @@ func (m *Machine) FCReadyChanged(ready bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fcReady = ready
+}
+
+// ChecklistOkChanged updates the operator-checklist gate. Pure cache
+// update; does not transition by itself. Confirm consults it. The
+// daemon defaults this to false: the gate denies arming until a
+// consumer (typically the GUI) explicitly says the checklist is
+// satisfied or that the operator has opted out of the checklist
+// policy. Headless usage must call this with true to arm.
+func (m *Machine) ChecklistOkChanged(ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checklistOk = ok
 }
 
 // Tick advances time. The state machine itself doesn't observe
@@ -346,6 +379,7 @@ type Snapshot struct {
 	KeyUp        bool  `json:"keyUp"`
 	ThrottleZero bool  `json:"throttleZero"`
 	FCReady      bool  `json:"fcReady"`
+	ChecklistOk  bool  `json:"checklistOk"`
 	Dropped      int   `json:"dropped"`
 
 	// RequestedAt is when the machine entered ARMING_REQUESTED. Nil
@@ -369,6 +403,7 @@ func (m *Machine) Snapshot() Snapshot {
 		KeyUp:        m.keyUp,
 		ThrottleZero: m.throttleZero,
 		FCReady:      m.fcReady,
+		ChecklistOk:  m.checklistOk,
 		Dropped:      m.dropped,
 	}
 	if m.state == StateArmingRequested {

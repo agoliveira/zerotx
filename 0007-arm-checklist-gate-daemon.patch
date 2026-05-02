@@ -1,0 +1,304 @@
+diff --git a/pi/daemon/cmd/zerotxd/main.go b/pi/daemon/cmd/zerotxd/main.go
+index 25b0128..9b7ec98 100644
+--- a/pi/daemon/cmd/zerotxd/main.go
++++ b/pi/daemon/cmd/zerotxd/main.go
+@@ -38,7 +38,7 @@ import (
+ 	"go.bug.st/serial"
+ )
+ 
+-const version = "0.22.3-display-protocol"
++const version = "0.23.0-arm-checklist"
+ 
+ func main() {
+ 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
+@@ -883,7 +883,8 @@ func buildAPIProviders(
+ 		Arm: func() interface{} {
+ 			return armMachine.Snapshot()
+ 		},
+-		ArmConfirm: armMachine.Confirm,
++		ArmConfirm:   armMachine.Confirm,
++		ArmChecklist: armMachine.ChecklistOkChanged,
+ 		Audio: func() api.AudioInfo {
+ 			return api.AudioInfo{
+ 				Threshold:    player.Threshold().String(),
+diff --git a/pi/daemon/internal/api/server.go b/pi/daemon/internal/api/server.go
+index 62449a8..3e914cc 100644
+--- a/pi/daemon/internal/api/server.go
++++ b/pi/daemon/internal/api/server.go
+@@ -71,6 +71,7 @@ func (s *Server) Run(ctx context.Context) error {
+ 	mux.HandleFunc("/api/v1/joystick/release", s.handleJoystickRelease)
+ 	mux.HandleFunc("/api/v1/arm", s.handleArm)
+ 	mux.HandleFunc("/api/v1/arm/confirm", s.handleArmConfirm)
++	mux.HandleFunc("/api/v1/arm/checklist", s.handleArmChecklist)
+ 
+ 	// Static GUI at /. The embed.FS path is rooted; for dev iteration,
+ 	// SetWebDir bypasses it.
+@@ -490,6 +491,29 @@ func (s *Server) handleArmConfirm(w http.ResponseWriter, r *http.Request) {
+ 	writeJSON(w, http.StatusOK, map[string]string{"ok": "confirm"})
+ }
+ 
++// handleArmChecklist updates the operator-checklist gate on the arm
++// state machine. POST { "ok": bool }. The default at boot is false:
++// arming is denied until something explicitly says the checklist is
++// satisfied (or the operator has opted out of the checklist
++// policy entirely, in which case the GUI sends true).
++func (s *Server) handleArmChecklist(w http.ResponseWriter, r *http.Request) {
++	if r.Method != http.MethodPost {
++		http.Error(w, "POST required", http.StatusMethodNotAllowed)
++		return
++	}
++	if s.providers.ArmChecklist == nil {
++		http.Error(w, "arm checklist not supported on this daemon", http.StatusNotImplemented)
++		return
++	}
++	var req ArmChecklistRequest
++	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
++		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
++		return
++	}
++	s.providers.ArmChecklist(req.Ok)
++	writeJSON(w, http.StatusOK, map[string]bool{"ok": req.Ok})
++}
++
+ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+ 	writeJSON(w, http.StatusOK, s.providers.snapshot())
+ }
+diff --git a/pi/daemon/internal/api/state.go b/pi/daemon/internal/api/state.go
+index dff414d..130e8ae 100644
+--- a/pi/daemon/internal/api/state.go
++++ b/pi/daemon/internal/api/state.go
+@@ -344,10 +344,21 @@ type Providers struct {
+ 	// arm-state events, which the GUI also subscribes to.
+ 	ArmConfirm func()
+ 
++	// ArmChecklist updates the operator-checklist gate on the arm
++	// state machine. Defaults to false at boot; arming is denied
++	// until a consumer (typically the GUI) says the checklist is
++	// satisfied or the operator has disabled the checklist policy.
++	ArmChecklist func(ok bool)
++
+ 	Version string
+ 	Uptime  func() time.Duration
+ }
+ 
++// ArmChecklistRequest is the body for POST /api/v1/arm/checklist.
++type ArmChecklistRequest struct {
++	Ok bool `json:"ok"`
++}
++
+ // snapshot assembles the current State from the providers.
+ func (p *Providers) snapshot() State {
+ 	ch := p.Channels()
+diff --git a/pi/daemon/internal/arm/arm.go b/pi/daemon/internal/arm/arm.go
+index df9d8f7..dab01b1 100644
+--- a/pi/daemon/internal/arm/arm.go
++++ b/pi/daemon/internal/arm/arm.go
+@@ -94,6 +94,11 @@ const (
+ 	// State unchanged.
+ 	EventArmDeniedNotReady
+ 
++	// EventArmDeniedChecklist: confirm pressed, throttle is zero
++	// and FC is ready, but the operator's pre-flight checklist is
++	// not satisfied. State unchanged.
++	EventArmDeniedChecklist
++
+ 	// EventDisarmed: ARMED -> DISARMED via key flip down with
+ 	// throttle zero.
+ 	EventDisarmed
+@@ -120,6 +125,8 @@ func (e Event) String() string {
+ 		return "arm-denied-throttle"
+ 	case EventArmDeniedNotReady:
+ 		return "arm-denied-not-ready"
++	case EventArmDeniedChecklist:
++		return "arm-denied-checklist"
+ 	case EventDisarmed:
+ 		return "disarmed"
+ 	case EventDisarmDeniedInFlight:
+@@ -147,6 +154,13 @@ type Machine struct {
+ 	keyUp        bool
+ 	throttleZero bool
+ 	fcReady      bool
++	// checklistOk is the GUI's (or any other consumer's) signal that
++	// the operator's pre-flight checklist is satisfied. Defaults to
++	// false: arming is denied until something explicitly says it's
++	// safe. The GUI sends "true" when items are complete (or the
++	// operator has disabled the checklist policy entirely). Headless
++	// usage must also send "true" to arm.
++	checklistOk bool
+ 
+ 	// armRequestedAt is the time when state became
+ 	// ARMING_REQUESTED. Used to compute timeout.
+@@ -274,12 +288,15 @@ func (m *Machine) KeyChanged(keyUp bool) {
+ //
+ // Transitions (only from ARMING_REQUESTED):
+ //
+-//	throttle=0 + ready=true  -> ARMED
+-//	throttle=0 + ready=false -> stay (EventArmDeniedNotReady)
+-//	throttle!=0              -> stay (EventArmDeniedThrottle)
++//	throttle!=0                              -> stay (EventArmDeniedThrottle)
++//	throttle=0 + ready=false                 -> stay (EventArmDeniedNotReady)
++//	throttle=0 + ready=true + checklist=false -> stay (EventArmDeniedChecklist)
++//	throttle=0 + ready=true + checklist=true  -> ARMED
+ //
+-// Throttle takes precedence over readiness in the denial cue
+-// because throttle is the simpler, more visceral safety check.
++// Throttle takes precedence in the denial cue because it's the
++// simpler, more visceral safety check. FC-readiness takes precedence
++// over the checklist because if the FC won't arm, the checklist is
++// moot.
+ func (m *Machine) Confirm() {
+ 	m.mu.Lock()
+ 	defer m.mu.Unlock()
+@@ -294,6 +311,10 @@ func (m *Machine) Confirm() {
+ 		m.emit(EventArmDeniedNotReady)
+ 		return
+ 	}
++	if !m.checklistOk {
++		m.emit(EventArmDeniedChecklist)
++		return
++	}
+ 	m.state = StateArmed
+ 	m.emit(EventArmed)
+ }
+@@ -319,6 +340,18 @@ func (m *Machine) FCReadyChanged(ready bool) {
+ 	m.fcReady = ready
+ }
+ 
++// ChecklistOkChanged updates the operator-checklist gate. Pure cache
++// update; does not transition by itself. Confirm consults it. The
++// daemon defaults this to false: the gate denies arming until a
++// consumer (typically the GUI) explicitly says the checklist is
++// satisfied or that the operator has opted out of the checklist
++// policy. Headless usage must call this with true to arm.
++func (m *Machine) ChecklistOkChanged(ok bool) {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	m.checklistOk = ok
++}
++
+ // Tick advances time. The state machine itself doesn't observe
+ // real time except through this call; in tests, pass a fake time.
+ // Call frequency: anywhere between 1 Hz and 100 Hz works. Once a
+@@ -346,6 +379,7 @@ type Snapshot struct {
+ 	KeyUp        bool  `json:"keyUp"`
+ 	ThrottleZero bool  `json:"throttleZero"`
+ 	FCReady      bool  `json:"fcReady"`
++	ChecklistOk  bool  `json:"checklistOk"`
+ 	Dropped      int   `json:"dropped"`
+ 
+ 	// RequestedAt is when the machine entered ARMING_REQUESTED. Nil
+@@ -369,6 +403,7 @@ func (m *Machine) Snapshot() Snapshot {
+ 		KeyUp:        m.keyUp,
+ 		ThrottleZero: m.throttleZero,
+ 		FCReady:      m.fcReady,
++		ChecklistOk:  m.checklistOk,
+ 		Dropped:      m.dropped,
+ 	}
+ 	if m.state == StateArmingRequested {
+diff --git a/pi/daemon/internal/arm/arm_test.go b/pi/daemon/internal/arm/arm_test.go
+index 1b2fc18..e4c9163 100644
+--- a/pi/daemon/internal/arm/arm_test.go
++++ b/pi/daemon/internal/arm/arm_test.go
+@@ -96,6 +96,7 @@ func TestConfirm_HappyPath(t *testing.T) {
+ 	m.Init(false)
+ 	m.ThrottleChanged(true)
+ 	m.FCReadyChanged(true)
++	m.ChecklistOkChanged(true)
+ 	m.KeyChanged(true) // ARMING_REQUESTED
+ 	m.Confirm()        // should arm
+ 	if m.State() != StateArmed {
+@@ -107,6 +108,40 @@ func TestConfirm_HappyPath(t *testing.T) {
+ 	}
+ }
+ 
++func TestConfirm_DeniedChecklist(t *testing.T) {
++	m := New()
++	m.Init(false)
++	m.ThrottleChanged(true)
++	m.FCReadyChanged(true)
++	// checklistOk defaults to false; do not call ChecklistOkChanged.
++	m.KeyChanged(true)
++	m.Confirm()
++	if m.State() != StateArmingRequested {
++		t.Errorf("state should be unchanged: ARMING_REQUESTED, got %v", m.State())
++	}
++	got := drain(m, 5)
++	if len(got) != 2 || got[0] != EventArmingRequested || got[1] != EventArmDeniedChecklist {
++		t.Errorf("expected [requested, denied-checklist], got %v", got)
++	}
++}
++
++func TestConfirm_NotReadyTakesPrecedenceOverChecklist(t *testing.T) {
++	// Both FC-not-ready AND checklist-not-ok should produce the
++	// not-ready denial cue: if the FC won't arm, the checklist is
++	// moot.
++	m := New()
++	m.Init(false)
++	m.ThrottleChanged(true)
++	m.FCReadyChanged(false)
++	// checklistOk left at default false
++	m.KeyChanged(true)
++	m.Confirm()
++	got := drain(m, 5)
++	if len(got) != 2 || got[1] != EventArmDeniedNotReady {
++		t.Errorf("expected not-ready denial (precedence over checklist), got %v", got)
++	}
++}
++
+ func TestConfirm_DeniedThrottle(t *testing.T) {
+ 	m := New()
+ 	m.Init(false)
+@@ -173,6 +208,7 @@ func TestConfirm_IgnoredFromArmed(t *testing.T) {
+ 	m.Init(false)
+ 	m.ThrottleChanged(true)
+ 	m.FCReadyChanged(true)
++	m.ChecklistOkChanged(true)
+ 	m.KeyChanged(true)
+ 	m.Confirm()
+ 	drain(m, 5) // discard arming events
+@@ -187,6 +223,7 @@ func TestKeyChanged_DisarmFromArmedOnGround(t *testing.T) {
+ 	m.Init(false)
+ 	m.ThrottleChanged(true)
+ 	m.FCReadyChanged(true)
++	m.ChecklistOkChanged(true)
+ 	m.KeyChanged(true)
+ 	m.Confirm() // ARMED
+ 	drain(m, 5)
+@@ -206,6 +243,7 @@ func TestKeyChanged_DisarmFromArmedInFlight(t *testing.T) {
+ 	m.Init(false)
+ 	m.ThrottleChanged(true)
+ 	m.FCReadyChanged(true)
++	m.ChecklistOkChanged(true)
+ 	m.KeyChanged(true)
+ 	m.Confirm()
+ 	drain(m, 5)
+@@ -260,6 +298,7 @@ func TestTick_NoTimeoutFromOtherStates(t *testing.T) {
+ 	// ARMED: tick should do nothing.
+ 	m.ThrottleChanged(true)
+ 	m.FCReadyChanged(true)
++	m.ChecklistOkChanged(true)
+ 	m.KeyChanged(true)
+ 	m.Confirm()
+ 	drain(m, 5)
+@@ -274,6 +313,7 @@ func TestTelemetryFlapping_DoesNotAutoCancel(t *testing.T) {
+ 	m.Init(false)
+ 	m.ThrottleChanged(true)
+ 	m.FCReadyChanged(true)
++	m.ChecklistOkChanged(true)
+ 	m.KeyChanged(true) // ARMING_REQUESTED
+ 	// Now FC reports not-ready (e.g., GPS lock blip).
+ 	m.FCReadyChanged(false)
+diff --git a/sounds/dictionary.yml b/sounds/dictionary.yml
+index 5b811c4..082711d 100644
+--- a/sounds/dictionary.yml
++++ b/sounds/dictionary.yml
+@@ -92,6 +92,9 @@ tracks:
+   arm-denied-not-ready:
+     en: "Arm denied. Aircraft not ready."
+     pt: "Armar negado. Aeronave não está pronta."
++  arm-denied-checklist:
++    en: "Arm denied. Pre-flight checklist incomplete."
++    pt: "Armar negado. Lista de verificação incompleta."
+   disarm-denied-in-flight:
+     en: "Cannot disarm in flight."
+     pt: "Não posso desarmar em voo."

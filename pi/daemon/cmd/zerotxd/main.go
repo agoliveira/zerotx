@@ -38,7 +38,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.22.3-display-protocol"
+const version = "0.23.0-arm-checklist"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -883,7 +883,8 @@ func buildAPIProviders(
 		Arm: func() interface{} {
 			return armMachine.Snapshot()
 		},
-		ArmConfirm: armMachine.Confirm,
+		ArmConfirm:   armMachine.Confirm,
+		ArmChecklist: armMachine.ChecklistOkChanged,
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{
 				Threshold:    player.Threshold().String(),

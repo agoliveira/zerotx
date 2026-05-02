@@ -96,6 +96,7 @@ func TestConfirm_HappyPath(t *testing.T) {
 	m.Init(false)
 	m.ThrottleChanged(true)
 	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
 	m.KeyChanged(true) // ARMING_REQUESTED
 	m.Confirm()        // should arm
 	if m.State() != StateArmed {
@@ -104,6 +105,40 @@ func TestConfirm_HappyPath(t *testing.T) {
 	got := drain(m, 5)
 	if len(got) != 2 || got[0] != EventArmingRequested || got[1] != EventArmed {
 		t.Errorf("expected [requested, armed], got %v", got)
+	}
+}
+
+func TestConfirm_DeniedChecklist(t *testing.T) {
+	m := New()
+	m.Init(false)
+	m.ThrottleChanged(true)
+	m.FCReadyChanged(true)
+	// checklistOk defaults to false; do not call ChecklistOkChanged.
+	m.KeyChanged(true)
+	m.Confirm()
+	if m.State() != StateArmingRequested {
+		t.Errorf("state should be unchanged: ARMING_REQUESTED, got %v", m.State())
+	}
+	got := drain(m, 5)
+	if len(got) != 2 || got[0] != EventArmingRequested || got[1] != EventArmDeniedChecklist {
+		t.Errorf("expected [requested, denied-checklist], got %v", got)
+	}
+}
+
+func TestConfirm_NotReadyTakesPrecedenceOverChecklist(t *testing.T) {
+	// Both FC-not-ready AND checklist-not-ok should produce the
+	// not-ready denial cue: if the FC won't arm, the checklist is
+	// moot.
+	m := New()
+	m.Init(false)
+	m.ThrottleChanged(true)
+	m.FCReadyChanged(false)
+	// checklistOk left at default false
+	m.KeyChanged(true)
+	m.Confirm()
+	got := drain(m, 5)
+	if len(got) != 2 || got[1] != EventArmDeniedNotReady {
+		t.Errorf("expected not-ready denial (precedence over checklist), got %v", got)
 	}
 }
 
@@ -173,6 +208,7 @@ func TestConfirm_IgnoredFromArmed(t *testing.T) {
 	m.Init(false)
 	m.ThrottleChanged(true)
 	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
 	m.KeyChanged(true)
 	m.Confirm()
 	drain(m, 5) // discard arming events
@@ -187,6 +223,7 @@ func TestKeyChanged_DisarmFromArmedOnGround(t *testing.T) {
 	m.Init(false)
 	m.ThrottleChanged(true)
 	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
 	m.KeyChanged(true)
 	m.Confirm() // ARMED
 	drain(m, 5)
@@ -206,6 +243,7 @@ func TestKeyChanged_DisarmFromArmedInFlight(t *testing.T) {
 	m.Init(false)
 	m.ThrottleChanged(true)
 	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
 	m.KeyChanged(true)
 	m.Confirm()
 	drain(m, 5)
@@ -260,6 +298,7 @@ func TestTick_NoTimeoutFromOtherStates(t *testing.T) {
 	// ARMED: tick should do nothing.
 	m.ThrottleChanged(true)
 	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
 	m.KeyChanged(true)
 	m.Confirm()
 	drain(m, 5)
@@ -274,6 +313,7 @@ func TestTelemetryFlapping_DoesNotAutoCancel(t *testing.T) {
 	m.Init(false)
 	m.ThrottleChanged(true)
 	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
 	m.KeyChanged(true) // ARMING_REQUESTED
 	// Now FC reports not-ready (e.g., GPS lock blip).
 	m.FCReadyChanged(false)

@@ -92,6 +92,9 @@ tracks:
   arm-denied-not-ready:
     en: "Arm denied. Aircraft not ready."
     pt: "Armar negado. Aeronave não está pronta."
+  arm-denied-checklist:
+    en: "Arm denied. Pre-flight checklist incomplete."
+    pt: "Armar negado. Lista de verificação incompleta."
   disarm-denied-in-flight:
     en: "Cannot disarm in flight."
     pt: "Não posso desarmar em voo."
