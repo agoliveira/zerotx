@@ -506,7 +506,7 @@ func main() {
 	// fires audio cues, runs flight-armed side effects on
 	// EventArmed/EventDisarmed) and a 1Hz Tick driver for the 60s
 	// arming-request timeout.
-	go drainArmEvents(ctx, armMachine, player, holder, flightArmedHandler)
+	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
 
 	// Start the API server if requested.
@@ -1486,7 +1486,7 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
 // matching audio cue, and runs flight-armed side effects (recorder,
 // display mode, alarm cleanup, post-flight narration) on EventArmed
 // and EventDisarmed.
-func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, flightArmedHandler func(bool)) {
+func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, tel *telemetry.State, flightArmedHandler func(bool)) {
 	events := m.Events()
 	for {
 		select {
@@ -1494,7 +1494,7 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 			return
 		case e := <-events:
 			log.Printf("arm: %s (state=%s)", e, m.State())
-			playArmCue(player, holder, e)
+			playArmCue(player, holder, tel, e)
 			if flightArmedHandler != nil {
 				switch e {
 				case arm.EventArmed:
@@ -1508,25 +1508,85 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 }
 
 // playArmCue maps an arm.Event to the audio side effect. Most events
-// play a single track. ArmingRequested plays a sequence so the
-// operator hears which model is about to arm. Sequence tail tries
-// model-<sanitized-name> first, falling back to airframe-<class> if
-// no per-model recording exists, and to nothing if airframe is unset.
-func playArmCue(player audio.Player, holder *stackHolder, e arm.Event) {
+// play a single pre-baked track. ArmingRequested is the exception:
+// it speaks a TTS pre-flight summary built from current telemetry,
+// so the operator hears the live status instead of a generic cue.
+func playArmCue(player audio.Player, holder *stackHolder, tel *telemetry.State, e arm.Event) {
 	if player == nil {
+		return
+	}
+	if e == arm.EventArmingRequested {
+		player.Speak(buildPreflightSummary(holder, tel), audio.LevelNotice)
 		return
 	}
 	stem := armEventStem(e)
 	level := armEventLevel(e)
-	if e == arm.EventArmingRequested {
-		seq := []string{stem}
-		if tail := modelOrAirframeStem(holder); tail != "" {
-			seq = append(seq, tail)
-		}
-		player.PlaySequence("track", seq, level)
-		return
-	}
 	player.Play("track", stem, level)
+}
+
+// buildPreflightSummary composes the pre-flight TTS announcement.
+// Fragments are comma-separated to give natural TTS pauses. Missing
+// telemetry is omitted; the announcement says only what's known. The
+// final phrase is always "Ready to arm." so the operator hears a
+// clear closing cue.
+func buildPreflightSummary(holder *stackHolder, tel *telemetry.State) string {
+	var parts []string
+
+	// Model name.
+	if name := modelName(holder); name != "" {
+		parts = append(parts, name+".")
+	}
+
+	if tel != nil {
+		snap := tel.Snapshot()
+
+		// Battery.
+		if snap.Battery != nil && !snap.Battery.Stale {
+			b := snap.Battery.Data
+			frag := "Battery"
+			if b.CellCount > 0 {
+				frag += fmt.Sprintf(" %d cell", b.CellCount)
+			}
+			if b.Volts > 0 {
+				frag += fmt.Sprintf(", %.1f volts", b.Volts)
+			}
+			if b.Percent > 0 {
+				frag += fmt.Sprintf(", %d percent", b.Percent)
+			}
+			parts = append(parts, frag+".")
+		}
+
+		// GPS.
+		if snap.GPS != nil && !snap.GPS.Stale {
+			g := snap.GPS.Data
+			frag := fmt.Sprintf("%d satellites", g.Sats)
+			if g.Sats >= 6 {
+				frag += ", GPS lock"
+			} else {
+				frag += ", no lock"
+			}
+			parts = append(parts, frag+".")
+		}
+
+		// Link.
+		if snap.Link != nil && !snap.Link.Stale {
+			l := snap.Link.Data
+			parts = append(parts, fmt.Sprintf("Link %d percent.", l.UplinkLQ))
+		}
+	}
+
+	parts = append(parts, "Ready to arm.")
+	return strings.Join(parts, " ")
+}
+
+// modelName returns the loaded model's display name, or "" when no
+// model is loaded.
+func modelName(holder *stackHolder) string {
+	s := holder.Load()
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.Model.EdgeTX.Header.Name)
 }
 
 // armEventStem maps an arm.Event to its dictionary stem. Most events
@@ -1553,49 +1613,6 @@ func armEventLevel(e arm.Event) audio.Level {
 	default:
 		return audio.LevelNotice
 	}
-}
-
-// modelOrAirframeStem builds the audio stem describing which model
-// is loaded. Prefers a per-model recording (model-<sanitized>); falls
-// back to the airframe class (airframe-quad, airframe-wing, etc.);
-// returns "" when neither is available so the sequence plays the
-// arming-requested cue alone.
-func modelOrAirframeStem(holder *stackHolder) string {
-	s := holder.Load()
-	if s == nil {
-		return ""
-	}
-	if name := strings.TrimSpace(s.Model.EdgeTX.Header.Name); name != "" {
-		if stem := sanitizeModelStem(name); stem != "" {
-			return "model-" + stem
-		}
-	}
-	if af := strings.TrimSpace(s.Model.ZeroTX.Airframe); af != "" {
-		return "airframe-" + af
-	}
-	return ""
-}
-
-// sanitizeModelStem normalizes a model display name into a filesystem
-// stem: lowercased, alphanumerics and hyphens kept, whitespace
-// collapsed to single hyphens, everything else dropped. Returns "" if
-// nothing usable remains.
-func sanitizeModelStem(name string) string {
-	var b strings.Builder
-	prevHyphen := true // suppress leading hyphens
-	for _, r := range strings.ToLower(name) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			prevHyphen = false
-		case r == ' ' || r == '\t' || r == '_' || r == '-':
-			if !prevHyphen {
-				b.WriteByte('-')
-				prevHyphen = true
-			}
-		}
-	}
-	return strings.TrimRight(b.String(), "-")
 }
 
 // tickArmMachine drives the 60s arming-request timeout. Calls Tick
