@@ -314,6 +314,14 @@ func main() {
 	}
 	defer rec.Close()
 
+	// Flight event detector: edge-triggered classifier that watches
+	// telemetry snapshots while armed and emits discrete events to
+	// the recorder. The recorder is the source of truth; the detector
+	// is purely a producer. Post-flight narration consumes the events
+	// table, but the events are also useful for replay and analysis
+	// without TTS being on.
+	flightEvents := newFlightEventDetector(rec)
+
 	// Telemetry sampler: poll the telemetry snapshot at 5Hz and forward
 	// to the recorder. The recorder throttles internally to avoid
 	// duplicate rows when nothing has changed; this goroutine just has
@@ -344,6 +352,7 @@ func main() {
 					continue
 				}
 				rec.LogTelemetry(buildTelemetrySample(snap))
+				flightEvents.Tick(snap)
 				if dispMgr != nil {
 					dispMgr.SetState(telemetryToDisplayState(snap))
 				}
@@ -440,6 +449,7 @@ func main() {
 	// subsystems it touches; called from drainArmEvents on EventArmed
 	// and EventDisarmed.
 	flightArmedHandler := func(armed bool) {
+		flightEvents.SetArmed(armed)
 		if armed {
 			name := ""
 			if s := holder.Load(); s != nil && s.Model != nil {
