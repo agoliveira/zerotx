@@ -1783,11 +1783,11 @@ h2.warn { color: var(--warn); }
             <!-- Ground -->
             <rect x="-500" y="0" width="1000" height="500" fill="#8a5a2c"/>
             <!-- Horizon line -->
-            <line x1="-500" y1="0" x2="500" y2="0" stroke="#fff" stroke-width="1.4"/>
+            <line x1="-500" y1="0" x2="500" y2="0" stroke="#fff" stroke-width="0.7"/>
             <!-- Pitch ladder. Marks every 10 deg. SVG transform
                  of 1 unit = 1 deg pitch (we set up viewBox so
                  ±90deg maps to ±90 units). -->
-            <g stroke="#fff" stroke-width="0.8" fill="none">
+            <g stroke="#fff" stroke-width="0.4" fill="none">
               <line x1="-15" y1="-10" x2="15" y2="-10"/>
               <line x1="-25" y1="-20" x2="25" y2="-20"/>
               <line x1="-15" y1="-30" x2="15" y2="-30"/>
@@ -1800,20 +1800,20 @@ h2.warn { color: var(--warn); }
           </g>
         </g>
         <!-- Aircraft symbol: fixed to the screen, never rotates. -->
-        <g stroke="#ffaa00" stroke-width="3" fill="none">
-          <line x1="-40" y1="0" x2="-12" y2="0"/>
-          <line x1="12" y1="0" x2="40" y2="0"/>
-          <circle cx="0" cy="0" r="3" fill="#ffaa00"/>
+        <g stroke="#ffaa00" stroke-width="1.5" fill="none">
+          <line x1="-25" y1="0" x2="-8" y2="0"/>
+          <line x1="8" y1="0" x2="25" y2="0"/>
+          <circle cx="0" cy="0" r="2" fill="#ffaa00"/>
         </g>
         <!-- Roll indicator at top. -->
-        <g stroke="#fff" stroke-width="0.8" fill="#fff" font-size="6"
+        <g stroke="#fff" stroke-width="0.4" fill="#fff" font-size="5"
            font-family="DSEG7, monospace">
-          <line x1="0" y1="-50" x2="0" y2="-45"/>
+          <line x1="0" y1="-50" x2="0" y2="-46"/>
           <text x="0" y="-52" text-anchor="middle" id="horizon-roll-text">0°</text>
         </g>
         <!-- Heading tape, top -->
-        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="8">
-          <text x="0" y="-35" text-anchor="middle" id="horizon-hdg-text">---°</text>
+        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="5">
+          <text x="0" y="-37" text-anchor="middle" id="horizon-hdg-text">---°</text>
         </g>
       </svg>
     </div>
