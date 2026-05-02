@@ -72,6 +72,53 @@ tracks:
     pt: "Motores desarmados."
 
   # ============================================================
+  # ARM STATE MACHINE EVENTS
+  # ============================================================
+  # Cues fired by the GCS arm state machine. Distinct from the
+  # armed/disarm tracks above (which are CF-driven model logic);
+  # these announce GCS-side state transitions.
+  arming-requested:
+    en: "Ready to arm,"
+    pt: "Pronto para armar,"
+  arming-cancelled:
+    en: "Arming cancelled."
+    pt: "Armar cancelado."
+  arming-timeout:
+    en: "Arming timed out."
+    pt: "Tempo de armar esgotado."
+  arm-denied-throttle:
+    en: "Arm denied. Throttle is up."
+    pt: "Armar negado. Acelerador alto."
+  arm-denied-not-ready:
+    en: "Arm denied. Aircraft not ready."
+    pt: "Armar negado. Aeronave não está pronta."
+  disarm-denied-in-flight:
+    en: "Cannot disarm in flight."
+    pt: "Não posso desarmar em voo."
+  boot-key-up:
+    en: "Arm key is up. Flip down to reset."
+    pt: "Chave de armar levantada. Abaixe para resetar."
+
+  # ============================================================
+  # AIRFRAME FALLBACKS
+  # ============================================================
+  # Played as the tail of the arming-requested sequence when no
+  # per-model recording exists. English wording in all banks: voice
+  # accent varies, words don't.
+  airframe-quad:
+    en: "quadcopter."
+    pt: "quadcopter."
+  airframe-wing:
+    en: "fixed wing."
+    pt: "fixed wing."
+  airframe-plane:
+    en: "plane."
+    pt: "plane."
+  airframe-heli:
+    en: "helicopter."
+    pt: "helicopter."
+
+  # ============================================================
   # FAILSAFE / CRITICAL LINK
   # ============================================================
   failsafe:

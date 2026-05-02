@@ -388,10 +388,10 @@ func main() {
 		}
 	}
 
-	// Arm state machine: launch the event drain (logs transitions
-	// for now; audio/AUX wiring follow in subsequent steps) and a
-	// 1Hz Tick driver for the 60s arming-request timeout.
-	go drainArmEvents(ctx, armMachine)
+	// Arm state machine: launch the event drain (logs transitions and
+	// fires audio cues) and a 1Hz Tick driver for the 60s
+	// arming-request timeout.
+	go drainArmEvents(ctx, armMachine, player, holder)
 	go tickArmMachine(ctx, armMachine)
 
 	// Start the API server if requested.
@@ -1379,10 +1379,10 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
 }
 
 // drainArmEvents consumes events from the arm state machine and
-// translates them into side effects. For now (M3.1) it just logs;
-// audio cues, AUX channel wiring, and GUI state updates land in
-// later steps.
-func drainArmEvents(ctx context.Context, m *arm.Machine) {
+// translates them into side effects: logs every transition and fires
+// the matching audio cue. The ArmingRequested event tries to read back
+// the current model name (or airframe class as fallback) for context.
+func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder) {
 	events := m.Events()
 	for {
 		select {
@@ -1390,8 +1390,100 @@ func drainArmEvents(ctx context.Context, m *arm.Machine) {
 			return
 		case e := <-events:
 			log.Printf("arm: %s (state=%s)", e, m.State())
+			playArmCue(player, holder, e)
 		}
 	}
+}
+
+// playArmCue maps an arm.Event to the audio side effect. Most events
+// play a single track. ArmingRequested plays a sequence so the
+// operator hears which model is about to arm. Sequence tail tries
+// model-<sanitized-name> first, falling back to airframe-<class> if
+// no per-model recording exists, and to nothing if airframe is unset.
+func playArmCue(player audio.Player, holder *stackHolder, e arm.Event) {
+	if player == nil {
+		return
+	}
+	stem := armEventStem(e)
+	level := armEventLevel(e)
+	if e == arm.EventArmingRequested {
+		seq := []string{stem}
+		if tail := modelOrAirframeStem(holder); tail != "" {
+			seq = append(seq, tail)
+		}
+		player.PlaySequence("track", seq, level)
+		return
+	}
+	player.Play("track", stem, level)
+}
+
+// armEventStem maps an arm.Event to its dictionary stem. Most events
+// match Event.String() one-to-one; EventDisarmed reuses the existing
+// "disarm" track that CF logic already fires, so the GCS-side disarm
+// announcement sounds identical to the model-side one.
+func armEventStem(e arm.Event) string {
+	if e == arm.EventDisarmed {
+		return "disarm"
+	}
+	return e.String()
+}
+
+// armEventLevel classifies arm events for the audio threshold gate.
+// Most are notice-level (fire once, don't nag). Two are warning-level
+// because the operator likely needs to act: BootKeyUp blocks all
+// future arming until cleared, and DisarmDeniedInFlight tells the
+// operator the GCS can't help and they should reach for the radio
+// or the mushroom.
+func armEventLevel(e arm.Event) audio.Level {
+	switch e {
+	case arm.EventBootKeyUp, arm.EventDisarmDeniedInFlight:
+		return audio.LevelWarning
+	default:
+		return audio.LevelNotice
+	}
+}
+
+// modelOrAirframeStem builds the audio stem describing which model
+// is loaded. Prefers a per-model recording (model-<sanitized>); falls
+// back to the airframe class (airframe-quad, airframe-wing, etc.);
+// returns "" when neither is available so the sequence plays the
+// arming-requested cue alone.
+func modelOrAirframeStem(holder *stackHolder) string {
+	s := holder.Load()
+	if s == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(s.Model.EdgeTX.Header.Name); name != "" {
+		if stem := sanitizeModelStem(name); stem != "" {
+			return "model-" + stem
+		}
+	}
+	if af := strings.TrimSpace(s.Model.ZeroTX.Airframe); af != "" {
+		return "airframe-" + af
+	}
+	return ""
+}
+
+// sanitizeModelStem normalizes a model display name into a filesystem
+// stem: lowercased, alphanumerics and hyphens kept, whitespace
+// collapsed to single hyphens, everything else dropped. Returns "" if
+// nothing usable remains.
+func sanitizeModelStem(name string) string {
+	var b strings.Builder
+	prevHyphen := true // suppress leading hyphens
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevHyphen = false
+		case r == ' ' || r == '\t' || r == '_' || r == '-':
+			if !prevHyphen {
+				b.WriteByte('-')
+				prevHyphen = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 // tickArmMachine drives the 60s arming-request timeout. Calls Tick
