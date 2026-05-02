@@ -33,6 +33,7 @@ package narrator
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
@@ -56,6 +57,162 @@ func (n *Narrator) PlayBootGreeting() {
 		return
 	}
 	n.player.Play("track", "boot-greeting", audio.LevelInfo)
+}
+
+// SpeakPostFlight emits the post-flight summary as a single TTS
+// utterance derived from the in-flight event log. Tier 1 narration:
+// duration + peaks + noteworthy events (failsafe, RTH, battery
+// thresholds). Routine events (mode changes, GPS lock, link blips)
+// are not narrated; they remain accessible via the events log for
+// debug or replay.
+//
+// Returns the spoken text (useful for tests and logging) or "" if
+// nothing meaningful could be built from the events.
+func (n *Narrator) SpeakPostFlight(events []recorder.Event) string {
+	if n == nil || n.player == nil {
+		return ""
+	}
+	text := buildPostFlightTTS(events)
+	if text == "" {
+		return ""
+	}
+	n.player.Speak(text, audio.LevelNotice)
+	return text
+}
+
+// buildPostFlightTTS is the pure transformation: event log to
+// narration text. Exposed (lowercase) for testing without a player.
+//
+// Output shape:
+//   "Flight complete. <duration>. Peak distance <X> meters.
+//    Peak altitude <Y> meters. <noteworthy clauses>."
+//
+// Always starts with "Flight complete." and ends with a period.
+// Returns "" when events is empty (no flight to narrate).
+func buildPostFlightTTS(events []recorder.Event) string {
+	if len(events) == 0 {
+		return ""
+	}
+
+	parts := []string{"Flight complete."}
+
+	// Duration from first to last event timestamp.
+	durMs := events[len(events)-1].TsMs - events[0].TsMs
+	if durMs >= 1000 {
+		parts = append(parts, durationPhrase(int(durMs/1000))+".")
+	}
+
+	// Peaks: last peak-distance / peak-altitude wins (events are
+	// ordered ascending and only emitted on new peaks).
+	var peakDist, peakAlt int64
+	var battLowAt, battCriticalAt int64 = -1, -1
+	rthCount := 0
+	failsafeCount := 0
+	for _, e := range events {
+		if e.Kind != "flight" {
+			continue
+		}
+		switch e.Name {
+		case "peak-distance":
+			if v, ok := intDetail(e.Detail, "meters"); ok && v > peakDist {
+				peakDist = v
+			}
+		case "peak-altitude":
+			if v, ok := intDetail(e.Detail, "meters"); ok && v > peakAlt {
+				peakAlt = v
+			}
+		case "battery-low":
+			if battLowAt < 0 {
+				battLowAt = e.TsMs - events[0].TsMs
+			}
+		case "battery-critical":
+			if battCriticalAt < 0 {
+				battCriticalAt = e.TsMs - events[0].TsMs
+			}
+		case "rth-active":
+			rthCount++
+		case "failsafe":
+			failsafeCount++
+		}
+	}
+
+	if peakDist > 0 {
+		parts = append(parts, fmt.Sprintf("Peak distance %d meters.", peakDist))
+	}
+	if peakAlt > 0 {
+		parts = append(parts, fmt.Sprintf("Peak altitude %d meters.", peakAlt))
+	}
+
+	// Noteworthy events. Order: most-severe first (failsafe), then
+	// RTH, then battery thresholds. Time stamps relative to flight
+	// start, in m:ss form for readability.
+	if failsafeCount > 0 {
+		parts = append(parts, "Failsafe triggered.")
+	}
+	if rthCount > 0 {
+		parts = append(parts, "Return to home triggered.")
+	}
+	if battCriticalAt >= 0 {
+		parts = append(parts, "Battery critical at "+timestampPhrase(int(battCriticalAt/1000))+".")
+	} else if battLowAt >= 0 {
+		parts = append(parts, "Battery low at "+timestampPhrase(int(battLowAt/1000))+".")
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// durationPhrase produces "X minutes Y seconds" / "X seconds" from
+// a duration in seconds. Used for the flight-duration clause.
+func durationPhrase(sec int) string {
+	if sec < 60 {
+		if sec == 1 {
+			return "1 second"
+		}
+		return fmt.Sprintf("%d seconds", sec)
+	}
+	mins := sec / 60
+	rem := sec % 60
+	out := fmt.Sprintf("%d minutes", mins)
+	if mins == 1 {
+		out = "1 minute"
+	}
+	if rem > 0 {
+		if rem == 1 {
+			out += " 1 second"
+		} else {
+			out += fmt.Sprintf(" %d seconds", rem)
+		}
+	}
+	return out
+}
+
+// timestampPhrase produces "X minutes Y seconds" relative to flight
+// start. Used inline for noteworthy-event clauses ("Battery low at
+// 3 minutes 20 seconds.").
+func timestampPhrase(sec int) string {
+	return durationPhrase(sec)
+}
+
+// intDetail extracts an integer field from an Event.Detail map.
+// JSON-unmarshalled numbers come through as float64; we coerce
+// safely.
+func intDetail(d map[string]interface{}, key string) (int64, bool) {
+	if d == nil {
+		return 0, false
+	}
+	v, ok := d[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	}
+	return 0, false
 }
 
 // PlayPostFlight builds and emits a narrative summary of a saved

@@ -449,13 +449,16 @@ func main() {
 	// subsystems it touches; called from drainArmEvents on EventArmed
 	// and EventDisarmed.
 	flightArmedHandler := func(armed bool) {
-		flightEvents.SetArmed(armed)
 		if armed {
 			name := ""
 			if s := holder.Load(); s != nil && s.Model != nil {
 				name = s.Model.EdgeTX.Header.Name
 			}
 			rec.OnArm(name, "")
+			// Detector's SetArmed must come AFTER OnArm so the
+			// "armed" event is stamped to the new session_id, not
+			// the pre-arm session 0 (which gets wiped on rotation).
+			flightEvents.SetArmed(true)
 			// Record home position if GPS has a fix. Idempotent
 			// across re-arms (force=false) so multiple takeoffs
 			// in one session keep the original home.
@@ -466,6 +469,18 @@ func main() {
 				dispMgr.SetMode(display.ModeFlight)
 			}
 		} else {
+			// Detector's SetArmed BEFORE event capture so the
+			// "disarmed" event is included in the narration.
+			flightEvents.SetArmed(false)
+			// Capture flight events while the working DB still
+			// holds them (OnDisarm rotates the session). Errors
+			// here are logged; narration falls through to the
+			// pre-baked stitched path on failure.
+			flightEventsLog, eventsErr := rec.CurrentSessionEvents()
+			if eventsErr != nil {
+				log.Printf("post-flight: read events: %v", eventsErr)
+			}
+
 			path := rec.OnDisarm()
 			player.AcknowledgeAll()
 			if dispMgr != nil {
@@ -490,15 +505,15 @@ func main() {
 				}()
 			}
 
-			// Post-flight narration. If recording produced a saved
-			// file, summarize it and emit the narrative announcement.
-			// Failures here (file missing, summary error, etc.) are
-			// logged but do not affect any other disarm-side cleanup.
-			// We launch in a goroutine so the disarm path stays
-			// snappy: summary computation is cheap but the audio
-			// queue is async anyway, so launching async matches the
-			// rest of the audio path's contract.
-			if path != "" {
+			// Post-flight narration. Tier 1 is TTS built from the
+			// in-flight event log: duration + peaks + noteworthy
+			// events. Falls back to the pre-baked stitched
+			// summary (read from the saved file) when there are
+			// no events to narrate, which preserves something
+			// audible even when the detector is disabled or the
+			// flight produced no detectable signal.
+			spoken := narr.SpeakPostFlight(flightEventsLog)
+			if spoken == "" && path != "" {
 				go func(p string) {
 					summary, err := recorder.Summarize(p)
 					if err != nil {

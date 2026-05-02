@@ -2,6 +2,7 @@ package narrator
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
@@ -311,5 +312,89 @@ func TestBuildPostFlightSequence_CriticalAlarm(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected critical-alarm-triggered in sequence: %v", got)
+	}
+}
+
+// === TTS post-flight ===
+
+func TestBuildPostFlightTTS_Empty(t *testing.T) {
+	if got := buildPostFlightTTS(nil); got != "" {
+		t.Errorf("nil events: got %q want empty", got)
+	}
+	if got := buildPostFlightTTS([]recorder.Event{}); got != "" {
+		t.Errorf("empty events: got %q want empty", got)
+	}
+}
+
+func TestBuildPostFlightTTS_CleanFlight(t *testing.T) {
+	events := []recorder.Event{
+		{TsMs: 0, Kind: "flight", Name: "armed", Level: "info"},
+		{TsMs: 8000, Kind: "flight", Name: "gps-lock-acquired", Level: "info"},
+		{TsMs: 60000, Kind: "flight", Name: "peak-distance", Level: "info", Detail: map[string]interface{}{"meters": float64(100)}},
+		{TsMs: 90000, Kind: "flight", Name: "peak-distance", Level: "info", Detail: map[string]interface{}{"meters": float64(412)}},
+		{TsMs: 120000, Kind: "flight", Name: "peak-altitude", Level: "info", Detail: map[string]interface{}{"meters": float64(95)}},
+		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
+	}
+	got := buildPostFlightTTS(events)
+	want := "Flight complete. 4 minutes 12 seconds. Peak distance 412 meters. Peak altitude 95 meters."
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestBuildPostFlightTTS_WithRTHAndBatteryLow(t *testing.T) {
+	events := []recorder.Event{
+		{TsMs: 0, Kind: "flight", Name: "armed", Level: "info"},
+		{TsMs: 100000, Kind: "flight", Name: "peak-distance", Level: "info", Detail: map[string]interface{}{"meters": float64(300)}},
+		{TsMs: 200000, Kind: "flight", Name: "battery-low", Level: "warning"},
+		{TsMs: 230000, Kind: "flight", Name: "rth-active", Level: "warning"},
+		{TsMs: 252000, Kind: "flight", Name: "disarmed", Level: "info"},
+	}
+	got := buildPostFlightTTS(events)
+	want := "Flight complete. 4 minutes 12 seconds. Peak distance 300 meters. Return to home triggered. Battery low at 3 minutes 20 seconds."
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestBuildPostFlightTTS_FailsafeWins(t *testing.T) {
+	events := []recorder.Event{
+		{TsMs: 0, Kind: "flight", Name: "armed", Level: "info"},
+		{TsMs: 60000, Kind: "flight", Name: "battery-low", Level: "warning"},
+		{TsMs: 70000, Kind: "flight", Name: "battery-critical", Level: "critical"},
+		{TsMs: 80000, Kind: "flight", Name: "failsafe", Level: "critical"},
+		{TsMs: 90000, Kind: "flight", Name: "disarmed", Level: "info"},
+	}
+	got := buildPostFlightTTS(events)
+	// Should mention failsafe and battery-critical (preferred over battery-low when both fired).
+	wantContains := []string{"Failsafe triggered", "Battery critical at 1 minute 10 seconds"}
+	for _, w := range wantContains {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in %q", w, got)
+		}
+	}
+	if strings.Contains(got, "Battery low") {
+		t.Errorf("should suppress 'Battery low' when 'Battery critical' fired: %q", got)
+	}
+}
+
+func TestDurationPhrase(t *testing.T) {
+	cases := []struct {
+		sec  int
+		want string
+	}{
+		{1, "1 second"},
+		{5, "5 seconds"},
+		{59, "59 seconds"},
+		{60, "1 minute"},
+		{61, "1 minute 1 second"},
+		{125, "2 minutes 5 seconds"},
+		{252, "4 minutes 12 seconds"},
+		{600, "10 minutes"},
+	}
+	for _, c := range cases {
+		if got := durationPhrase(c.sec); got != c.want {
+			t.Errorf("%d: got %q want %q", c.sec, got, c.want)
+		}
 	}
 }
