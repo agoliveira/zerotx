@@ -104,6 +104,12 @@ func (f *Firehose) scroll(line string) {
 // FormatLine takes a raw log message, strips Go's standard
 // timestamp prefix, and truncates the remainder to Width chars.
 //
+// Returns "" for entries the firehose should NOT scroll:
+//   - empty / whitespace-only input
+//   - LogDriver output ("[vfd] ...") to break the obvious feedback
+//     loop where LogDriver writes to log → logbuf → firehose →
+//     LogDriver
+//
 // Examples:
 //
 //	"2026/05/02 15:50:25.481 crsftee: listening on 127.0.0.1..."
@@ -111,12 +117,13 @@ func (f *Firehose) scroll(line string) {
 //
 //	"2026/05/02 15:51:43.414 fc-ready: mode=\"ANGL\" ready=true"
 //	  -> "fc-ready: mode=\"ANGL"
-//
-// Empty input or input that's pure whitespace returns "".
 func FormatLine(msg string) string {
 	s := stripTimestamp(msg)
 	s = strings.TrimSpace(s)
 	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "[vfd]") {
 		return ""
 	}
 	if len(s) > Width {

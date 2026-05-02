@@ -80,6 +80,16 @@ func TestFormatLine(t *testing.T) {
 			"",
 			"",
 		},
+		// Self-output from LogDriver should be filtered to break
+		// the feedback loop (LogDriver -> log -> logbuf -> firehose).
+		{
+			"[vfd] |crsftee: listening|",
+			"",
+		},
+		{
+			"2026/05/02 15:50:25.481 [vfd] |something|",
+			"",
+		},
 	}
 	for _, c := range cases {
 		if got := FormatLine(c.in); got != c.want {
