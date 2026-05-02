@@ -59,7 +59,7 @@ func main() {
 	modelImage := flag.String("model-image", "", "path to model bitmap file (BMP/PNG/JPG); shown in Model tab if set")
 	panelFile := flag.String("panel-file", "", "GCS panel state YAML; live-reloaded on edit")
 	panelStdin := flag.Bool("panel-stdin", false, "read panel commands from stdin (mutually exclusive with -panel-file)")
-	soundsDir := flag.String("sounds-dir", os.ExpandEnv("$HOME/fpv/Edgetx/sd/SOUNDS"), "audio sample directory (EdgeTX-compatible layout)")
+	soundsDir := flag.String("sounds-dir", os.ExpandEnv("$HOME/zerotx/sounds"), "audio sample directory (EdgeTX-compatible layout)")
 	soundsLang := flag.String("sounds-lang", "en", "language subdirectory under -sounds-dir (e.g. en, pt)")
 	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
 	audioThreshold := flag.String("audio-threshold", "notice", "audio threshold: info / notice / warning / critical (critical events ignore threshold)")
