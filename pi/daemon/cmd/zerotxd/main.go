@@ -546,12 +546,11 @@ func main() {
 			// doesn't false-positive as "throttle non-zero".
 			armMachine.ThrottleChanged(ch[2] <= 200)
 			// FC ready-to-arm: derive from flight mode telemetry.
-			// Permissive heuristic for now — fresh, non-empty mode
-			// string counts as ready. Real FCs (INAV/ArduPilot)
-			// signal pre-arm errors via decorations in the mode
-			// string (asterisks, '!' prefixes); refinement to check
-			// those will come once we have real FC telemetry to
-			// pattern against.
+			// Permissive heuristic for now: fresh, non-empty mode
+			// string counts as ready. INAV signals pre-arm errors
+			// via decorations in the mode string (asterisks, '!'
+			// prefixes); refinement to check those will come once
+			// we have real FC telemetry to pattern against.
 			tsnap := telemetryState.Snapshot()
 			fcReady := tsnap.FlightMode != nil && !tsnap.FlightMode.Stale && tsnap.FlightMode.Data.Mode != ""
 			armMachine.FCReadyChanged(fcReady)

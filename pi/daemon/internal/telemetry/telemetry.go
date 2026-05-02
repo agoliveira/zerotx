@@ -30,9 +30,8 @@
 //
 // Future work (not in this round): vario, attitude, baro, GPS time.
 // MSP-over-CRSF (frame 0x7A) would let us query MSP_BATTERY_STATE for
-// real cell count. MAVLink-over-CRSF (frame 0xAA) is the ArduPilot
-// equivalent. Both are deferred; for now we use a charged-LiPo
-// heuristic for cell count.
+// real cell count. Deferred; for now we use a charged-LiPo heuristic
+// for cell count.
 package telemetry
 
 import (
@@ -53,7 +52,7 @@ const (
 )
 
 // Stale-detection windows per frame type. Chosen to be ~5x the typical
-// emission rate of the corresponding sensor in INAV/ArduPilot defaults.
+// emission rate of the corresponding sensor in INAV defaults.
 // Crossing the threshold means "we should distrust this data" rather
 // than "discard it"; the State still serves the last value with
 // Stale=true so the GUI can decide what to do.
@@ -109,10 +108,9 @@ type Link struct {
 	TxPowerIdx      uint8 `json:"txPowerIdx"`
 }
 
-// FlightMode holds the FC-reported flight mode string. Strings vary by
-// FC: INAV uses "ANGL", "ACRO", "MANU", "RTH ", "WP  ", etc. ArduPilot
-// uses "STAB", "ALT_HOLD", "AUTO", etc. The daemon doesn't interpret;
-// it just exposes the string.
+// FlightMode holds the FC-reported flight mode string. INAV uses
+// "ANGL", "ACRO", "MANU", "RTH ", "WP  ", etc. The daemon doesn't
+// interpret; it just exposes the string.
 type FlightMode struct {
 	Mode string `json:"mode"`
 }

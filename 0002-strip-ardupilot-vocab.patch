@@ -1,0 +1,124 @@
+diff --git a/pi/daemon/cmd/zerotxd/main.go b/pi/daemon/cmd/zerotxd/main.go
+index 0474be0..2ea5eb7 100644
+--- a/pi/daemon/cmd/zerotxd/main.go
++++ b/pi/daemon/cmd/zerotxd/main.go
+@@ -546,12 +546,11 @@ func main() {
+ 			// doesn't false-positive as "throttle non-zero".
+ 			armMachine.ThrottleChanged(ch[2] <= 200)
+ 			// FC ready-to-arm: derive from flight mode telemetry.
+-			// Permissive heuristic for now — fresh, non-empty mode
+-			// string counts as ready. Real FCs (INAV/ArduPilot)
+-			// signal pre-arm errors via decorations in the mode
+-			// string (asterisks, '!' prefixes); refinement to check
+-			// those will come once we have real FC telemetry to
+-			// pattern against.
++			// Permissive heuristic for now: fresh, non-empty mode
++			// string counts as ready. INAV signals pre-arm errors
++			// via decorations in the mode string (asterisks, '!'
++			// prefixes); refinement to check those will come once
++			// we have real FC telemetry to pattern against.
+ 			tsnap := telemetryState.Snapshot()
+ 			fcReady := tsnap.FlightMode != nil && !tsnap.FlightMode.Stale && tsnap.FlightMode.Data.Mode != ""
+ 			armMachine.FCReadyChanged(fcReady)
+diff --git a/pi/daemon/internal/telemetry/telemetry.go b/pi/daemon/internal/telemetry/telemetry.go
+index d9c2536..053af8f 100644
+--- a/pi/daemon/internal/telemetry/telemetry.go
++++ b/pi/daemon/internal/telemetry/telemetry.go
+@@ -30,9 +30,8 @@
+ //
+ // Future work (not in this round): vario, attitude, baro, GPS time.
+ // MSP-over-CRSF (frame 0x7A) would let us query MSP_BATTERY_STATE for
+-// real cell count. MAVLink-over-CRSF (frame 0xAA) is the ArduPilot
+-// equivalent. Both are deferred; for now we use a charged-LiPo
+-// heuristic for cell count.
++// real cell count. Deferred; for now we use a charged-LiPo heuristic
++// for cell count.
+ package telemetry
+ 
+ import (
+@@ -53,7 +52,7 @@ const (
+ )
+ 
+ // Stale-detection windows per frame type. Chosen to be ~5x the typical
+-// emission rate of the corresponding sensor in INAV/ArduPilot defaults.
++// emission rate of the corresponding sensor in INAV defaults.
+ // Crossing the threshold means "we should distrust this data" rather
+ // than "discard it"; the State still serves the last value with
+ // Stale=true so the GUI can decide what to do.
+@@ -109,10 +108,9 @@ type Link struct {
+ 	TxPowerIdx      uint8 `json:"txPowerIdx"`
+ }
+ 
+-// FlightMode holds the FC-reported flight mode string. Strings vary by
+-// FC: INAV uses "ANGL", "ACRO", "MANU", "RTH ", "WP  ", etc. ArduPilot
+-// uses "STAB", "ALT_HOLD", "AUTO", etc. The daemon doesn't interpret;
+-// it just exposes the string.
++// FlightMode holds the FC-reported flight mode string. INAV uses
++// "ANGL", "ACRO", "MANU", "RTH ", "WP  ", etc. The daemon doesn't
++// interpret; it just exposes the string.
+ type FlightMode struct {
+ 	Mode string `json:"mode"`
+ }
+diff --git a/sounds/dictionary.yml b/sounds/dictionary.yml
+index 6919585..056bacd 100644
+--- a/sounds/dictionary.yml
++++ b/sounds/dictionary.yml
+@@ -19,8 +19,7 @@
+ # === Naming conventions ===
+ #
+ #   alarms          : descriptive, kebab-case (bat-low, link-lost, failsafe)
+-#   flight modes    : mode-* prefix, shared across INAV and ArduPilot
+-#                     (mode-acro, mode-loiter, mode-poshold, etc.)
++#   flight modes    : mode-* prefix (mode-acro, mode-loiter, mode-poshold, etc.)
+ #   sentence frags  : descriptive phrase with its grammatical role
+ #                     (flight-complete, you-were-up-for, traveled,
+ #                      peak-altitude-of)
+@@ -224,10 +223,10 @@ tracks:
+     pt: "Waypoint alcançado."
+ 
+   # ============================================================
+-  # FLIGHT MODES (shared INAV + ArduPilot vocabulary)
++  # FLIGHT MODES
+   # ============================================================
+-  # Common modes. Names are stack-neutral so an INAV pilot and an
+-  # ArduPilot pilot hear the same word for the same concept.
++  # INAV flight mode vocabulary. Some entries (loiter, auto, guided,
++  # mission) are kept as alternate phrasings the operator may prefer.
+   mode-acro:        { en: "Acro.",             pt: "Acro." }
+   mode-angle:       { en: "Angle.",            pt: "Ângulo." }
+   mode-horizon:     { en: "Horizon.",          pt: "Horizonte." }
+@@ -236,10 +235,7 @@ tracks:
+   mode-loiter:      { en: "Loiter.",           pt: "Loiter." }
+   mode-cruise:      { en: "Cruise.",           pt: "Cruzeiro." }
+   mode-rth:         { en: "Return mode.",      pt: "Modo retorno." }
+-  mode-rtl:         { en: "Return to launch.", pt: "Retorno ao lançamento." }
+-  mode-smartrtl:    { en: "Smart return.",     pt: "Retorno inteligente." }
+   mode-manual:      { en: "Manual.",           pt: "Manual." }
+-  mode-stabilize:   { en: "Stabilize.",        pt: "Estabilizado." }
+   mode-launch:      { en: "Launch.",           pt: "Lançamento." }
+   mode-takeoff:     { en: "Takeoff.",          pt: "Decolagem." }
+   mode-land:        { en: "Land.",             pt: "Pouso." }
+@@ -247,23 +243,11 @@ tracks:
+   mode-mission:     { en: "Mission.",          pt: "Missão." }
+   mode-auto:        { en: "Auto.",             pt: "Automático." }
+   mode-guided:      { en: "Guided.",           pt: "Guiado." }
+-  mode-follow:      { en: "Follow.",           pt: "Seguir." }
+-  mode-circle:      { en: "Circle.",           pt: "Círculo." }
+-  mode-brake:       { en: "Brake.",            pt: "Freio." }
+-  mode-drift:       { en: "Drift.",            pt: "Deriva." }
+-  mode-flip:        { en: "Flip.",             pt: "Flip." }
+-  mode-sport:       { en: "Sport.",            pt: "Esporte." }
+-  mode-training:    { en: "Training.",         pt: "Treino." }
+-  mode-thermal:     { en: "Thermal.",          pt: "Térmica." }
+-  mode-soaring:     { en: "Soaring.",          pt: "Planando." }
+   mode-autotune:    { en: "Autotune.",         pt: "Autotune." }
+   mode-autoland:    { en: "Autoland.",         pt: "Pouso automático." }
+-  mode-fbwa:        { en: "Fly by wire A.",    pt: "Fly by wire A." }
+-  mode-fbwb:        { en: "Fly by wire B.",    pt: "Fly by wire B." }
+   mode-headfree-on: { en: "Headfree on.",      pt: "Headfree ligado." }
+   mode-headfree-off: { en: "Headfree off.",    pt: "Headfree desligado." }
+   mode-headinghold: { en: "Heading hold.",     pt: "Manter direção." }
+-  mode-zigzag:      { en: "Zigzag.",           pt: "Zigue-zague." }
+ 
+   # ============================================================
+   # AUDIO THRESHOLD TRANSITIONS
