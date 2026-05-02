@@ -1157,7 +1157,7 @@ h2.warn { color: var(--warn); }
   background: var(--bg-body);
   display: grid;
   grid-template-columns: 7fr 5fr;
-  grid-template-rows: 3fr 1.2fr 28px;
+  grid-template-rows: 2.2fr 1.2fr 28px;
   grid-template-areas:
     "horizon  telstack"
     "homemap  homemap"
@@ -1189,11 +1189,11 @@ h2.warn { color: var(--warn); }
 
 .hud-tile-label {
   color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 1.2px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .hud-tile-stale {
   position: absolute;
@@ -1217,10 +1217,10 @@ h2.warn { color: var(--warn); }
   letter-spacing: 0.05em;
   color: var(--text-main);
 }
-.num.sm { font-size: 16px; }
-.num.md { font-size: 26px; }
-.num.lg { font-size: 40px; }
-.num.xl { font-size: 60px; }
+.num.sm { font-size: 18px; }
+.num.md { font-size: 32px; }
+.num.lg { font-size: 48px; }
+.num.xl { font-size: 72px; }
 .num.warn { color: var(--hud-warn); }
 .num.crit { color: var(--hud-err); }
 .num.ok   { color: var(--hud-ok); }
@@ -1767,11 +1767,11 @@ h2.warn { color: var(--warn); }
     <div class="hud-horizon hud-tile" id="hud-horizon-tile">
       <div class="hud-tile-label">ATTITUDE</div>
       <svg class="hud-horizon-svg" id="hud-horizon-svg"
-           viewBox="-200 -90 400 180" preserveAspectRatio="xMidYMid slice">
+           viewBox="-150 -60 300 120" preserveAspectRatio="xMidYMid slice">
         <!-- Clip the moving horizon to the visible disc. -->
         <defs>
           <clipPath id="horizon-clip">
-            <rect x="-200" y="-90" width="400" height="180"/>
+            <rect x="-150" y="-60" width="300" height="120"/>
           </clipPath>
         </defs>
         <!-- Roll group: rotates about origin. -->
@@ -1806,14 +1806,14 @@ h2.warn { color: var(--warn); }
           <circle cx="0" cy="0" r="3" fill="#ffaa00"/>
         </g>
         <!-- Roll indicator at top. -->
-        <g stroke="#fff" stroke-width="0.8" fill="#fff" font-size="7"
+        <g stroke="#fff" stroke-width="0.8" fill="#fff" font-size="6"
            font-family="DSEG7, monospace">
-          <line x1="0" y1="-82" x2="0" y2="-76"/>
-          <text x="0" y="-86" text-anchor="middle" id="horizon-roll-text">0°</text>
+          <line x1="0" y1="-55" x2="0" y2="-50"/>
+          <text x="0" y="-58" text-anchor="middle" id="horizon-roll-text">0°</text>
         </g>
         <!-- Heading tape, top -->
-        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="9">
-          <text x="0" y="-60" text-anchor="middle" id="horizon-hdg-text">---°</text>
+        <g id="horizon-hdg" font-family="DSEG7, monospace" fill="#fff" font-size="8">
+          <text x="0" y="-40" text-anchor="middle" id="horizon-hdg-text">---°</text>
         </g>
       </svg>
     </div>
