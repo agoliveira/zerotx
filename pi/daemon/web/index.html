@@ -1252,10 +1252,7 @@ h2.warn { color: var(--warn); }
 /* Side readouts on the horizon. Left = groundspeed, right =
  * altitude. Positioned absolutely over the SVG so they stay
  * pinned to the tile edges as the SVG scales. Centered
- * vertically (around the horizon line at SVG y=0).
- *
- * The tile label and these readouts compete for the same top-
- * left chrome area, so they're placed below the label by ~30px. */
+ * vertically (around the horizon line at SVG y=0). */
 .hud-horizon-side {
   position: absolute;
   top: 50%;
@@ -1263,34 +1260,35 @@ h2.warn { color: var(--warn); }
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  background: rgba(0, 0, 0, 0.55);
-  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 10px 14px;
   border-radius: 3px;
   pointer-events: none;
+  min-width: 130px;
 }
 .hud-horizon-side.left  { left: 16px; }
 .hud-horizon-side.right { right: 16px; align-items: flex-end; }
 .hud-horizon-side .side-label {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 .hud-horizon-side .side-value {
   color: #fff;
   font-family: 'DSEG7', monospace;
-  font-size: 36px;
+  font-size: 56px;
   letter-spacing: 0.05em;
   line-height: 1;
 }
 .hud-horizon-side .side-unit {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 /* === Telemetry stack (right column) === */
