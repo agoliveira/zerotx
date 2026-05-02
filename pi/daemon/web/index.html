@@ -2518,6 +2518,23 @@ const App = {
     }
   },
 
+  async setNarrateConfig(cfg) {
+    try {
+      const r = await fetch(`http://${this.state.address}/api/v1/narrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        this.modal.alert('Narration update failed', text || r.statusText);
+        return;
+      }
+    } catch (e) {
+      this.modal.alert('Network error', e.message);
+    }
+  },
+
   async acknowledgeAlarm(name) {
     try {
       await fetch(`http://${this.state.address}/api/v1/audio/acknowledge`, {
@@ -2841,12 +2858,29 @@ const App = {
 
   // === Settings popover ===
 
-  openSettings() {
+  async openSettings() {
     const currentThreshold = (this.state.audio && this.state.audio.threshold)
       || localStorage.getItem('zerotxAudioThreshold')
       || 'notice';
     const currentShortcut = this.armConfirmShortcut();
     const opt = (val, label) => `<option value="${val}"${currentThreshold === val ? ' selected' : ''}>${label}</option>`;
+
+    // Fetch periodic-narration config from the daemon. Failure is
+    // non-fatal: we render the section with empty defaults and the
+    // operator can still configure (the POST will work even when
+    // GET failed). Result lives only inside this modal cycle.
+    let narrate = { interval: '60s', fields: [] };
+    try {
+      const r = await fetch(`http://${this.state.address}/api/v1/narrate`);
+      if (r.ok) {
+        const body = await r.json();
+        if (body && typeof body === 'object') narrate = body;
+      }
+    } catch (_) { /* swallowed; defaults used */ }
+    const has = name => Array.isArray(narrate.fields) && narrate.fields.includes(name);
+    const fieldRow = (name, label) =>
+      `<label class="row" style="gap:8px"><input type="checkbox" id="set-narrate-${name}"${has(name) ? ' checked' : ''}><span>${label}</span></label>`;
+
     const html = `
       <p>Settings persist across sessions in this browser.</p>
 
@@ -2876,6 +2910,30 @@ const App = {
         Repeat policy: critical alarms repeat every 5s indefinitely;
         warnings every 30s up to 3 cycles; notice and info play once.
         Disarming auto-acknowledges all active alarms.
+      </p>
+
+      <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
+
+      <p>Periodic in-flight narration. While armed, the daemon speaks
+        a status report at the chosen interval. Pick which fields to
+        include; an empty selection disables narration entirely.
+        Persisted on the daemon side; takes effect immediately.</p>
+      <div class="row" style="margin-top:8px">
+        <span class="label">Interval</span>
+        <input type="text" id="set-narrate-interval" value="${escapeHtml(narrate.interval || '60s')}" placeholder="60s" style="max-width:120px">
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px">
+        ${fieldRow('battery', 'Battery (percent + volts)')}
+        ${fieldRow('distance', 'Distance from home')}
+        ${fieldRow('altitude', 'Altitude')}
+        ${fieldRow('speed', 'Ground speed')}
+        ${fieldRow('link', 'Link quality')}
+        ${fieldRow('mode', 'Flight mode')}
+        ${fieldRow('time-aloft', 'Time aloft')}
+      </div>
+      <p class="muted small">
+        Interval accepts Go duration syntax: 30s, 1m, 2m30s. Minimum
+        practical value is around 10s.
       </p>
 
       <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
@@ -2909,6 +2967,14 @@ const App = {
           localStorage.setItem('zerotxAudioThreshold', newThreshold);
           this.setAudioThreshold(newThreshold);
         }
+
+        // Push narrate config. Always POST: cheap and idempotent,
+        // and avoids the bookkeeping needed to detect "did anything
+        // actually change" across two control types.
+        const newInterval = (document.getElementById('set-narrate-interval').value || '').trim();
+        const newFields = ['battery','distance','altitude','speed','link','mode','time-aloft']
+          .filter(name => document.getElementById('set-narrate-' + name).checked);
+        this.setNarrateConfig({ interval: newInterval || '60s', fields: newFields });
       },
     });
 
