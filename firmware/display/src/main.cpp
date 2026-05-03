@@ -34,6 +34,7 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <U8g2_for_Adafruit_GFX.h>
+#include "spectator.h"
 
 // Custom hand-designed pixel font for the big values - 15 tall x
 // 10 wide per glyph, 2-pixel-wide strokes, upright industrial
@@ -422,7 +423,7 @@ constexpr int LOGICAL_HEIGHT = PANEL_HEIGHT;             // 32
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 constexpr unsigned long IDLE_REDRAW_INTERVAL_MS = 1000;  // clock tick
 
-constexpr const char* FW_VERSION = "0.17.0";
+constexpr const char* FW_VERSION = "0.18.0";
 
 // ===== VFD/LCD palette =====
 //
@@ -636,6 +637,11 @@ void setup() {
   // they're no longer earning their boot-time cost.
   show_boot_banner();
 
+  // Spectator AP starts after the panel is alive so a WiFi failure
+  // can't blackhole the panel. Read-only HUD for onlookers; see
+  // spectator.h for design notes.
+  spectator::begin();
+
   boot_ms = millis();
   send_ready();
   needs_redraw = true;
@@ -692,6 +698,32 @@ void loop() {
     last_heartbeat_ms = now;
     send_heartbeat();
   }
+
+  // Spectator AP servicing. push_state happens at telemetry-update
+  // points (see handle_line); this drives the HTTP/WS pumps and
+  // the periodic broadcast.
+  {
+    spectator::Snapshot s;
+    s.armed_known  = state.armed_known;
+    s.armed        = state.armed;
+    s.flight_mode  = state.flight_mode.c_str();
+    s.alt_known    = state.alt_known;
+    s.alt_m        = state.alt_m;
+    s.dist_known   = state.dist_known;
+    s.dist_m       = state.dist_m;
+    s.spd_known    = state.spd_known;
+    s.spd_kmh      = state.spd_kmh;
+    s.link_known   = state.link_known;
+    s.link_pct     = state.link_pct;
+    s.bat_known    = state.bat_known;
+    s.bat_v        = state.bat_v;
+    s.time_known   = state.time_known;
+    s.time_s       = state.time_s;
+    s.alarm_active = state.alarm_active;
+    s.alarm_level  = state.alarm_level.c_str();
+    spectator::push_state(s);
+  }
+  spectator::tick();
 
   // Idle clock redraw.
   if (current_mode == Mode::IDLE && now - last_redraw_ms >= IDLE_REDRAW_INTERVAL_MS) {
