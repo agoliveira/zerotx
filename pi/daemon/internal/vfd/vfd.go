@@ -60,6 +60,18 @@ type Driver interface {
 	// to this Noritake module). Out-of-range values are clamped.
 	Brightness(level int) error
 
+	// Event signals a semantic event to the firmware. Drives the
+	// animation state machine (firmware-side) without the daemon
+	// caring about glyphs or frames. kind is a short token (tick,
+	// arm, mode, lq, batt, warn, critical, failsafe, disarmed)
+	// optionally followed by args. The firmware tolerates unknown
+	// kinds gracefully so daemon and firmware versions can drift.
+	//
+	// Example: drv.Event("tick", "12") -> writes "E tick 12\n".
+	// Example: drv.Event("arm", "1")
+	// Example: drv.Event("mode", "ANGL")
+	Event(kind string, args ...string) error
+
 	// Close releases any underlying resource.
 	Close() error
 }
@@ -102,6 +114,7 @@ type NullDriver struct{}
 func (d *NullDriver) WriteLines(_, _ string) error { return nil }
 func (d *NullDriver) Clear() error                 { return nil }
 func (d *NullDriver) Brightness(_ int) error       { return nil }
+func (d *NullDriver) Event(_ string, _ ...string) error { return nil }
 func (d *NullDriver) Close() error                 { return nil }
 
 // === LogDriver: scaffolding without hardware ===
@@ -151,6 +164,17 @@ func (d *LogDriver) Brightness(level int) error {
 }
 
 func (d *LogDriver) Close() error { return nil }
+
+func (d *LogDriver) Event(kind string, args ...string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(args) == 0 {
+		d.logf("[vfd] E %s", kind)
+	} else {
+		d.logf("[vfd] E %s %s", kind, strings.Join(args, " "))
+	}
+	return nil
+}
 
 // === SerialDriver: real hardware ===
 
@@ -268,6 +292,15 @@ func (d *SerialDriver) Close() error {
 	defer d.mu.Unlock()
 	d.closeLocked()
 	return nil
+}
+
+func (d *SerialDriver) Event(kind string, args ...string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(args) == 0 {
+		return d.writeCmd("E " + kind)
+	}
+	return d.writeCmd("E " + kind + " " + strings.Join(args, " "))
 }
 
 // Sprint formats two rows for diagnostic dumping. Used by tests

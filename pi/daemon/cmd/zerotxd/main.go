@@ -228,9 +228,16 @@ func main() {
 	// conflict with the channel intent loop). Empty addr disables.
 	mwpTee := crsftee.New(*mwpTeeAddr, log.Printf)
 
+	// vfdEvt is wired below once the VFD driver is constructed; the
+	// hot-path telemHandler captures the pointer so that telemetry
+	// frames can be counted as they arrive without a back-edge from
+	// the VFD setup. CountFrame is nil-safe.
+	var vfdEvt *vfdEventEmitter
+
 	telemHandler := func(payload []byte) {
 		telemetryState.Feed(payload)
 		mwpTee.Forward(payload)
+		vfdEvt.CountFrame()
 	}
 	if link != nil {
 		link.OnTelemetry = telemHandler
@@ -544,6 +551,7 @@ func main() {
 	// and EventDisarmed.
 	flightArmedHandler := func(armed bool) {
 		armedFlag.Store(armed)
+		vfdEvt.SetArmed(armed)
 		select {
 		case armedPings <- struct{}{}:
 		default: // channel full; periodic narrator already has a pending wakeup
@@ -639,12 +647,19 @@ func main() {
 	}()
 	go runPeriodicNarrator(ctx, player, telemetryState, armedFlag.Load, armedPings, narrateStore, *soundsLang)
 
-	// VFD diagnostic firehose: subscribes to the daemon log buffer
-	// and scrolls each new line onto the 2x20 character display
-	// (Pro Micro on USB-CDC, when wired). With -vfd-port empty the
-	// driver is a no-op; with -vfd-port=log the firehose echoes to
-	// the daemon log so the formatting can be validated without
-	// hardware. Anything else is treated as a serial device path.
+	// VFD: two parallel feeds.
+	//
+	//   1. Firehose taps the daemon log buffer and pushes new lines
+	//      as L0/L1 text overlays.
+	//   2. Event emitter translates state changes into "E ..." commands
+	//      that the firmware uses to drive its animation state machine
+	//      (arm transitions, mode changes, telemetry tick rate, LQ,
+	//      battery, alarm flashes).
+	//
+	// With -vfd-port empty the driver is a no-op; with -vfd-port=log
+	// both feeds echo to the daemon log so the formatting can be
+	// validated without hardware. Anything else is treated as a
+	// serial device path.
 	vfdDriver := vfd.New(*vfdPort)
 	defer vfdDriver.Close()
 	if *vfdPort != "" {
@@ -655,6 +670,8 @@ func main() {
 				log.Printf("vfd: %v", err)
 			}
 		}()
+		vfdEvt = newVFDEventEmitter(vfdDriver, telemetryState)
+		go vfdEvt.Run(ctx)
 	}
 
 	// Start the API server if requested.

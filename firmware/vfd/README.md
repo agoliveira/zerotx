@@ -37,13 +37,43 @@ Pi -> Pro Micro, ASCII over USB-CDC, one command per `\n`:
 
 | Command          | Effect                                       |
 | ---------------- | -------------------------------------------- |
-| `L0 <content>`   | Write `<content>` to row 0 (top), pad/trunc to 20 |
-| `L1 <content>`   | Write `<content>` to row 1 (bottom)          |
-| `C`              | Clear display                                |
-| `B <level>`      | Brightness 0..3 (0 = max, 3 = 25%)           |
-| `V`              | Show firmware version banner                 |
+| `L0 <content>`   | Write `<content>` to row 0 (top), pad/trunc to 20. Pauses animation for 2s, then resumes. |
+| `L1 <content>`   | Write `<content>` to row 1 (bottom). Same pause/resume behavior. |
+| `C`              | Clear display, return to ambient mode.       |
+| `B <level>`      | Brightness 0..3 (0 = max, 3 = 25%).          |
+| `V`              | Show firmware version banner.                |
+| `E <kind> [args]`| Animation event. See below.                  |
 
-Unknown commands are silently ignored to tolerate version skew.
+Unknown commands silently ignored to tolerate version skew.
+
+### Event commands (firmware-driven animation)
+
+The firmware owns animation state. The daemon emits semantic events
+and the firmware decides how to render them.
+
+| Event          | Effect on animation |
+| -------------- | ------------------- |
+| `E tick [n]`   | n CRSF frames received in the last sample window (default 1). Feeds the activity bar. |
+| `E arm 0\|1`   | Arm state edge. Triggers a sweep across both rows. |
+| `E mode <txt>` | Flight mode change. Brief pulse with the mode name. |
+| `E lq <pct>`   | Link quality 0..100. Cached, displayed alongside mode. |
+| `E batt <txt>` | Battery voltage as text (e.g. "14.2V"). Cached. |
+| `E warn`       | Warning alarm flash (slow blink). |
+| `E critical`   | Critical alarm flash (faster blink). |
+| `E failsafe`   | Failsafe alarm flash (fastest blink). |
+| `E disarmed`   | Edge: returning to ambient mode. |
+
+### Animation modes (firmware-internal)
+
+- **BANNER**: boot banner; transitions to IDLE after 6s of silence.
+- **IDLE**: long quiet period; orbiting dot.
+- **AMBIENT**: data flowing; activity bar bottom row, mode/LQ top row.
+- **ARMED**: busier; pulsing heartbeat indicator on top.
+- **TEXT**: L-pushed line held for 2s, then resume.
+- **EVENT**: transient overlay (sweep, flash); 800ms then resume.
+
+If no `E` commands arrive for 6 seconds, the firmware falls back from
+AMBIENT/ARMED to IDLE.
 
 ## Build
 
@@ -67,10 +97,12 @@ On boot, the firmware shows:
 
 ```
 ZEROTX VFD
-fw 0.1.0 awaiting
+fw 0.2.0 awaiting
 ```
 
-Until the daemon takes over with its first `L0`/`L1` write.
+Held for 6 seconds, or until the daemon emits any command. Then
+transitions to IDLE animation if no events have arrived, or AMBIENT
+once `E tick` events start flowing.
 
 ## Brightness command
 

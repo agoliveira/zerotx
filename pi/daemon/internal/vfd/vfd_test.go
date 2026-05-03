@@ -109,8 +109,41 @@ func TestNullDriver_NoOp(t *testing.T) {
 	if err := d.Brightness(2); err != nil {
 		t.Errorf("Brightness: %v", err)
 	}
+	if err := d.Event("tick", "1"); err != nil {
+		t.Errorf("Event: %v", err)
+	}
 	if err := d.Close(); err != nil {
 		t.Errorf("Close: %v", err)
+	}
+}
+
+func TestLogDriver_EventFormat(t *testing.T) {
+	cap := &captureLogger{}
+	d := &LogDriver{logf: cap.logf}
+
+	if err := d.Event("tick"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Event("arm", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Event("mode", "ANGL"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := cap.snapshot()
+	want := []string{
+		"[vfd] E tick",
+		"[vfd] E arm 1",
+		"[vfd] E mode ANGL",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d log lines, want %d: %v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: got %q, want %q", i, got[i], w)
+		}
 	}
 }
 
