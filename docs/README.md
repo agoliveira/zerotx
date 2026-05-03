@@ -11,9 +11,10 @@ Living docs. Each file targets a specific reader and purpose.
 
 - [`howto/bench-test-sitl.md`](howto/bench-test-sitl.md) — INAV SITL + X-Plane bench setup; run the daemon's full flight pipeline without an aircraft.
 
-## Architecture & internals (in progress)
+## Architecture & internals
 
-- [`architecture.md`](architecture.md) — older overview document; will be superseded by `architecture/overview.md` when ready.
+- [`architecture/overview.md`](architecture/overview.md) — system map, MCU split, daemon package map, data flows, persistence, failure model. Read this when you want to know how the whole thing fits together.
+- [`architecture.md`](architecture.md) — older overview document; partly out of date (LED panel/VFD have replaced earlier WS2812/OLED). Kept for historical reference.
 - [`hardware-bom.md`](hardware-bom.md) — case BOM and parts list.
 - [`edgetx-yaml-notes.md`](edgetx-yaml-notes.md) — EdgeTX model YAML format notes (used by the model parser).
 - [`ipc_protocol.md`](ipc_protocol.md) — daemon ↔ RP2040 IPC framed protocol (will move under `protocols/`).
