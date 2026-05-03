@@ -6,6 +6,8 @@ Documentation=https://github.com/agoliveira/zerotx
 # the joystick, serial, and audio it touches are owned by the
 # user-session devices and group memberships.
 After=graphical-session.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
@@ -34,8 +36,8 @@ ExecStart=%h/zerotx/pi/daemon/bin/zerotxd \
 # broken config: 5 restarts within 60s and we stop trying.
 Restart=on-failure
 RestartSec=2
-StartLimitBurst=5
-StartLimitIntervalSec=60
+# moved to [Unit] section
+# moved to [Unit] section
 
 # Logs go to journald; tail with:
 #   journalctl --user -u zerotxd -f
