@@ -27,6 +27,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/crsftee"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/sitl"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logic"
@@ -52,6 +53,7 @@ func main() {
 
 	portFlag := flag.String("port", "", "RP2040 USB-CDC device (auto-detect if empty)")
 	baudFlag := flag.Int("baud", 115200, "serial baud (USB-CDC ignores)")
+	fcTCPAddr := flag.String("fc-tcp-addr", "", "INAV SITL CRSF endpoint as host:port (e.g. 127.0.0.1:5762). When set, the daemon talks raw CRSF over TCP instead of opening the RP2040 USB-CDC link.")
 	modelFlag := flag.String("model", "", "ZeroTX model file")
 	jsIndex := flag.Int("joystick", -1, "SDL joystick index (-1 = first match by -joystick-name)")
 	jsName := flag.String("joystick-name", "", "case-insensitive substring of joystick name to open")
@@ -160,34 +162,58 @@ func main() {
 		log.Println("no model loaded; channels will use safe defaults")
 	}
 
-	// RP2040 USB-CDC link.
-	port := *portFlag
-	if port == "" {
-		var err error
-		port, err = ipc.AutoDetectPort()
+	// FC endpoint setup. Default path: open the RP2040 USB-CDC link
+	// and use the IPC framed protocol. Bench-test path (-fc-tcp-addr
+	// set): connect to INAV SITL on TCP and speak raw CRSF instead;
+	// the RP2040 sits idle. The two backends share the same telemetry
+	// callback wiring so everything downstream of the FC endpoint
+	// (telemetry decode, mwp tee, audio, HUD, recorder) runs the
+	// same code in either mode.
+	var (
+		link    *ipc.Link
+		sitlCon *sitl.Conn
+		port    string // RP2040 path, empty in SITL mode
+	)
+	if *fcTCPAddr != "" {
+		log.Printf("fc endpoint: SITL TCP %s (RP2040 link disabled)", *fcTCPAddr)
+		c, err := sitl.Dial(*fcTCPAddr)
 		if err != nil {
-			log.Fatalf("autodetect port: %v", err)
+			log.Fatalf("sitl: %v", err)
 		}
+		c.LocalVersion = "zerotxd " + version
+		sitlCon = c
+		defer sitlCon.Close()
+		port = "sitl://" + *fcTCPAddr
+	} else {
+		port = *portFlag
 		if port == "" {
-			log.Fatal("no serial port found; plug RP2040 or pass -port")
+			var err error
+			port, err = ipc.AutoDetectPort()
+			if err != nil {
+				log.Fatalf("autodetect port: %v", err)
+			}
+			if port == "" {
+				log.Fatal("no serial port found; plug RP2040 or pass -port (or use -fc-tcp-addr for SITL)")
+			}
+			log.Printf("auto-detected port: %s", port)
 		}
-		log.Printf("auto-detected port: %s", port)
-	}
-	link, err := ipc.Open(port, *baudFlag)
-	if err != nil {
-		log.Fatalf("open link: %v", err)
-	}
-	defer link.Close()
-	link.LocalVersion = "zerotxd " + version
-	link.OnLog = func(s string) { log.Printf("[mcu] %s", s) }
-	link.OnFrame = func(f ipc.Frame) {
-		// Heartbeats are routine and noisy under -v; counted in MCU logs anyway.
-		if f.Type == ipc.MsgHeartbeat {
-			return
+		l, err := ipc.Open(port, *baudFlag)
+		if err != nil {
+			log.Fatalf("open link: %v", err)
 		}
-		if *verbose {
-			log.Printf("[mcu] frame type=%#02x seq=%d payload=%d bytes", f.Type, f.Seq, len(f.Payload))
+		defer l.Close()
+		l.LocalVersion = "zerotxd " + version
+		l.OnLog = func(s string) { log.Printf("[mcu] %s", s) }
+		l.OnFrame = func(f ipc.Frame) {
+			// Heartbeats are routine and noisy under -v; counted in MCU logs anyway.
+			if f.Type == ipc.MsgHeartbeat {
+				return
+			}
+			if *verbose {
+				log.Printf("[mcu] frame type=%#02x seq=%d payload=%d bytes", f.Type, f.Seq, len(f.Payload))
+			}
 		}
+		link = l
 	}
 
 	// Telemetry: decode CRSF frames forwarded by the MCU into a typed
@@ -202,9 +228,14 @@ func main() {
 	// conflict with the channel intent loop). Empty addr disables.
 	mwpTee := crsftee.New(*mwpTeeAddr, log.Printf)
 
-	link.OnTelemetry = func(payload []byte) {
+	telemHandler := func(payload []byte) {
 		telemetryState.Feed(payload)
 		mwpTee.Forward(payload)
+	}
+	if link != nil {
+		link.OnTelemetry = telemHandler
+	} else {
+		sitlCon.OnTelemetry = telemHandler
 	}
 
 	// Arm state machine. Tracks the GCS-side arming sequence (panel
@@ -220,23 +251,31 @@ func main() {
 	// events are normal KeyChanged transitions.
 	armMachine := arm.New()
 	var armInitOnce sync.Once
-	link.OnInputEvent = func(inputID, state byte) {
-		switch inputID {
-		case ipc.InputArmKey:
-			keyUp := state != 0
-			fired := false
-			armInitOnce.Do(func() {
-				armMachine.Init(keyUp)
-				fired = true
-			})
-			if !fired {
-				armMachine.KeyChanged(keyUp)
+	if link != nil {
+		link.OnInputEvent = func(inputID, state byte) {
+			switch inputID {
+			case ipc.InputArmKey:
+				keyUp := state != 0
+				fired := false
+				armInitOnce.Do(func() {
+					armMachine.Init(keyUp)
+					fired = true
+				})
+				if !fired {
+					armMachine.KeyChanged(keyUp)
+				}
+			default:
+				log.Printf("ipc: unknown input id %#02x state=%d", inputID, state)
 			}
-		default:
-			log.Printf("ipc: unknown input id %#02x state=%d", inputID, state)
 		}
+		log.Printf("link: rp2040 ipc")
+	} else {
+		// SITL mode has no panel arm key. Initialize the arm machine
+		// as if the key were UP (default safe state). Operator triggers
+		// arming via the GUI / API path during bench tests.
+		armMachine.Init(true)
+		log.Printf("link: sitl tcp %s", *fcTCPAddr)
 	}
-	log.Printf("link open on %s", port)
 
 	// Panel (optional). NullPanel by default; replaced if a flag is set.
 	var pnl panel.Panel = panel.NullPanel{}
@@ -644,7 +683,13 @@ func main() {
 
 	// Goroutines.
 	go func() {
-		if err := link.Run(ctx); err != nil {
+		var err error
+		if link != nil {
+			err = link.Run(ctx)
+		} else {
+			err = sitlCon.Run(ctx)
+		}
+		if err != nil {
 			log.Printf("link run: %v", err)
 			cancel()
 		}
@@ -797,8 +842,14 @@ func main() {
 				log.Printf("fc-ready: mode=%q ready=%v", modeStr, fcReady)
 				lastFCModeStr = modeStr
 			}
-			if err := link.SendChannelIntent(ch); err != nil {
-				log.Printf("send intent: %v", err)
+			var sendErr error
+			if link != nil {
+				sendErr = link.SendChannelIntent(ch)
+			} else {
+				sendErr = sitlCon.SendChannelIntent(ch)
+			}
+			if sendErr != nil {
+				log.Printf("send intent: %v", sendErr)
 				continue
 			}
 			if *verbose && (first || ch != lastCh) {
