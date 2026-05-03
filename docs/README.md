@@ -16,8 +16,6 @@ Living docs. Each file targets a specific reader and purpose.
 - [`architecture/overview.md`](architecture/overview.md) — system map, MCU split, daemon package map, data flows, persistence, failure model. Read this when you want to know how the whole thing fits together.
 - [`hardware-bom.md`](hardware-bom.md) — case BOM and parts list.
 - [`edgetx-yaml-notes.md`](edgetx-yaml-notes.md) — EdgeTX model YAML format notes (used by the model parser).
-- [`ipc_protocol.md`](ipc_protocol.md) — daemon ↔ RP2040 IPC framed protocol (will move under `protocols/`).
-- [`protocols/`](protocols/) — wire protocol references (CRSF tee, VFD serial, display serial, spectator JSON, MSP/SITL).
 
 ## Pending docs
 
@@ -33,3 +31,13 @@ Living docs. Each file targets a specific reader and purpose.
 - Tables for anything that benefits from columns (pinouts, flags, error/cause/fix).
 - Code blocks for commands that are meant to be copy-pasteable verbatim.
 - Mermaid diagrams where component relationships matter; GitHub renders them inline.
+
+## Protocols
+
+- [`protocols/README.md`](protocols/README.md) — index across all wire-level protocol docs.
+- [`protocols/ipc.md`](protocols/ipc.md) — daemon ↔ RP2040 framed binary (COBS + CRC, channel intent + telemetry passthrough).
+- [`protocols/display.md`](protocols/display.md) — daemon ↔ ESP32 line-text protocol for the HUB75 panel.
+- [`protocols/vfd.md`](protocols/vfd.md) — daemon → Pro Micro ASCII protocol with animation events.
+- [`protocols/sitl.md`](protocols/sitl.md) — daemon ↔ INAV SITL via raw CRSF over TCP.
+- [`protocols/crsf-tee.md`](protocols/crsf-tee.md) — daemon → mwp telemetry tee.
+- [`protocols/spectator.md`](protocols/spectator.md) — ESP32 SoftAP + WebSocket dashboard for spectators.
