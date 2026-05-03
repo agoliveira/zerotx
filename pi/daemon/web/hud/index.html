@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1024, initial-scale=1, user-scalable=no">
+  <title>ZeroTX HUD</title>
+  <style>
+    /* ============================================================
+       Color palette (matches map for cross-LCD consistency).
+       ============================================================ */
+    :root {
+      --bg-base:    #0a0e14;
+      --bg-panel:   rgba(10, 14, 20, 0.88);
+      --bg-elev:    #161b22;
+      --border:     #30363d;
+      --border-soft:#21262d;
+      --text-pri:   #c9d1d9;
+      --text-sec:   #8b949e;
+      --text-muted: #6e7681;
+      --good:       #3fb950;
+      --warn:       #d29922;
+      --bad:        #f85149;
+      --info:       #58a6ff;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0; padding: 0;
+      width: 100vw; height: 100vh;
+      background: var(--bg-base);
+      color: var(--text-pri);
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    /* ============================================================
+       Top strip: status pill + flight clock + version.
+       ============================================================ */
+    .top-strip {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 10px;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--border);
+      z-index: 5;
+    }
+    .status-pill {
+      padding: 4px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-sec);
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+    .status-group {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .mode-badge {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--text-pri);
+      padding: 4px 10px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border-soft);
+      border-radius: 4px;
+      min-width: 60px;
+      text-align: center;
+    }
+    .status-pill.disarmed  { color: var(--text-sec); border-color: var(--border); }
+    .status-pill.arming    { color: var(--warn); border-color: var(--warn); }
+    .status-pill.armed     { color: var(--good); border-color: var(--good); }
+    .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(210, 153, 34, 0.1); }
+    .status-pill.failsafe  { color: var(--bad); border-color: var(--bad); background: rgba(248, 81, 73, 0.15); animation: pulse 0.8s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.55; }
+    }
+
+    .clock-section {
+      display: flex; gap: 16px; align-items: baseline;
+      font-family: var(--mono);
+      font-size: 0.85rem;
+    }
+    .clock-section .label {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .clock-section .val {
+      color: var(--text-pri);
+      font-weight: 600;
+    }
+
+    .version-section {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    /* ============================================================
+       Main grid below the top strip.
+       Two columns: horizon (left), telemetry stack (right).
+       Bottom strip spans full width.
+       ============================================================ */
+    .stage {
+      position: absolute;
+      top: 32px; bottom: 0; left: 0; right: 0;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      grid-template-rows: 28px 1fr 56px 110px;
+      grid-template-areas:
+        "heading   stack"
+        "horizon   stack"
+        "altrow    stack"
+        "linkbar   alarms";
+      gap: 4px;
+      padding: 4px;
+    }
+
+    .heading-area { grid-area: heading; position: relative; overflow: hidden; }
+    .horizon-area { grid-area: horizon; position: relative; overflow: hidden; }
+    .altrow-area  { grid-area: altrow; position: relative; overflow: hidden; }
+    .stack-area   { grid-area: stack; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+    .linkbar-area { grid-area: linkbar; position: relative; overflow: hidden; }
+    .alarms-area  { grid-area: alarms; display: flex; flex-direction: column; min-height: 0; }
+
+    /* ============================================================
+       Heading band: horizontal compass strip, aircraft heading at
+       center mark, home bearing as a separate triangle that slides.
+       ============================================================ */
+    .heading-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+    }
+
+    /* ============================================================
+       Alt/SPD/VARIO row beneath horizon.
+       ============================================================ */
+    .altrow {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      height: 100%;
+    }
+    .altrow-cell {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 4px 8px;
+    }
+    .altrow-cell .label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .altrow-cell .val {
+      font-family: var(--mono);
+      font-size: 1.55rem;
+      font-weight: 700;
+      line-height: 1.05;
+      color: var(--text-pri);
+    }
+    .altrow-cell .unit {
+      font-size: 0.7rem;
+      color: var(--text-sec);
+      margin-left: 3px;
+    }
+
+    /* ============================================================
+       Artificial horizon.
+       Big SVG that takes the full horizon-area. Sky/ground halves
+       roll with attitude.roll, pitch shifts the horizon line.
+       ============================================================ */
+    .horizon-svg-wrap {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      border-radius: 8px;
+    }
+    .horizon-svg {
+      position: absolute;
+      width: 200%; height: 200%;
+      top: -50%; left: -50%;
+      transform-origin: center;
+    }
+    .horizon-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 12px;
+    }
+    .horizon-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .horizon-readout {
+      background: rgba(10, 14, 20, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      min-width: 100px;
+      backdrop-filter: blur(4px);
+    }
+    .horizon-readout .label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .horizon-readout .val {
+      font-family: var(--mono);
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--text-pri);
+      line-height: 1;
+    }
+    .horizon-readout .unit {
+      font-size: 0.75rem;
+      color: var(--text-sec);
+      margin-left: 4px;
+    }
+    .horizon-readout.right { text-align: right; }
+
+    .horizon-center-marker {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 80px; height: 4px;
+      background: var(--warn);
+      border-radius: 2px;
+      box-shadow: 0 0 8px rgba(210, 153, 34, 0.6);
+      pointer-events: none;
+    }
+
+    /* ============================================================
+       Right-column tile stack.
+       BAT, GPS/HOME, MODE/THROTTLE.
+       ============================================================ */
+    .tile {
+      flex: 1;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 0;
+    }
+    .tile-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .tile-main {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .tile-main .num {
+      font-family: var(--mono);
+      font-size: 2.6rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text-pri);
+    }
+    .tile-main .num.good { color: var(--good); }
+    .tile-main .num.warn { color: var(--warn); }
+    .tile-main .num.bad  { color: var(--bad); }
+    .tile-main .unit {
+      color: var(--text-sec);
+      font-size: 1rem;
+    }
+    .tile-secondary {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      color: var(--text-sec);
+      margin-top: 4px;
+    }
+    .tile-bar {
+      width: 100%;
+      height: 8px;
+      background: var(--border-soft);
+      border-radius: 4px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .tile-bar > .fill {
+      height: 100%;
+      background: var(--good);
+      transition: width 0.3s ease, background 0.3s ease;
+    }
+    .tile-bar > .fill.warn { background: var(--warn); }
+    .tile-bar > .fill.bad  { background: var(--bad); }
+
+    .tile-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 14px;
+      font-family: var(--mono);
+      font-size: 1.05rem;
+    }
+    .tile-grid .k { color: var(--text-muted); font-size: 0.78rem; align-self: center; letter-spacing: 0.06em; }
+    .tile-grid .v { color: var(--text-pri); text-align: right; font-weight: 700; }
+
+    /* ============================================================
+       Bottom-left: link/RSSI strip with rolling LQ graph.
+       ============================================================ */
+    .linkbar {
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .linkbar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .linkbar-title {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .linkbar-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      align-items: baseline;
+      justify-content: flex-end;
+    }
+    .linkbar-stats .stat {
+      display: flex;
+      gap: 5px;
+      align-items: baseline;
+      white-space: nowrap;
+    }
+    .linkbar-stats .stat .k {
+      color: var(--text-muted);
+      font-size: 0.65rem;
+      letter-spacing: 0.06em;
+    }
+    .linkbar-stats .stat .v {
+      color: var(--text-pri);
+      font-weight: 700;
+    }
+    .lq-graph {
+      flex: 1;
+      width: 100%;
+      background: var(--border-soft);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .lq-graph canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+    }
+
+    /* ============================================================
+       Bottom-right: alarms list.
+       ============================================================ */
+    .alarms {
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow: hidden;
+    }
+    .alarms-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .alarms-list {
+      flex: 1;
+      overflow-y: auto;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+    .alarms-list .item {
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 8px;
+      padding: 1px 0;
+    }
+    .alarms-list .item .ts { color: var(--text-muted); }
+    .alarms-list .item .msg { color: var(--text-pri); }
+    .alarms-list .item.warn .msg { color: var(--warn); }
+    .alarms-list .item.bad  .msg { color: var(--bad); }
+    .alarms-list .empty {
+      color: var(--text-muted);
+      text-align: center;
+      padding: 12px 0;
+      font-size: 0.78rem;
+      font-family: system-ui, sans-serif;
+    }
+
+    /* ============================================================
+       Pre-flight banner (when DISARMED, hide flight-only widgets
+       and show a setup-mode hint).
+       ============================================================ */
+    .preflight-banner {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .preflight-banner .heading {
+      font-size: 1.4rem;
+      color: var(--text-sec);
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+    .preflight-banner .sub {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+    .stage.preflight .heading-area,
+    .stage.preflight .horizon-area,
+    .stage.preflight .altrow-area,
+    .stage.preflight .stack-area,
+    .stage.preflight .linkbar-area,
+    .stage.preflight .alarms-area {
+      opacity: 0.35;
+    }
+    .stage:not(.preflight) .preflight-banner {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div class="top-strip">
+  <div class="status-group">
+    <div class="status-pill disarmed" id="status-pill">DISARMED</div>
+    <div class="mode-badge" id="mode-badge">---</div>
+  </div>
+  <div class="clock-section">
+    <span class="label">FLIGHT</span> <span class="val" id="flight-clock">--:--</span>
+    <span class="label">UTC</span> <span class="val" id="utc-clock">--:--:--</span>
+  </div>
+  <div class="version-section">
+    <span id="frontend-ver">hud-v10</span> · <span id="daemon-ver">…</span>
+  </div>
+</div>
+
+<div class="stage preflight" id="stage">
+
+  <!-- Horizon -->
+  <div class="horizon-area panel">
+    <div class="horizon-svg-wrap" id="horizon-wrap">
+      <svg class="horizon-svg" id="horizon-svg" viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid slice">
+        <g id="horizon-content" transform="translate(0,0)">
+          <!-- Sky -->
+          <rect x="-400" y="-400" width="800" height="400" fill="#1e3a5f"/>
+          <!-- Ground -->
+          <rect x="-400" y="0" width="800" height="400" fill="#5a3a1e"/>
+          <!-- Horizon line -->
+          <line x1="-400" y1="0" x2="400" y2="0" stroke="#c9d1d9" stroke-width="0.6"/>
+          <!-- Pitch ladder -->
+          <g stroke="#c9d1d9" stroke-width="0.5" font-size="4" font-family="ui-monospace, monospace" fill="#c9d1d9" opacity="0.85">
+            <line x1="-15" y1="-30" x2="15" y2="-30"/><text x="-18" y="-29" text-anchor="end">30</text><text x="18" y="-29">30</text>
+            <line x1="-12" y1="-20" x2="12" y2="-20"/><text x="-15" y="-19" text-anchor="end">20</text><text x="15" y="-19">20</text>
+            <line x1="-9"  y1="-10" x2="9"  y2="-10"/><text x="-11" y="-9"  text-anchor="end">10</text><text x="11" y="-9">10</text>
+            <line x1="-9"  y1="10"  x2="9"  y2="10" /><text x="-11" y="11"  text-anchor="end">10</text><text x="11" y="11">10</text>
+            <line x1="-12" y1="20"  x2="12" y2="20" /><text x="-15" y="21"  text-anchor="end">20</text><text x="15" y="21">20</text>
+            <line x1="-15" y1="30"  x2="15" y2="30" /><text x="-18" y="31"  text-anchor="end">30</text><text x="18" y="31">30</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <div class="horizon-center-marker"></div>
+  </div>
+
+  <!-- Heading band (above horizon in DOM order, visually above per grid) -->
+  <div class="heading-area panel">
+    <svg class="heading-svg" id="heading-svg" viewBox="-180 -28 360 28" preserveAspectRatio="xMidYMax meet">
+      <!-- Group is translated by -aircraftHeading so the visible window
+           shows the section of the band centered on aircraft heading. -->
+      <g id="heading-strip" transform="translate(0,0)">
+        <!-- Tick marks every 10 degrees from -180..540 (covers wraparound). -->
+      </g>
+      <!-- Center marker (fixed): triangle pointing down from top center -->
+      <polygon points="0,-26 -3,-22 3,-22" fill="#d29922"/>
+      <!-- Home marker (animated): blue triangle that slides along the band. -->
+      <polygon id="heading-home-marker" points="0,-2 -4,-7 4,-7" fill="#58a6ff" transform="translate(-1000,0)"/>
+    </svg>
+  </div>
+
+  <!-- Alt/SPD/VARIO row beneath horizon -->
+  <div class="altrow-area panel">
+    <div class="altrow">
+      <div class="altrow-cell">
+        <div class="label">ALT</div>
+        <div class="val"><span id="hz-alt">---</span><span class="unit">m</span></div>
+      </div>
+      <div class="altrow-cell">
+        <div class="label">SPD</div>
+        <div class="val"><span id="hz-spd">---</span><span class="unit">km/h</span></div>
+      </div>
+      <div class="altrow-cell">
+        <div class="label">VARIO</div>
+        <div class="val"><span id="hz-vario">---</span><span class="unit">m/s</span></div>
+      </div>
+      <div class="altrow-cell">
+        <div class="label">THR</div>
+        <div class="val"><span id="thr-pct">--</span><span class="unit">%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right column: BAT / GPS+HOME -->
+  <div class="stack-area">
+    <div class="tile panel">
+      <div class="tile-label">BATTERY</div>
+      <div class="tile-main">
+        <div class="num good" id="bat-pct">--</div><div class="unit">%</div>
+      </div>
+      <div class="tile-secondary">
+        <span id="bat-volts">--.- V</span>
+        <span style="color: var(--text-muted);">·</span>
+        <span id="bat-cells">--S</span>
+        <span style="color: var(--text-muted);">·</span>
+        <span id="bat-cell-v">-.--V/c</span>
+      </div>
+      <div class="tile-bar"><div class="fill" id="bat-fill" style="width: 0%"></div></div>
+      <div class="tile-secondary">
+        <span id="bat-mah" style="color: var(--text-pri);">--- mAh</span>
+        <span style="color: var(--text-muted);">·</span>
+        <span id="bat-current" style="color: var(--text-pri);">--.- A</span>
+      </div>
+    </div>
+
+    <div class="tile panel">
+      <div class="tile-label">GPS · HOME</div>
+      <div class="tile-grid">
+        <div class="k">SATS</div><div class="v" id="gps-sats">--</div>
+        <div class="k">FIX</div><div class="v" id="gps-fix">--</div>
+        <div class="k">HDOP</div><div class="v" id="gps-hdop">--</div>
+        <div class="k">DIST</div><div class="v" id="home-dist">-- m</div>
+        <div class="k">BEARING</div><div class="v" id="home-bearing">--°</div>
+        <div class="k">ETA</div><div class="v" id="home-eta">--</div>
+        <div class="k">ODO</div><div class="v" id="odometer">-- km</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom-left: link bar -->
+  <div class="linkbar-area panel linkbar">
+    <div class="linkbar-header">
+      <div class="linkbar-title">LINK</div>
+      <div class="linkbar-stats">
+        <div class="stat"><span class="k">UP</span><span class="v" id="link-uplink">-- · --% · --</span></div>
+        <div class="stat"><span class="k">DN</span><span class="v" id="link-downlink">-- · --%</span></div>
+        <div class="stat"><span class="k">TX</span><span class="v" id="link-txpower">--</span></div>
+        <div class="stat"><span class="k">RF</span><span class="v" id="link-rfmode">--</span></div>
+      </div>
+    </div>
+    <div class="lq-graph">
+      <canvas id="lq-canvas"></canvas>
+    </div>
+  </div>
+
+  <!-- Bottom-right: alarms -->
+  <div class="alarms-area panel alarms">
+    <div class="alarms-header">
+      <span>RECENT EVENTS</span>
+      <span id="alarms-count">0</span>
+    </div>
+    <div class="alarms-list" id="alarms-list">
+      <div class="empty">No events yet</div>
+    </div>
+  </div>
+
+  <!-- Pre-flight overlay banner -->
+  <div class="preflight-banner">
+    <div class="heading">PRE-FLIGHT</div>
+    <div class="sub">Use Configurator to load model and arm. HUD activates on arm.</div>
+  </div>
+
+</div>
+
+<script>
+// ZeroTX Left LCD HUD
+//
+// Standalone page served at /hud/. Subscribes to the same WS stream
+// the existing GUI uses (/api/v1/stream). Renders an instrument
+// panel layout. Activates the live readouts on ARMED, dimmed
+// pre-flight banner otherwise.
+
+// ---- State ----
+let armState = 'DISARMED';
+let flightMode = '';
+let armedAt = null;
+let aircraftPos = null;
+let homePos = null;
+let lastGps = null;
+let odometerKm = 0;     // integrated since arm
+let lastOdoT  = 0;      // last sample timestamp for integration
+const lqHistory = []; // {ts, lq}
+const LQ_HISTORY_S = 60;
+const events = []; // {ts, level, msg}
+
+// ---- Geo helpers ----
+function haversineM(a, b) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLon = toRad(b[0] - a[0]);
+  const lat1 = toRad(a[1]);
+  const lat2 = toRad(b[1]);
+  const x = Math.sin(dLat/2)**2 + Math.sin(dLon/2)**2 * Math.cos(lat1) * Math.cos(lat2);
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+}
+function bearingDeg(a, b) {
+  const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+  const lat1 = toRad(a[1]), lat2 = toRad(b[1]);
+  const dLon = toRad(b[0] - a[0]);
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// ---- Format helpers ----
+function fmtDist(m) {
+  if (!Number.isFinite(m)) return '-- m';
+  return m >= 1000 ? `${(m/1000).toFixed(2)} km` : `${Math.round(m)} m`;
+}
+function fmtTimeMmSs(seconds) {
+  if (seconds < 0 || !Number.isFinite(seconds)) return '--:--';
+  const m = Math.floor(seconds/60), s = Math.floor(seconds%60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// CRSF TX power index → mW. Reference: TBS CRSF spec table 2.10.
+// Index 0 is "0 mW / unknown", indices 7-9 are out-of-order legacy
+// values. ELRS may map differently for 2.4GHz modules; the daemon
+// currently passes the raw index through and the consumer maps.
+const TX_POWER_MW = {
+  0: '0 mW', 1: '10 mW', 2: '25 mW', 3: '100 mW',
+  4: '500 mW', 5: '1 W', 6: '2 W', 7: '250 mW', 8: '50 mW', 9: '250 mW'
+};
+function fmtTxPower(idx) {
+  if (idx == null) return '--';
+  return TX_POWER_MW[idx] ?? `idx ${idx}`;
+}
+// RF mode index varies by ELRS version. Common ELRS 3.x mapping for
+// 2.4GHz: 0=4Hz, 1=25Hz, 2=50Hz, 3=100Hz, 4=100Full, 5=150Hz,
+// 6=200Hz, 7=250Hz, 8=333Hz, 9=500Hz. 900MHz uses different indices.
+// Display the index when not in the common table.
+const RF_MODE_HZ = {
+  0: '4 Hz',  1: '25 Hz', 2: '50 Hz',  3: '100 Hz',
+  4: '100Full', 5: '150 Hz', 6: '200 Hz', 7: '250 Hz', 8: '333 Hz', 9: '500 Hz'
+};
+function fmtRfMode(idx) {
+  if (idx == null) return '--';
+  return RF_MODE_HZ[idx] ?? `idx ${idx}`;
+}
+
+// ---- Status pill ----
+function statusFromState(arm, mode) {
+  if (mode && /failsafe/i.test(mode))     return { label: 'FAILSAFE', cls: 'failsafe' };
+  if (mode && /rth/i.test(mode))          return { label: 'RTH',      cls: 'rth' };
+  if (arm === 'ARMED')                    return { label: 'ARMED',    cls: 'armed' };
+  if (arm === 'ARMING_REQUESTED')         return { label: 'ARMING',   cls: 'arming' };
+  return { label: 'DISARMED', cls: 'disarmed' };
+}
+function setStatusPill(arm, mode) {
+  const { label, cls } = statusFromState(arm, mode);
+  const el = document.getElementById('status-pill');
+  el.textContent = label;
+  el.className = `status-pill ${cls}`;
+  document.getElementById('stage').classList.toggle('preflight',
+    arm === 'DISARMED' || arm === 'ARMING_REQUESTED');
+}
+
+// ---- Horizon ----
+function setHorizon(rollDeg, pitchDeg) {
+  // Pitch translates the content group in viewBox units (1 unit per
+  // degree). Roll rotates the outer SVG via CSS.
+  // The sky/ground rects are sized 800x400 so they cover the visible
+  // viewBox even at extreme combined pitch+roll.
+  const svg = document.getElementById('horizon-svg');
+  const content = document.getElementById('horizon-content');
+  if (content) content.setAttribute('transform', `translate(0, ${pitchDeg})`);
+  if (svg) svg.setAttribute('style', `transform: rotate(${-rollDeg}deg)`);
+}
+
+// ---- Heading band ----
+// Build the tick strip once; update transform per-frame.
+// viewBox is -180..180 (x), -28..0 (y). Visible band shows
+// roughly ±60° around aircraft heading because preserveAspectRatio
+// is xMidYMax meet (centered horizontally, anchored to bottom).
+let headingBuilt = false;
+function buildHeadingStrip() {
+  if (headingBuilt) return;
+  const strip = document.getElementById('heading-strip');
+  if (!strip) return;
+  // Heading values 0..359, repeated -360..360..720 (3 copies) so a
+  // simple negative translate always has visible content.
+  let svg = '';
+  for (let pass = -1; pass <= 1; pass++) {
+    for (let h = 0; h < 360; h += 10) {
+      const x = h + pass * 360;
+      // Major every 30, intermediate every 10
+      const isMajor = (h % 30) === 0;
+      const isCardinal = (h % 90) === 0;
+      const tickH = isMajor ? 8 : 4;
+      svg += `<line x1="${x}" y1="-${tickH}" x2="${x}" y2="0" stroke="#c9d1d9" stroke-width="0.6" opacity="${isMajor ? 0.95 : 0.55}"/>`;
+      if (isCardinal) {
+        const lbl = ({0:'N', 90:'E', 180:'S', 270:'W'})[h];
+        svg += `<text x="${x}" y="-12" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" font-weight="700" fill="#c9d1d9">${lbl}</text>`;
+      } else if (isMajor) {
+        svg += `<text x="${x}" y="-12" text-anchor="middle" font-family="ui-monospace, monospace" font-size="7" fill="#8b949e">${h}</text>`;
+      }
+    }
+  }
+  strip.innerHTML = svg;
+  headingBuilt = true;
+}
+function setHeadingBand(aircraftHdg, homeBearing) {
+  buildHeadingStrip();
+  const strip = document.getElementById('heading-strip');
+  const home  = document.getElementById('heading-home-marker');
+  if (strip) strip.setAttribute('transform', `translate(${-aircraftHdg}, 0)`);
+  if (home) {
+    if (Number.isFinite(homeBearing)) {
+      // Position relative to where strip is. World x of bearing is
+      // homeBearing; after translate(-aircraftHdg) on strip, the
+      // marker also lives in strip-space, so just place at homeBearing.
+      // But marker is OUTSIDE the strip (sibling), so it's in fixed
+      // viewBox. Need to position at (homeBearing - aircraftHdg).
+      let dx = homeBearing - aircraftHdg;
+      // Wrap to -180..180 range
+      while (dx > 180) dx -= 360;
+      while (dx < -180) dx += 360;
+      home.setAttribute('transform', `translate(${dx}, 0)`);
+    } else {
+      home.setAttribute('transform', 'translate(-1000, 0)');
+    }
+  }
+}
+
+// ---- Battery thresholds (cell-based) ----
+function batClassFromCellV(cellV) {
+  if (!Number.isFinite(cellV) || cellV <= 0) return '';
+  if (cellV < 3.4) return 'bad';
+  if (cellV < 3.6) return 'warn';
+  return 'good';
+}
+
+// ---- Link quality graph ----
+function pushLqSample(lq) {
+  const now = Date.now();
+  lqHistory.push({ ts: now, lq });
+  // Trim to LQ_HISTORY_S window.
+  const cutoff = now - LQ_HISTORY_S * 1000;
+  while (lqHistory.length && lqHistory[0].ts < cutoff) lqHistory.shift();
+}
+function drawLqGraph() {
+  const cv = document.getElementById('lq-canvas');
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth, cssH = cv.clientHeight;
+  if (cv.width !== cssW * dpr || cv.height !== cssH * dpr) {
+    cv.width = cssW * dpr; cv.height = cssH * dpr;
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  if (lqHistory.length < 2) return;
+
+  const now = Date.now();
+  const startTs = now - LQ_HISTORY_S * 1000;
+  // Reference markers at 50% and 80%.
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, cssH * (1 - 0.5)); ctx.lineTo(cssW, cssH * (1 - 0.5));
+  ctx.moveTo(0, cssH * (1 - 0.8)); ctx.lineTo(cssW, cssH * (1 - 0.8));
+  ctx.stroke();
+
+  // Line, color-segmented per-sample.
+  for (let i = 1; i < lqHistory.length; i++) {
+    const a = lqHistory[i-1], b = lqHistory[i];
+    const ax = ((a.ts - startTs) / (LQ_HISTORY_S * 1000)) * cssW;
+    const ay = cssH * (1 - a.lq / 100);
+    const bx = ((b.ts - startTs) / (LQ_HISTORY_S * 1000)) * cssW;
+    const by = cssH * (1 - b.lq / 100);
+    const lq = (a.lq + b.lq) / 2;
+    ctx.strokeStyle = lq < 50 ? '#f85149' : (lq < 80 ? '#d29922' : '#3fb950');
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+}
+
+// ---- Alarms / events ----
+function pushEvent(level, msg) {
+  events.unshift({ ts: Date.now(), level, msg });
+  while (events.length > 12) events.pop();
+  renderEvents();
+}
+function renderEvents() {
+  const el = document.getElementById('alarms-list');
+  document.getElementById('alarms-count').textContent = events.length;
+  if (!events.length) {
+    el.innerHTML = '<div class="empty">No events yet</div>';
+    return;
+  }
+  el.innerHTML = events.slice(0, 8).map(e => {
+    const d = new Date(e.ts);
+    const ts = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+    const cls = e.level === 'bad' ? 'bad' : (e.level === 'warn' ? 'warn' : '');
+    return `<div class="item ${cls}"><span class="ts">${ts}</span><span class="msg">${escapeHtml(e.msg)}</span></div>`;
+  }).join('');
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---- Top-strip clocks ----
+function tickClocks() {
+  // UTC clock.
+  const now = new Date();
+  const utc = `${String(now.getUTCHours()).padStart(2,'0')}:${String(now.getUTCMinutes()).padStart(2,'0')}:${String(now.getUTCSeconds()).padStart(2,'0')}`;
+  document.getElementById('utc-clock').textContent = utc;
+  // Flight clock.
+  if (armState === 'ARMED' && armedAt) {
+    document.getElementById('flight-clock').textContent =
+      fmtTimeMmSs((Date.now() - armedAt) / 1000);
+  } else {
+    document.getElementById('flight-clock').textContent = '--:--';
+  }
+}
+setInterval(tickClocks, 250);
+
+// ---- Daemon version (one-shot at load) ----
+async function showDaemonVersion() {
+  const el = document.getElementById('daemon-ver');
+  try {
+    const r = await fetch('/api/v1/health');
+    if (r.ok) {
+      const data = await r.json();
+      el.textContent = data.version || '?';
+    } else {
+      el.textContent = `err ${r.status}`;
+    }
+  } catch (e) { el.textContent = 'offline'; }
+}
+
+// ---- Main state handler (called by WS or simulator) ----
+function handleStateMessage(state) {
+  const arm  = state?.arm?.state || 'DISARMED';
+  const mode = state?.telemetry?.flightMode?.data?.mode || '';
+  const gps  = state?.telemetry?.gps?.data;
+  const home = state?.telemetry?.home?.data;
+  const link = state?.telemetry?.link?.data;
+  const att  = state?.telemetry?.attitude?.data;
+  const bat  = state?.telemetry?.battery?.data;
+  const ch   = state?.channels;
+
+  // Arm transitions log to events.
+  if (arm !== armState) {
+    if (arm === 'ARMED' && armState !== 'ARMED') {
+      armedAt = Date.now();
+      odometerKm = 0;
+      lastOdoT = Date.now();
+      pushEvent('info', 'Armed');
+    } else if (armState === 'ARMED' && arm !== 'ARMED') {
+      armedAt = null;
+      pushEvent('info', 'Disarmed');
+    } else if (arm === 'ARMING_REQUESTED') {
+      pushEvent('info', 'Arming requested');
+    }
+    armState = arm;
+  }
+  if (mode !== flightMode) {
+    if (mode && flightMode) pushEvent(/failsafe/i.test(mode) ? 'bad' : (/rth/i.test(mode) ? 'warn' : 'info'), `Mode: ${mode}`);
+    flightMode = mode;
+  }
+
+  setStatusPill(arm, mode);
+
+  // Horizon.
+  if (att) {
+    setHorizon(att.rollDeg || 0, att.pitchDeg || 0);
+  }
+
+  // GPS + home.
+  // Daemon emits: gps.altMeters (int), gps.groundKmh (float), gps.headingDeg.
+  let aircraftHdg = null;
+  if (gps && Number.isFinite(gps.latDeg) && Number.isFinite(gps.lonDeg)
+      && !(gps.latDeg === 0 && gps.lonDeg === 0)) {
+    aircraftPos = [gps.lonDeg, gps.latDeg];
+    const altM = gps.altMeters ?? 0;
+    const kmh  = gps.groundKmh ?? 0;
+    document.getElementById('hz-alt').textContent = Math.round(altM);
+    document.getElementById('hz-spd').textContent = Math.round(kmh);
+    aircraftHdg = gps.headingDeg ?? 0;
+    // Vario from altitude derivative (cheap, sample-to-sample).
+    if (lastGps && lastGps.altMeters !== undefined) {
+      const dt = (Date.now() - lastGps.t) / 1000;
+      if (dt > 0) {
+        const v = (altM - lastGps.altMeters) / dt;
+        document.getElementById('hz-vario').textContent = (v >= 0 ? '+' : '') + v.toFixed(1);
+      }
+    }
+    lastGps = { altMeters: altM, t: Date.now() };
+    document.getElementById('gps-sats').textContent = gps.sats ?? '--';
+    document.getElementById('gps-fix').textContent = gps.fix === 3 ? '3D' : (gps.fix === 2 ? '2D' : 'NO');
+    if (Number.isFinite(gps.hdop)) {
+      document.getElementById('gps-hdop').textContent = gps.hdop.toFixed(1);
+    }
+    // Odometer integration: only when armed. groundKmh × dt(hours).
+    if (armState === 'ARMED' && Number.isFinite(kmh)) {
+      const now = Date.now();
+      if (lastOdoT > 0) {
+        const dtH = (now - lastOdoT) / 1000 / 3600;
+        if (dtH > 0 && dtH < 1) odometerKm += kmh * dtH;
+      }
+      lastOdoT = now;
+      document.getElementById('odometer').textContent =
+        odometerKm < 1 ? `${Math.round(odometerKm * 1000)} m`
+                       : `${odometerKm.toFixed(2)} km`;
+    }
+  }
+  if (home && (home.latDeg !== 0 || home.lonDeg !== 0)) {
+    homePos = [home.lonDeg, home.latDeg];
+  }
+  let homeBearing = null;
+  if (aircraftPos && homePos) {
+    const d = haversineM(aircraftPos, homePos);
+    const b = bearingDeg(aircraftPos, homePos);
+    homeBearing = b;
+    document.getElementById('home-dist').textContent = fmtDist(d);
+    document.getElementById('home-bearing').textContent = `${Math.round(b)}°`;
+    // ETA: distance(m) / speed(m/s). groundKmh ÷ 3.6 = m/s.
+    const ms = (gps?.groundKmh ?? 0) / 3.6;
+    if (ms > 0.5) {
+      document.getElementById('home-eta').textContent = fmtTimeMmSs(d / ms);
+    } else {
+      document.getElementById('home-eta').textContent = '--:--';
+    }
+  }
+  // Heading band: always update if we have aircraft heading.
+  if (Number.isFinite(aircraftHdg)) {
+    setHeadingBand(aircraftHdg, homeBearing);
+  }
+
+  // Battery.
+  if (bat) {
+    const pct = Math.round(bat.percent ?? 0);
+    document.getElementById('bat-pct').textContent = pct;
+    document.getElementById('bat-volts').textContent = (bat.volts ?? 0).toFixed(2) + ' V';
+    if (bat.cellCount) document.getElementById('bat-cells').textContent = `${bat.cellCount}S`;
+    if (bat.voltsCell) {
+      document.getElementById('bat-cell-v').textContent = bat.voltsCell.toFixed(2) + 'V/c';
+      const cls = batClassFromCellV(bat.voltsCell);
+      document.getElementById('bat-pct').className = 'num ' + cls;
+      document.getElementById('bat-fill').className = 'fill ' + cls;
+    }
+    document.getElementById('bat-fill').style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    // Daemon emits usedMAh (int).
+    if (Number.isFinite(bat.usedMAh)) {
+      document.getElementById('bat-mah').textContent = `${bat.usedMAh} mAh`;
+    }
+    if (Number.isFinite(bat.amps)) {
+      document.getElementById('bat-current').textContent = `${bat.amps.toFixed(1)} A`;
+    }
+  }
+
+  // Link: UP (rssi · lq · snr) · DN (rssi · lq) · TX (mW) · RF (Hz).
+  if (link) {
+    const upR = link.uplinkRssiDbm, upL = link.uplinkLq, upS = link.uplinkSnr;
+    const dnR = link.downlinkRssiDbm, dnL = link.downlinkLq;
+    const upStr = `${upR ?? '--'}dBm · ${upL ?? '--'}% · ${upS ?? '--'}dB`;
+    const dnStr = `${dnR ?? '--'}dBm · ${dnL ?? '--'}%`;
+    document.getElementById('link-uplink').textContent = upStr;
+    document.getElementById('link-downlink').textContent = dnStr;
+    document.getElementById('link-txpower').textContent = fmtTxPower(link.txPowerIdx);
+    document.getElementById('link-rfmode').textContent  = fmtRfMode(link.rfMode);
+    if (Number.isFinite(upL)) {
+      pushLqSample(upL);
+      drawLqGraph();
+    }
+  }
+
+  // Mode badge in top strip.
+  if (mode) {
+    document.getElementById('mode-badge').textContent = mode.toUpperCase();
+  }
+  // Throttle: try multiple sources (channels[2] is typical CRSF throttle on AETR).
+  let thr = null;
+  if (Array.isArray(ch) && ch.length > 2) {
+    // CRSF channel midrange ~992, range ~172..1811. Map to 0..100%.
+    const v = ch[2];
+    if (Number.isFinite(v)) thr = Math.round(((v - 172) / (1811 - 172)) * 100);
+  }
+  if (thr === null && state?.joystick?.axes) {
+    const axes = state.joystick.axes;
+    if (axes.length > 2 && Number.isFinite(axes[2])) thr = Math.round(((axes[2] + 1) / 2) * 100);
+  }
+  if (thr !== null) {
+    thr = Math.max(0, Math.min(100, thr));
+    document.getElementById('thr-pct').textContent = `${thr}`;
+  }
+}
+
+// ---- WebSocket ----
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/api/v1/stream`);
+  ws.onmessage = (ev) => {
+    try { handleStateMessage(JSON.parse(ev.data)); }
+    catch (e) { console.warn('ws message parse failed:', e); }
+  };
+  ws.onclose = () => { setTimeout(connectWS, 2000); };
+  ws.onerror = (e) => { console.warn('ws error:', e); };
+}
+
+// ---- Simulator (?simulate=1) ----
+function startSimulator() {
+  console.log('[hud] simulator mode');
+  const homeLatLon = [-22.9056, -47.0608];
+  const radiusM = 200;
+  const start = Date.now();
+  const tickMs = 200;
+
+  setInterval(() => {
+    const t = (Date.now() - start) / 1000;
+    const cycle = t % 50;
+
+    let arm = 'DISARMED', mode = 'ANGLE';
+    let lat = homeLatLon[0], lon = homeLatLon[1];
+    let heading = 0, lq = 100, alt = 0, spd = 0;
+    let roll = 0, pitch = 0;
+    let batPct = 88, batV = 16.5, cells = 4;
+
+    if (cycle < 3)        arm = 'DISARMED';
+    else if (cycle < 6)   { arm = 'ARMING_REQUESTED'; }
+    else if (cycle < 30) {
+      arm = 'ARMED';
+      const angle = ((cycle - 6) / 24) * 2 * Math.PI;
+      lat = homeLatLon[0] + (radiusM / 111000) * Math.cos(angle);
+      lon = homeLatLon[1] + (radiusM / (111000 * Math.cos(homeLatLon[0] * Math.PI / 180))) * Math.sin(angle);
+      heading = ((angle * 180 / Math.PI) + 90) % 360;
+      alt = 80 + 20 * Math.sin(angle * 2);
+      spd = 16 + 3 * Math.sin(angle);
+      roll = 25 * Math.sin(angle);
+      pitch = 5 * Math.cos(angle);
+      if (cycle > 14 && cycle < 18)        lq = 65;
+      else if (cycle > 18 && cycle < 22)   lq = 35;
+      else                                 lq = 95;
+      batPct = Math.max(20, 88 - (cycle - 6) * 1.5);
+      batV = 13.5 + (batPct / 100) * 3.3; // 4S range
+    } else if (cycle < 40) {
+      arm = 'ARMED'; mode = 'RTH';
+      const phase = (cycle - 30) / 10;
+      const r = radiusM * (1 - phase);
+      const angle = (cycle - 6) / 24 * 2 * Math.PI + phase * Math.PI;
+      lat = homeLatLon[0] + (r / 111000) * Math.cos(angle);
+      lon = homeLatLon[1] + (r / (111000 * Math.cos(homeLatLon[0] * Math.PI / 180))) * Math.sin(angle);
+      heading = ((angle * 180 / Math.PI) + 270) % 360;
+      alt = 60 - phase * 30; spd = 14;
+      roll = -15 * Math.sin(angle);
+      pitch = -3;
+      lq = 80; batPct = 30; batV = 14.5;
+    } else if (cycle < 43) {
+      arm = 'ARMED'; mode = 'FAILSAFE';
+      lq = 0; alt = 30; spd = 6;
+      pitch = 8;
+      batPct = 25; batV = 14.0;
+    } else { arm = 'DISARMED'; }
+
+    handleStateMessage({
+      arm: { state: arm },
+      channels: [992, 992, Math.round(172 + (spd > 0 ? 0.5 : 0.1) * (1811-172)), 992, 1500, 992, 992, 992],
+      telemetry: {
+        // sim payload uses the SAME field names the daemon emits.
+        gps:        { data: { latDeg: lat, lonDeg: lon, headingDeg: heading, altMeters: Math.round(alt), groundKmh: spd * 3.6, sats: 14, fix: 3, hdop: 0.8 + Math.random()*0.3 } },
+        home:       { data: { latDeg: homeLatLon[0], lonDeg: homeLatLon[1] } },
+        link:       { data: {
+          uplinkLq: lq, uplinkRssiDbm: -60 - (100-lq)/2, uplinkSnr: 8 + lq/20,
+          downlinkLq: Math.max(0, lq - 5), downlinkRssiDbm: -62 - (100-lq)/2, downlinkSnr: 6 + lq/20,
+          txPowerIdx: 4, rfMode: 5  // 250mW @ 150Hz
+        } },
+        flightMode: { data: { mode: mode } },
+        attitude:   { data: { rollDeg: roll, pitchDeg: pitch, yawDeg: heading } },
+        battery:    { data: { volts: batV, percent: batPct, cellCount: cells, voltsCell: batV/cells, usedMAh: Math.round((100-batPct)*22), amps: 8 + (spd/4) } }
+      }
+    });
+  }, tickMs);
+}
+
+// ---- Init ----
+function init() {
+  showDaemonVersion();
+  const params = new URLSearchParams(location.search);
+  if (params.get('simulate') === '1') startSimulator();
+  else                                 connectWS();
+}
+init();
+</script>
+</body>
+</html>

@@ -12,4 +12,5 @@ import "embed"
 //
 //go:embed index.html
 //go:embed map/index.html
+//go:embed hud/index.html
 var FS embed.FS
