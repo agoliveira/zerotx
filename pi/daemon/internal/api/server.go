@@ -20,6 +20,12 @@ type Server struct {
 	providers *Providers
 	webDir    string // if non-empty, serve from filesystem instead of embed
 
+	// Map tile config. mapTilesDir is the path to PMTiles files for
+	// offline serving (stage 2). onlineFallback controls whether to
+	// proxy to public tile servers when local tiles aren't available.
+	mapTilesDir    string
+	onlineFallback bool
+
 	mu        sync.RWMutex
 	httpSrv   *http.Server
 	hub       *hub
@@ -30,8 +36,9 @@ type Server struct {
 // "127.0.0.1:8080"). Providers must have all callbacks set.
 func NewServer(addr string, providers *Providers) *Server {
 	return &Server{
-		addr:      addr,
-		providers: providers,
+		addr:           addr,
+		providers:      providers,
+		onlineFallback: true,
 	}
 }
 
@@ -75,6 +82,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/arm", s.handleArm)
 	mux.HandleFunc("/api/v1/arm/confirm", s.handleArmConfirm)
 	mux.HandleFunc("/api/v1/arm/checklist", s.handleArmChecklist)
+
+	// Map tile serving. /tiles/{tileset}/{z}/{x}/{y}.{ext}
+	mux.HandleFunc("/tiles/", s.handleTile)
 
 	// Static GUI at /. The embed.FS path is rooted; for dev iteration,
 	// SetWebDir bypasses it.

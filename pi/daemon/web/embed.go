@@ -11,4 +11,5 @@ import "embed"
 // otherwise.
 //
 //go:embed index.html
+//go:embed map/index.html
 var FS embed.FS

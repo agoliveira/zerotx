@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1024, initial-scale=1, user-scalable=no">
+  <title>ZeroTX Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <style>
+    :root {
+      --bg-base:    #0a0e14;
+      --bg-panel:   rgba(10, 14, 20, 0.85);
+      --bg-panel-strong: rgba(10, 14, 20, 0.95);
+      --border:     #30363d;
+      --text-pri:   #c9d1d9;
+      --text-sec:   #8b949e;
+      --text-muted: #6e7681;
+      --good:       #3fb950;
+      --warn:       #d29922;
+      --bad:        #f85149;
+      --info:       #58a6ff;
+    }
+
+    html, body {
+      margin: 0; padding: 0; width: 100vw; height: 100vh;
+      background: var(--bg-base); color: var(--text-pri);
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+    }
+    #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      backdrop-filter: blur(8px);
+    }
+
+    /* ----- Top-right: tileset toggle ----- */
+    .tileset-toggle {
+      position: absolute; top: 12px; right: 12px; z-index: 10;
+      display: flex; gap: 4px;
+      padding: 4px;
+    }
+    .tileset-toggle button {
+      min-width: 60px; min-height: 36px; padding: 0 14px;
+      background: transparent; border: none;
+      color: var(--text-sec);
+      font-size: 0.85rem; font-weight: 600;
+      letter-spacing: 0.05em; border-radius: 5px;
+      cursor: pointer; transition: background 0.15s, color 0.15s;
+    }
+    .tileset-toggle button:hover { background: #21262d; color: var(--text-pri); }
+    .tileset-toggle button.active { background: #1f6feb; color: #fff; }
+
+    /* ----- Top-center: status pill ----- */
+    .status-pill {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 10;
+      padding: 6px 18px;
+      border-radius: 999px;
+      font-size: 0.8rem; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-sec);
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+    .status-pill.disarmed  { color: var(--text-sec); border-color: var(--border); }
+    .status-pill.arming    { color: var(--warn); border-color: var(--warn); }
+    .status-pill.armed     { color: var(--good); border-color: var(--good); }
+    .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(210, 153, 34, 0.1); }
+    .status-pill.failsafe  { color: var(--bad);  border-color: var(--bad);  background: rgba(248, 81, 73, 0.15); animation: pulse 1s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.5; }
+    }
+
+    /* ----- Top-left: compass + bearing-to-home ----- */
+    .compass-panel {
+      position: absolute; top: 60px; left: 12px; z-index: 10;
+      width: 140px;
+      padding: 10px;
+      font-size: 0.75rem;
+    }
+    .compass-svg-wrap {
+      position: relative;
+      width: 100px; height: 100px;
+      margin: 0 auto 6px;
+    }
+    .compass-row {
+      display: flex; justify-content: space-between;
+      color: var(--text-sec);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    .compass-row .val { color: var(--text-pri); font-weight: 600; }
+
+    /* ----- Right side, below tileset: map controls ----- */
+    .controls-panel {
+      position: absolute; top: 60px; right: 12px; z-index: 10;
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 8px;
+    }
+    .ctrl-row {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.75rem; color: var(--text-sec);
+    }
+    .ctrl-row label {
+      flex: 1;
+      letter-spacing: 0.05em;
+    }
+    .ctrl-toggle {
+      width: 36px; height: 20px;
+      background: #21262d;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      position: relative;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .ctrl-toggle::after {
+      content: '';
+      position: absolute;
+      width: 14px; height: 14px;
+      top: 2px; left: 2px;
+      background: var(--text-sec);
+      border-radius: 50%;
+      transition: left 0.15s, background 0.15s;
+    }
+    .ctrl-toggle.on {
+      background: rgba(31, 111, 235, 0.4);
+    }
+    .ctrl-toggle.on::after {
+      left: 18px;
+      background: var(--info);
+    }
+
+    /* ----- Bottom-left: scale bar ----- */
+    .scale-bar {
+      position: absolute; bottom: 30px; left: 12px; z-index: 10;
+      padding: 4px 8px;
+      font-size: 0.7rem;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      color: var(--text-pri);
+    }
+    .scale-bar-line {
+      display: inline-block;
+      height: 8px;
+      border: 1px solid var(--text-pri);
+      border-top: none;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* ----- Bottom-center: cursor lat/lon readout ----- */
+    .cursor-readout {
+      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 10;
+      padding: 3px 10px;
+      font-size: 0.7rem;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      color: var(--text-sec);
+    }
+
+    /* ----- Bottom-right: version ----- */
+    .version-badge {
+      position: absolute; bottom: 8px; right: 12px; z-index: 10;
+      font-size: 0.7rem; color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+
+    /* ----- MapLibre control restyling for the dark theme ----- */
+    .maplibregl-ctrl-attrib {
+      display: none !important; /* we have our own attribution in the corners */
+    }
+    .maplibregl-ctrl-group {
+      background: var(--bg-panel) !important;
+      border: 1px solid var(--border) !important;
+    }
+    .maplibregl-ctrl-group button {
+      background-color: transparent !important;
+    }
+    .maplibregl-ctrl-group button:hover { background-color: #21262d !important; }
+    .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+      filter: invert(0.85);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="tileset-toggle panel">
+    <button id="btn-sat" class="active">SAT</button>
+    <button id="btn-osm">OSM</button>
+  </div>
+
+  <div class="status-pill panel disarmed" id="status-pill">DISARMED</div>
+
+  <div class="compass-panel panel">
+    <div class="compass-svg-wrap" id="compass-wrap">
+      <svg width="100" height="100" viewBox="0 0 100 100" id="compass-svg">
+        <!-- Outer ring + cardinal labels (rotated when map rotates) -->
+        <g id="compass-ring">
+          <circle cx="50" cy="50" r="44" fill="none" stroke="var(--border)" stroke-width="1"/>
+          <text x="50" y="13" text-anchor="middle" fill="var(--text-pri)" font-size="9" font-weight="600">N</text>
+          <text x="50" y="93" text-anchor="middle" fill="var(--text-sec)" font-size="9">S</text>
+          <text x="91" y="53" text-anchor="middle" fill="var(--text-sec)" font-size="9">E</text>
+          <text x="9"  y="53" text-anchor="middle" fill="var(--text-sec)" font-size="9">W</text>
+        </g>
+        <!-- Aircraft heading arrow (green) -->
+        <g id="compass-hdg" transform="rotate(0 50 50)">
+          <polygon points="50,18 46,30 54,30" fill="var(--good)" />
+        </g>
+        <!-- Bearing-to-home arrow (blue, dashed-style outline) -->
+        <g id="compass-home" transform="rotate(0 50 50)">
+          <polygon points="50,22 47,32 53,32" fill="none" stroke="var(--info)" stroke-width="1.5"/>
+        </g>
+        <!-- Center dot -->
+        <circle cx="50" cy="50" r="2.5" fill="var(--text-pri)" />
+      </svg>
+    </div>
+    <div class="compass-row">
+      <span style="color: var(--good);">▲ HDG</span>
+      <span class="val" id="hdg-val">---°</span>
+    </div>
+    <div class="compass-row">
+      <span style="color: var(--info);">△ HOME</span>
+      <span class="val" id="bearing-val">---°</span>
+    </div>
+    <div class="compass-row">
+      <span>DIST</span>
+      <span class="val" id="dist-val">--- m</span>
+    </div>
+  </div>
+
+  <div class="controls-panel panel">
+    <div class="ctrl-row">
+      <label>Follow aircraft</label>
+      <div class="ctrl-toggle" id="toggle-follow"></div>
+    </div>
+    <div class="ctrl-row">
+      <label>Rotate to heading</label>
+      <div class="ctrl-toggle" id="toggle-rotate"></div>
+    </div>
+    <div class="ctrl-row">
+      <label>Range rings</label>
+      <div class="ctrl-toggle on" id="toggle-rings"></div>
+    </div>
+  </div>
+
+  <div class="scale-bar panel" id="scale-bar">
+    <span class="scale-bar-line" id="scale-line" style="width: 50px;"></span><span id="scale-label">100 m</span>
+  </div>
+
+  <div class="cursor-readout" id="cursor-readout">--, --</div>
+
+  <div class="version-badge">
+    <span id="frontend-ver">map-stage4</span> · <span id="daemon-ver">…</span>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script>
+  // ZeroTX Map — Stage 4 (refined overlays).
+  //
+  // New since stage 3:
+  //  - Compass panel (top-left) showing aircraft heading + bearing to home + distance
+  //  - Map controls (top-right under tileset): Follow, Rotate-to-heading, Range rings toggles
+  //  - Zoom-adaptive range rings centered on home
+  //  - Scale bar (bottom-left), updated on zoom/move
+  //  - Cursor lat/lon readout (bottom-center)
+
+  const FALLBACK_CENTER = [-47.0608, -22.9056];
+  const FALLBACK_ZOOM = 13;
+
+  const TILESETS = {
+    satellite: { url: location.origin + '/tiles/satellite/{z}/{x}/{y}.png', attribution: 'Esri World Imagery' },
+    osm:       { url: location.origin + '/tiles/osm/{z}/{x}/{y}.png',       attribution: '© OpenStreetMap contributors' }
+  };
+
+  function buildStyle(tilesetName) {
+    const t = TILESETS[tilesetName];
+    return {
+      version: 8,
+      sources: { 'tiles': { type: 'raster', tiles: [t.url], tileSize: 256, attribution: t.attribution, maxzoom: 19 } },
+      layers: [{ id: 'tiles-layer', type: 'raster', source: 'tiles' }]
+    };
+  }
+
+  let currentTileset = 'satellite';
+  let map = null;
+
+  // Aircraft / trail / home state.
+  let lastArmState = 'DISARMED';
+  let trailFeatures = [];
+  let prevGPS = null;
+  let aircraftPos = null;
+  let aircraftHeading = 0;
+  let homePos = null;
+  let centeredOnHome = false;
+
+  // Map control state.
+  let followAircraft = false;
+  let rotateToHeading = false;
+  let rangeRingsEnabled = true;
+
+  // Plane SVG and icon variants.
+  const PLANE_SVG = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="96" height="96">
+      <path fill="#ffffff" stroke="#000000" stroke-width="1.5" stroke-linejoin="round"
+            d="M 32 4 L 38 28 L 60 36 L 60 42 L 38 38 L 38 52 L 46 56 L 46 60 L 32 56 L 18 60 L 18 56 L 26 52 L 26 38 L 4 42 L 4 36 L 26 28 Z"/>
+    </svg>
+  `;
+  function loadPlaneImage(color) {
+    const svg = PLANE_SVG.replace('fill="#ffffff"', `fill="${color}"`);
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    return new Promise((resolve, reject) => {
+      const img = new Image(96, 96);
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+
+  function statusFromState(arm, mode) {
+    if (mode && /failsafe/i.test(mode))     return { label: 'FAILSAFE', cls: 'failsafe' };
+    if (mode && /rth/i.test(mode))          return { label: 'RTH',      cls: 'rth' };
+    if (arm === 'ARMED')                    return { label: 'ARMED',    cls: 'armed' };
+    if (arm === 'ARMING_REQUESTED')         return { label: 'ARMING',   cls: 'arming' };
+    return { label: 'DISARMED', cls: 'disarmed' };
+  }
+
+  // -----------------------------------------------------------
+  // Geo helpers (haversine for distance, bearing math).
+  // Returns meters between two [lon,lat] points.
+  function haversineM(a, b) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(b[1] - a[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const lat1 = toRad(a[1]);
+    const lat2 = toRad(b[1]);
+    const x = Math.sin(dLat/2)**2 +
+              Math.sin(dLon/2)**2 * Math.cos(lat1) * Math.cos(lat2);
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+  }
+
+  // Initial bearing from a to b in degrees [0,360).
+  function bearingDeg(a, b) {
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
+    const lat1 = toRad(a[1]);
+    const lat2 = toRad(b[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) -
+              Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  // -----------------------------------------------------------
+  // Range rings: pick 2-3 ring radii based on current zoom.
+  // The visible map width at zoom z, latitude lat:
+  //   meters_per_pixel = 156543.03 * cos(lat) / 2^z
+  // We want rings that fit comfortably in the visible viewport
+  // while avoiding overlap with tiny/huge values.
+  function chooseRingRadii(zoom, lat) {
+    const mPerPix = 156543.03 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+    const visibleM = mPerPix * 800; // approx half-screen meters
+    // Pick radii that fit in the visible window.
+    // Candidate set covers 50m to 50km in 1-2-5 progression.
+    const candidates = [50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000];
+    const picked = [];
+    for (const r of candidates) {
+      if (r < visibleM * 0.05) continue;          // too small to see
+      if (r > visibleM * 1.5) break;              // too big to fit
+      picked.push(r);
+    }
+    return picked.slice(-3); // 3 largest that fit
+  }
+
+  function buildRingFeatures(centerLonLat, radii) {
+    // Approximate circle as 64-point polygon (LineString actually, since
+    // we want stroke-only).
+    if (!centerLonLat || !radii.length) return [];
+    const features = [];
+    for (const r of radii) {
+      const coords = [];
+      const lat = centerLonLat[1] * Math.PI / 180;
+      const dLat = r / 6371000 * 180 / Math.PI;
+      const dLon = r / (6371000 * Math.cos(lat)) * 180 / Math.PI;
+      for (let i = 0; i <= 64; i++) {
+        const a = i * 2 * Math.PI / 64;
+        coords.push([
+          centerLonLat[0] + dLon * Math.sin(a),
+          centerLonLat[1] + dLat * Math.cos(a)
+        ]);
+      }
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords },
+        properties: { radius: r }
+      });
+    }
+    return features;
+  }
+
+  function updateRangeRings() {
+    if (!map.getSource('range-rings')) return;
+    if (!rangeRingsEnabled || !homePos) {
+      map.getSource('range-rings').setData({ type: 'FeatureCollection', features: [] });
+      return;
+    }
+    const z = map.getZoom();
+    const radii = chooseRingRadii(z, homePos[1]);
+    map.getSource('range-rings').setData({
+      type: 'FeatureCollection',
+      features: buildRingFeatures(homePos, radii)
+    });
+  }
+
+  // -----------------------------------------------------------
+  // Scale bar: pick a "round" distance that fits a reasonable
+  // pixel width (40-120px).
+  function updateScaleBar() {
+    const center = map.getCenter();
+    const z = map.getZoom();
+    const mPerPix = 156543.03 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, z);
+    const targetPx = 80;
+    const targetM = mPerPix * targetPx;
+    const candidates = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000];
+    let pick = candidates[0];
+    for (const c of candidates) {
+      if (c <= targetM) pick = c;
+      else break;
+    }
+    const widthPx = pick / mPerPix;
+    const lineEl = document.getElementById('scale-line');
+    const labelEl = document.getElementById('scale-label');
+    lineEl.style.width = `${widthPx}px`;
+    labelEl.textContent = pick >= 1000 ? `${pick/1000} km` : `${pick} m`;
+  }
+
+  // -----------------------------------------------------------
+  // Compass + bearing-to-home indicator.
+  function updateCompass() {
+    const hdgEl = document.getElementById('compass-hdg');
+    const homeEl = document.getElementById('compass-home');
+    const ringEl = document.getElementById('compass-ring');
+    const hdgVal = document.getElementById('hdg-val');
+    const bearingVal = document.getElementById('bearing-val');
+    const distVal = document.getElementById('dist-val');
+
+    // The ring rotates with map bearing (so N points up regardless of
+    // map rotation; the cardinal labels are correct for the world).
+    const mapBearing = map ? map.getBearing() : 0;
+    ringEl.setAttribute('transform', `rotate(${-mapBearing} 50 50)`);
+
+    if (aircraftPos) {
+      // Aircraft heading: rotate the green arrow. If map is rotated to
+      // heading, the arrow stays at 0 and the ring rotates beneath it.
+      const arrowAngle = aircraftHeading - mapBearing;
+      hdgEl.setAttribute('transform', `rotate(${arrowAngle} 50 50)`);
+      hdgVal.textContent = `${Math.round(aircraftHeading)}°`;
+    } else {
+      hdgVal.textContent = '---°';
+    }
+
+    if (aircraftPos && homePos) {
+      const b = bearingDeg(aircraftPos, homePos);
+      const d = haversineM(aircraftPos, homePos);
+      const homeArrowAngle = b - mapBearing;
+      homeEl.setAttribute('transform', `rotate(${homeArrowAngle} 50 50)`);
+      bearingVal.textContent = `${Math.round(b)}°`;
+      distVal.textContent = d >= 1000 ? `${(d/1000).toFixed(2)} km` : `${Math.round(d)} m`;
+    } else {
+      bearingVal.textContent = '---°';
+      distVal.textContent = '--- m';
+    }
+  }
+
+  // -----------------------------------------------------------
+  // Layer setup (called on load and after style swaps).
+  function setupTrailLayer() {
+    if (!map.getSource('trail')) {
+      map.addSource('trail', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('trail-layer')) {
+      map.addLayer({
+        id: 'trail-layer',
+        type: 'line',
+        source: 'trail',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-width': 4,
+          'line-opacity': 0.85,
+          'line-color': [
+            'case',
+            ['<', ['get', 'lq'], 50], '#f85149',
+            ['<', ['get', 'lq'], 80], '#d29922',
+                                      '#3fb950'
+          ]
+        }
+      });
+    }
+  }
+
+  async function setupAircraftLayer() {
+    const variants = [
+      ['plane-armed',    '#3fb950'],
+      ['plane-disarmed', '#8b949e'],
+      ['plane-rth',      '#d29922'],
+      ['plane-failsafe', '#f85149']
+    ];
+    for (const [key, color] of variants) {
+      if (!map.hasImage(key)) {
+        try {
+          const img = await loadPlaneImage(color);
+          if (!map.hasImage(key)) {
+            map.addImage(key, img, { pixelRatio: 2 });
+          }
+        } catch (e) { console.error(`failed to load plane image ${key}:`, e); }
+      }
+    }
+    if (!map.getSource('aircraft')) {
+      map.addSource('aircraft', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('aircraft-layer')) {
+      map.addLayer({
+        id: 'aircraft-layer',
+        type: 'symbol',
+        source: 'aircraft',
+        layout: {
+          'icon-image': ['get', 'icon'],
+          'icon-size': 1.0,
+          'icon-rotate': ['get', 'heading'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true
+        }
+      });
+    }
+  }
+
+  function setupHomeLayer() {
+    if (!map.getSource('home')) {
+      map.addSource('home', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('home-layer')) {
+      map.addLayer({
+        id: 'home-layer',
+        type: 'circle',
+        source: 'home',
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#58a6ff',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2
+        }
+      });
+    }
+  }
+
+  function setupRangeRingsLayer() {
+    if (!map.getSource('range-rings')) {
+      map.addSource('range-rings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('range-rings-layer')) {
+      map.addLayer({
+        id: 'range-rings-layer',
+        type: 'line',
+        source: 'range-rings',
+        paint: {
+          'line-color': '#58a6ff',
+          'line-width': 1,
+          'line-opacity': 0.4,
+          'line-dasharray': [2, 4]
+        }
+      });
+    }
+  }
+
+  async function refreshAllLayers() {
+    setupTrailLayer();
+    await setupAircraftLayer();
+    setupHomeLayer();
+    setupRangeRingsLayer();
+    updateAircraft();
+    updateHome();
+    updateTrail();
+    updateRangeRings();
+  }
+
+  function updateAircraft(arm = lastArmState, mode = '', heading = aircraftHeading) {
+    if (!aircraftPos || !map.getSource('aircraft')) return;
+    let iconKey = 'plane-disarmed';
+    if (mode && /failsafe/i.test(mode))      iconKey = 'plane-failsafe';
+    else if (mode && /rth/i.test(mode))      iconKey = 'plane-rth';
+    else if (arm === 'ARMED')                iconKey = 'plane-armed';
+    map.getSource('aircraft').setData({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: aircraftPos },
+        properties: { icon: iconKey, heading: heading || 0 }
+      }]
+    });
+  }
+
+  function updateHome() {
+    if (!map.getSource('home')) return;
+    map.getSource('home').setData({
+      type: 'FeatureCollection',
+      features: homePos
+        ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: homePos }, properties: {} }]
+        : []
+    });
+  }
+
+  function updateTrail() {
+    if (!map.getSource('trail')) return;
+    map.getSource('trail').setData({ type: 'FeatureCollection', features: trailFeatures });
+  }
+
+  function appendTrailSegment(toLonLat, lq) {
+    if (!prevGPS) { prevGPS = toLonLat; return; }
+    trailFeatures.push({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: [prevGPS, toLonLat] },
+      properties: { lq: lq || 0 }
+    });
+    prevGPS = toLonLat;
+  }
+  function clearTrail() { trailFeatures = []; prevGPS = null; updateTrail(); }
+
+  function setStatusPill(arm, mode) {
+    const { label, cls } = statusFromState(arm, mode);
+    const el = document.getElementById('status-pill');
+    el.textContent = label;
+    el.className = `status-pill panel ${cls}`;
+  }
+
+  // -----------------------------------------------------------
+  // Camera control: follow + rotate-to-heading.
+  function applyCameraMode() {
+    if (!map || !aircraftPos) return;
+    const opts = {};
+    if (followAircraft) opts.center = aircraftPos;
+    if (rotateToHeading) opts.bearing = aircraftHeading;
+    if (Object.keys(opts).length) {
+      opts.duration = 200;
+      map.easeTo(opts);
+    }
+  }
+
+  function handleStateMessage(state) {
+    const arm  = state?.arm?.state || 'DISARMED';
+    const mode = state?.telemetry?.flightMode?.data?.mode || '';
+    const gps  = state?.telemetry?.gps?.data;
+    const home = state?.telemetry?.home?.data;
+    const link = state?.telemetry?.link?.data;
+    const lq   = (link && Number.isFinite(link.uplinkLq)) ? link.uplinkLq : 0;
+
+    if (arm === 'ARMED' && lastArmState !== 'ARMED') clearTrail();
+    lastArmState = arm;
+
+    if (home && (home.latDeg !== 0 || home.lonDeg !== 0)) {
+      const newHome = [home.lonDeg, home.latDeg];
+      if (!homePos || homePos[0] !== newHome[0] || homePos[1] !== newHome[1]) {
+        homePos = newHome;
+        updateHome();
+        updateRangeRings();
+        if (!centeredOnHome) {
+          map.flyTo({ center: homePos, zoom: 17, speed: 1.5 });
+          centeredOnHome = true;
+        }
+      }
+    }
+
+    if (gps && Number.isFinite(gps.latDeg) && Number.isFinite(gps.lonDeg)
+        && !(gps.latDeg === 0 && gps.lonDeg === 0)) {
+      aircraftPos = [gps.lonDeg, gps.latDeg];
+      aircraftHeading = Number.isFinite(gps.headingDeg) ? gps.headingDeg : 0;
+      updateAircraft(arm, mode, aircraftHeading);
+      if (arm === 'ARMED') {
+        appendTrailSegment(aircraftPos, lq);
+        updateTrail();
+      }
+      applyCameraMode();
+    }
+
+    setStatusPill(arm, mode);
+    updateCompass();
+  }
+
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/api/v1/stream`);
+    ws.onmessage = (ev) => {
+      try { handleStateMessage(JSON.parse(ev.data)); }
+      catch (e) { console.warn('ws message parse failed:', e); }
+    };
+    ws.onclose = () => { setTimeout(connectWS, 2000); };
+    ws.onerror = (e) => { console.warn('ws error:', e); };
+  }
+
+  // Simulator: 50-sec canned flight around Campinas, demonstrates
+  // all states/colors/trail-LQ and now the new overlays.
+  function startSimulator() {
+    console.log('[map] simulator mode');
+    const homeLatLon = [-22.9056, -47.0608];
+    const radiusM = 200;
+    const start = Date.now();
+    const tickMs = 200;
+
+    setInterval(() => {
+      const t = (Date.now() - start) / 1000;
+      const cycle = t % 50;
+
+      let arm = 'DISARMED', mode = 'ANGL';
+      let lat = homeLatLon[0], lon = homeLatLon[1];
+      let heading = 0, lq = 100;
+
+      if (cycle < 3)        arm = 'DISARMED';
+      else if (cycle < 6)   arm = 'ARMING_REQUESTED';
+      else if (cycle < 30) {
+        arm = 'ARMED';
+        const angle = ((cycle - 6) / 24) * 2 * Math.PI;
+        lat = homeLatLon[0] + (radiusM / 111000) * Math.cos(angle);
+        lon = homeLatLon[1] + (radiusM / (111000 * Math.cos(homeLatLon[0] * Math.PI / 180))) * Math.sin(angle);
+        heading = ((angle * 180 / Math.PI) + 90) % 360;
+        if (cycle > 14 && cycle < 18)        lq = 65;
+        else if (cycle > 18 && cycle < 22)   lq = 35;
+        else                                 lq = 95;
+      } else if (cycle < 40) {
+        arm = 'ARMED'; mode = 'RTH';
+        const phase = (cycle - 30) / 10;
+        const r = radiusM * (1 - phase);
+        const angle = (cycle - 6) / 24 * 2 * Math.PI + phase * Math.PI;
+        lat = homeLatLon[0] + (r / 111000) * Math.cos(angle);
+        lon = homeLatLon[1] + (r / (111000 * Math.cos(homeLatLon[0] * Math.PI / 180))) * Math.sin(angle);
+        heading = ((angle * 180 / Math.PI) + 270) % 360;
+        lq = 80;
+      } else if (cycle < 43) { arm = 'ARMED'; mode = 'FAILSAFE'; lq = 0; }
+      else                   { arm = 'DISARMED'; }
+
+      const state = {
+        arm: { state: arm },
+        telemetry: {
+          gps:        { data: { latDeg: lat, lonDeg: lon, headingDeg: heading } },
+          home:       { data: { latDeg: homeLatLon[0], lonDeg: homeLatLon[1] } },
+          link:       { data: { uplinkLq: lq } },
+          flightMode: { data: { mode: mode } }
+        }
+      };
+      handleStateMessage(state);
+    }, tickMs);
+  }
+
+  function setTileset(name) {
+    if (name === currentTileset) return;
+    currentTileset = name;
+    map.setStyle(buildStyle(name), { diff: false });
+    document.getElementById('btn-sat').classList.toggle('active', name === 'satellite');
+    document.getElementById('btn-osm').classList.toggle('active', name === 'osm');
+    map.once('style.load', async () => { await refreshAllLayers(); });
+  }
+
+  function setupToggle(id, getValue, setValue, onChange) {
+    const el = document.getElementById(id);
+    if (getValue()) el.classList.add('on'); else el.classList.remove('on');
+    el.addEventListener('click', () => {
+      const next = !getValue();
+      setValue(next);
+      el.classList.toggle('on', next);
+      if (onChange) onChange(next);
+    });
+  }
+
+  async function showDaemonVersion() {
+    const el = document.getElementById('daemon-ver');
+    try {
+      const r = await fetch('/api/v1/health');
+      if (r.ok) {
+        const data = await r.json();
+        el.textContent = data.version || '?';
+      } else { el.textContent = `err ${r.status}`; }
+    } catch (e) { el.textContent = 'offline'; }
+  }
+
+  async function determineInitialCenter() {
+    try {
+      const r = await fetch('/api/v1/state');
+      if (!r.ok) throw new Error(`state fetch ${r.status}`);
+      const data = await r.json();
+      const home = data?.telemetry?.home?.data;
+      if (home && Number.isFinite(home.latDeg) && Number.isFinite(home.lonDeg)
+          && (home.latDeg !== 0 || home.lonDeg !== 0)) {
+        return { center: [home.lonDeg, home.latDeg], zoom: 16, source: 'home' };
+      }
+    } catch (e) { console.warn('initial center fallback:', e); }
+    return { center: FALLBACK_CENTER, zoom: FALLBACK_ZOOM, source: 'fallback' };
+  }
+
+  async function init() {
+    showDaemonVersion();
+    const { center, zoom } = await determineInitialCenter();
+
+    map = new maplibregl.Map({
+      container: 'map',
+      style: buildStyle(currentTileset),
+      center, zoom,
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+
+    map.on('load', async () => {
+      await refreshAllLayers();
+      updateScaleBar();
+      updateCompass();
+
+      const params = new URLSearchParams(location.search);
+      if (params.get('simulate') === '1') startSimulator();
+      else                                 connectWS();
+    });
+
+    map.on('move',     () => { updateScaleBar(); updateCompass(); });
+    map.on('zoomend',  () => { updateRangeRings(); });
+    map.on('mousemove', (e) => {
+      const p = e.lngLat;
+      document.getElementById('cursor-readout').textContent =
+        `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
+    });
+
+    document.getElementById('btn-sat').addEventListener('click', () => setTileset('satellite'));
+    document.getElementById('btn-osm').addEventListener('click', () => setTileset('osm'));
+
+    setupToggle('toggle-follow',
+      () => followAircraft,
+      v => { followAircraft = v; },
+      () => { applyCameraMode(); }
+    );
+    setupToggle('toggle-rotate',
+      () => rotateToHeading,
+      v => {
+        rotateToHeading = v;
+        if (!v) map.easeTo({ bearing: 0, duration: 300 });
+      },
+      () => { applyCameraMode(); }
+    );
+    setupToggle('toggle-rings',
+      () => rangeRingsEnabled,
+      v => { rangeRingsEnabled = v; },
+      () => { updateRangeRings(); }
+    );
+  }
+
+  init();
+  </script>
+</body>
+</html>

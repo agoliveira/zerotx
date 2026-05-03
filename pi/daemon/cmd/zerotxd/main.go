@@ -63,6 +63,8 @@ func main() {
 	rate := flag.Int("rate-hz", 1000/ipc.CRSFPeriodMs, "channel intent send rate (Hz)")
 	apiAddr := flag.String("api", "", "API server bind address (e.g. 127.0.0.1:8080); empty disables")
 	webDir := flag.String("web-dir", "", "serve web GUI from this filesystem path (default: embedded). Useful for fast iteration during development.")
+	mapTilesDir := flag.String("maptiles-dir", "", "directory containing PMTiles files for offline map tile serving. Empty = online proxy mode (development).")
+	noOnlineTiles := flag.Bool("no-online-tiles", false, "disable online tile proxy fallback. With -maptiles-dir empty, this disables tile serving entirely.")
 	modelImage := flag.String("model-image", "", "path to model bitmap file (BMP/PNG/JPG); shown in Model tab if set")
 	panelFile := flag.String("panel-file", "", "GCS panel state YAML; live-reloaded on edit")
 	panelStdin := flag.Bool("panel-stdin", false, "read panel commands from stdin (mutually exclusive with -panel-file)")
@@ -679,6 +681,8 @@ func main() {
 		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
+		apiSrv.SetMapTilesDir(*mapTilesDir)
+		apiSrv.SetOnlineTileFallback(!*noOnlineTiles)
 		go func() {
 			if err := apiSrv.Run(ctx); err != nil {
 				log.Printf("api: %v", err)
