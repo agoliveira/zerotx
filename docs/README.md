@@ -14,7 +14,6 @@ Living docs. Each file targets a specific reader and purpose.
 ## Architecture & internals
 
 - [`architecture/overview.md`](architecture/overview.md) — system map, MCU split, daemon package map, data flows, persistence, failure model. Read this when you want to know how the whole thing fits together.
-- [`architecture.md`](architecture.md) — older overview document; partly out of date (LED panel/VFD have replaced earlier WS2812/OLED). Kept for historical reference.
 - [`hardware-bom.md`](hardware-bom.md) — case BOM and parts list.
 - [`edgetx-yaml-notes.md`](edgetx-yaml-notes.md) — EdgeTX model YAML format notes (used by the model parser).
 - [`ipc_protocol.md`](ipc_protocol.md) — daemon ↔ RP2040 IPC framed protocol (will move under `protocols/`).

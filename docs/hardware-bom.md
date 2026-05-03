@@ -20,7 +20,7 @@ power, no status surfaces. Displays are bonded to the lid metal with a
 thermal pad so the entire lid acts as a heatsink.
 
 **Body holds everything else.** Pi 400 keyboard flush at the front edge.
-Above the keyboard, a status row (VFD, OLED, voltmeter) and a control row
+Above the keyboard, a status row (VFD, voltmeter) and a control row
 (switches, encoders, 6POS selector, big button, keylock, e-stop). All
 electronics (Pi 400, RP2040-Zero, level shifter, audio amp, bucks, terminal
 blocks) mounted to the body interior with custom 3D-printed supports
@@ -39,7 +39,7 @@ strain relief on both halves.
 **Power: external CCTV-style PSU at 13.8V** with a built-in 7Ah SLA UPS,
 fed into the case via a panel-mount barrel jack. Inline fuse, then
 keylock master switch on the input side. Single 13.8V to 5V buck supplies
-Pi 400, RP2040, OLED, VFD, level shifter. Audio amp runs directly off the
+Pi 400, RP2040, VFD, level shifter. Audio amp runs directly off the
 13.8V rail. ELRS module runs direct from 13.8V (modules accept up to 16V).
 Self-contained 7-segment voltmeter is wired across the rail and runs zero
 software.
@@ -74,7 +74,6 @@ for a simple "system on" indication. No commitment until parts arrive.
 
 ## Section 2 - Status surfaces
 
-- 1x I2C OLED, 0.96" or 1.3", front panel **have**
 - 1x Noritake CU20025ECPB-W1J 2x20 VFD **have**
   - HD44780 parallel, 4-bit mode (6 GPIO + 2 power = 8 conductors)
   - Initialized at full brightness
@@ -82,7 +81,6 @@ for a simple "system on" indication. No commitment until parts arrive.
   data/control lines **have**
 - 1x self-contained 7-segment LED voltmeter, direct to 13.8V rail **buy**
 
-WS2812 strip lighting: deferred (not on BOM).
 
 ## Section 3 - Computer and link hardware
 
@@ -118,7 +116,7 @@ leaving the module within its input window.
   the fuse)
 - 1x e-stop (listed in section 1, NC contacts in series with module DC)
 - 1x buck converter, 13.8 V -> 5 V at 3 A or higher, for Pi 400, RP2040,
-  OLED, VFD, level shifter **buy**
+  VFD, level shifter **buy**
 - Audio amplifier on 13.8 V rail **have**
 
 PSU lives external to the case. Mains power cable runs from the PSU into
@@ -188,7 +186,7 @@ Case:
 Panels:
 - 1x black acrylic, 3 mm, lid panel: cutouts for both displays + mounting
   holes + (optional) engraved labels **buy / fabricate**
-- 1x black acrylic, 3 mm, body panel: cutouts for VFD, OLED, voltmeter,
+- 1x black acrylic, 3 mm, body panel: cutouts for VFD, voltmeter,
   every switch / encoder / button, the keyboard well, speaker grilles +
   laser-engraved labels **buy / fabricate**
 - 1x cardboard or 1 mm acrylic test piece for fit-check before committing
@@ -223,7 +221,7 @@ Cable entry / exit:
 | Audio amp (idle)         | <1 W         | a few W when loud |
 | ELRS module              | 5-8 W        | up to 25 W full TX |
 | 2x 7" displays           | 5-8 W        | 10 W           |
-| Voltmeter, OLED, VFD     | <1 W         | <1 W           |
+| Voltmeter, VFD           | <1 W         | <1 W           |
 | **Total inside the case**| **~10-16 W** | **~30 W**      |
 
 Aluminum case at ~0.5 m^2 surface dissipates 15-20 W at modest temperature
@@ -266,7 +264,7 @@ In hand:
   audio amp, RP2040-Zero, original Pico, ELRS modules (ES900TX, Ranger
   2.4 GHz), 3D-printed module housing, antennas, Aomway 7" monitor,
   Walksnail Avatar VRX, HDMI splitter, USB HDMI capture dongle, 1x 7"
-  touchscreen (second incoming), Pi 400 incoming, OLED, Noritake VFD,
+  touchscreen (second incoming), Pi 400 incoming, Noritake VFD,
   aluminum case
 
 To buy:
