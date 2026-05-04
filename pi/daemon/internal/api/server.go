@@ -28,7 +28,11 @@ type Server struct {
 	// initialized on first tile request when mapTilesDir is set.
 	// tilesetFiles maps URL tileset names ("osm", "satellite") to
 	// PMTiles file basenames on disk ("sp-state-osm", "campinas-sat").
+	// warmTilesDir, when non-empty, is the root of a flat directory
+	// of recently-fetched tiles served in front of the PMTiles
+	// archive. Populated by the internal/tilewarm subsystem.
 	mapTilesDir    string
+	warmTilesDir   string
 	onlineFallback bool
 	pmSrv          *pmtiles.Server
 	pmSrvOnce      sync.Once

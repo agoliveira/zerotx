@@ -41,13 +41,14 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/tilewarm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/weather"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/wxalert"
 
 	"go.bug.st/serial"
 )
 
-const version = "0.29.0-wx-led-map"
+const version = "0.30.0-tilewarm"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -70,6 +71,11 @@ func main() {
 	noOnlineTiles := flag.Bool("no-online-tiles", false, "disable online tile proxy fallback. With -maptiles-dir empty, this disables tile serving entirely.")
 	tilesetOsmFile := flag.String("tileset-osm-file", "", "PMTiles file basename for the 'osm' tileset (e.g. 'sp-state-osm'). Empty = uses 'osm.pmtiles' if present.")
 	tilesetSatFile := flag.String("tileset-sat-file", "", "PMTiles file basename for the 'satellite' tileset (e.g. 'campinas-sat'). Empty = uses 'satellite.pmtiles' if present.")
+	warmTilesDir := flag.String("warm-tiles-dir", os.ExpandEnv("$HOME/zerotx/maptiles/warm"), "directory of recently-fetched tiles served in front of the PMTiles archive. Populated by the tile-warm subsystem. Empty disables.")
+	noTileWarm := flag.Bool("no-tilewarm", false, "disable opportunistic satellite tile pre-warm")
+	tileWarmRadiusKm := flag.Float64("tilewarm-radius-km", 5.0, "radius around -site-lat/-site-lon to keep warm, km")
+	tileWarmMaxAgeDays := flag.Int("tilewarm-max-age-days", 30, "warm tile staleness threshold; older tiles get refetched")
+	tileWarmRate := flag.Float64("tilewarm-rate", 2.0, "warm tile fetch rate, requests per second (gentle background)")
 	modelImage := flag.String("model-image", "", "path to model bitmap file (BMP/PNG/JPG); shown in Model tab if set")
 	panelFile := flag.String("panel-file", "", "GCS panel state YAML; live-reloaded on edit")
 	panelStdin := flag.Bool("panel-stdin", false, "read panel commands from stdin (mutually exclusive with -panel-file)")
@@ -764,6 +770,7 @@ func main() {
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
+		apiSrv.SetWarmTilesDir(*warmTilesDir)
 		apiSrv.SetOnlineTileFallback(!*noOnlineTiles)
 		if *tilesetOsmFile != "" {
 			apiSrv.SetTilesetFile("osm", *tilesetOsmFile)
@@ -776,6 +783,23 @@ func main() {
 				log.Printf("api: %v", err)
 			}
 		}()
+	}
+
+	// Tile-warm subsystem: opportunistic re-fetch of recently-used
+	// satellite tiles around the configured site. Skipped if disabled,
+	// no warm dir configured, or no site coordinates set.
+	if !*noTileWarm && *warmTilesDir != "" && (*siteLat != 0 || *siteLon != 0) {
+		store, err := tilewarm.NewFSStore(*warmTilesDir, "satellite", "jpg")
+		if err != nil {
+			log.Printf("tilewarm: store init failed (%v); disabling", err)
+		} else {
+			cfg := tilewarm.DefaultConfig(*siteLat, *siteLon)
+			cfg.RadiusKm = *tileWarmRadiusKm
+			cfg.MaxAge = time.Duration(*tileWarmMaxAgeDays) * 24 * time.Hour
+			cfg.RatePerSec = *tileWarmRate
+			go runTileWarm(ctx, store, cfg)
+			log.Printf("tilewarm: scheduled (warm dir=%s)", *warmTilesDir)
+		}
 	}
 
 	// Boot greeting. Narrative announcement that the daemon is ready.

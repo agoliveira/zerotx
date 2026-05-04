@@ -1,6 +1,9 @@
 // Package api: map tile serving.
 //
-// Two-tier serving:
+// Three-tier serving:
+//   - Warm cache (warmTilesDir, optional). Flat directory of recently
+//     fetched JPGs at {dir}/{tileset}/{z}/{x}/{y}.{ext}, populated
+//     by internal/tilewarm. Checked first.
 //   - Local PMTiles files in mapTilesDir (preferred when available).
 //     Uses protomaps go-pmtiles lib for header/directory/range reads
 //     with built-in LRU caching (default 64MB shared across archives).
@@ -25,6 +28,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +44,21 @@ import (
 // first tile request.
 func (s *Server) SetMapTilesDir(dir string) {
 	s.mapTilesDir = dir
+}
+
+// SetWarmTilesDir configures a directory of recently-fetched tiles
+// served in front of the PMTiles archive. The layout matches the
+// /tiles/ URL scheme: {dir}/{tileset}/{z}/{x}/{y}.{ext}.
+//
+// When set, handleTile checks the warm directory first; misses fall
+// through to PMTiles, then to the online fallback. Empty string
+// disables the warm layer.
+//
+// The warm directory is populated by the internal/tilewarm subsystem
+// (separately, on its own schedule). The serving layer here is
+// read-only and stateless.
+func (s *Server) SetWarmTilesDir(dir string) {
+	s.warmTilesDir = dir
 }
 
 // SetOnlineTileFallback controls whether to proxy to public tile servers
@@ -161,7 +181,15 @@ func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try local PMTiles first.
+	// Try the warm cache first. Cheap filesystem stat + read; falls
+	// through transparently if the file isn't there.
+	if s.warmTilesDir != "" {
+		if served := s.serveWarmTile(w, r, tileset, z, x, y, ext); served {
+			return
+		}
+	}
+
+	// Try local PMTiles next.
 	if s.mapTilesDir != "" {
 		if served := s.servePMTile(w, r, tileset, z, x, y, ext); served {
 			return
@@ -194,6 +222,44 @@ func (s *Server) handleTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.proxyOnlineTile(w, r, url)
+}
+
+// serveWarmTile attempts a read from the flat warm-cache directory.
+// Returns true if the response has been written (200 OK), false on
+// any miss (file not found, read error, etc.) so the caller can fall
+// through to PMTiles. Vector tilesets are skipped since the warmer
+// only deals with raster tiles for now.
+func (s *Server) serveWarmTile(w http.ResponseWriter, r *http.Request, tileset string, z, x, y int, ext string) bool {
+	if tileset == "osm" {
+		return false // vector, not warmed
+	}
+	if ext == "" {
+		ext = "jpg"
+	}
+	path := filepath.Join(
+		s.warmTilesDir, tileset,
+		strconv.Itoa(z),
+		strconv.Itoa(x),
+		fmt.Sprintf("%d.%s", y, ext),
+	)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false // miss; caller falls through
+	}
+	switch ext {
+	case "jpg", "jpeg":
+		w.Header().Set("Content-Type", "image/jpeg")
+	case "png":
+		w.Header().Set("Content-Type", "image/png")
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(data)
+	}
+	return true
 }
 
 // servePMTile attempts a local PMTiles read. Returns true if the response
