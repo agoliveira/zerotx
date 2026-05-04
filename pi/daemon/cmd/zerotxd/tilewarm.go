@@ -8,28 +8,30 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agoliveira/zerotx/pi/daemon/internal/netclass"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/tilewarm"
 )
 
 // runTileWarm is the daemon-side glue for the internal/tilewarm
 // package. It owns the goroutine cadence (boot + every 24h),
-// network classification (currently stubbed to "always home"),
-// and the upstream fetcher (Esri World Imagery for satellite).
+// network-class gating, and the upstream fetcher (Esri World Imagery
+// for satellite).
 //
 // Cancellation: respects ctx; one in-flight Run completes before
 // returning when ctx is cancelled mid-pass.
-func runTileWarm(ctx context.Context, store tilewarm.Store, cfg tilewarm.Config) {
+func runTileWarm(ctx context.Context, store tilewarm.Store, cfg tilewarm.Config, ncHolder *netclass.Holder) {
 	if store == nil {
 		return
 	}
 
 	doRun := func(reason string) {
-		if !isHome() {
-			log.Printf("tilewarm: skipped (%s; not at home)", reason)
+		class := currentClass(ncHolder)
+		if !class.AllowsBackgroundInternet() {
+			log.Printf("tilewarm: skipped (%s; netclass=%s)", reason, class)
 			return
 		}
-		log.Printf("tilewarm: starting (%s) center=(%.4f,%.4f) radius=%.1fkm zooms=%v maxAge=%s rate=%.1f/s",
-			reason, cfg.CenterLatDeg, cfg.CenterLonDeg, cfg.RadiusKm,
+		log.Printf("tilewarm: starting (%s) class=%s center=(%.4f,%.4f) radius=%.1fkm zooms=%v maxAge=%s rate=%.1f/s",
+			reason, class, cfg.CenterLatDeg, cfg.CenterLonDeg, cfg.RadiusKm,
 			cfg.Zooms, cfg.MaxAge, cfg.RatePerSec)
 		st, err := tilewarm.Run(ctx, cfg, store, esriSatelliteFetcher)
 		if err != nil {
@@ -59,12 +61,15 @@ func runTileWarm(ctx context.Context, store tilewarm.Store, cfg tilewarm.Config)
 	}
 }
 
-// isHome is the network-classification stub. Always returns true for
-// v1; the future internal/netclass subsystem will replace this with
-// per-SSID logic (ethernet always home, configured WiFi SSIDs home,
-// everything else field).
-func isHome() bool {
-	return true
+// currentClass returns the current network class, or netclass.Home as
+// a fallback when the holder is nil (subsystem disabled). Disabling
+// netclass means the operator opted out; we treat that as "always
+// allowed" rather than blocking everything.
+func currentClass(h *netclass.Holder) netclass.Class {
+	if h == nil {
+		return netclass.Home
+	}
+	return h.Current()
 }
 
 // esriSatelliteFetcher fetches a satellite tile from Esri's World

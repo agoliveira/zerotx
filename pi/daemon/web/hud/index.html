@@ -558,6 +558,65 @@
        1024x600. Backdrop dims the page; shell is the modal proper.
        Reuses the existing palette via CSS variables.
        ============================================================ */
+    /* ----------------------------------------------------------------
+       NET pill (top strip, network-class selector). Reads/writes
+       /api/v1/netclass. Color-coded by current class: home=good,
+       free=info, field=warn, offline=muted.
+       ---------------------------------------------------------------- */
+    .net-pill {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 10px;
+      margin-left: 10px;
+      cursor: pointer;
+      min-height: 28px;
+      transition: border-color 0.15s, color 0.15s;
+      color: var(--text-sec);
+    }
+    .net-pill[data-class="home"]    { color: var(--good);  border-color: var(--good); }
+    .net-pill[data-class="free"]    { color: var(--info);  border-color: var(--info); }
+    .net-pill[data-class="field"]   { color: var(--warn);  border-color: var(--warn); }
+    .net-pill[data-class="offline"] { color: var(--text-muted); border-color: var(--border-soft); }
+    .net-pill:hover { background: rgba(255, 200, 88, 0.08); }
+    .net-menu {
+      position: absolute;
+      top: 36px;
+      right: 8px;
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      min-width: 120px;
+    }
+    .net-menu[hidden] { display: none !important; }
+    .net-menu-item {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      padding: 10px 14px;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border-soft);
+      color: var(--text-pri);
+      cursor: pointer;
+      text-align: left;
+      min-height: 36px;
+    }
+    .net-menu-item:last-child { border-bottom: none; }
+    .net-menu-item:hover { background: rgba(255, 200, 88, 0.12); }
+    .net-menu-item[data-class="home"]    { color: var(--good); }
+    .net-menu-item[data-class="free"]    { color: var(--info); }
+    .net-menu-item[data-class="field"]   { color: var(--warn); }
+    .net-menu-item[data-class="offline"] { color: var(--text-muted); }
+
     .wx-trigger {
       font-family: 'Orbitron', sans-serif;
       font-size: 0.7rem;
@@ -1052,7 +1111,14 @@
     <span class="label">UTC</span> <span class="val" id="utc-clock">--:--:--</span>
   </div>
   <div class="version-section">
-    <span id="frontend-ver">hud-v14</span> · <span id="daemon-ver">…</span>
+    <span id="frontend-ver">hud-v15</span> · <span id="daemon-ver">…</span>
+  </div>
+  <button class="net-pill" id="net-pill" type="button" aria-label="Set network class" data-class="offline">NET: <span id="net-pill-class">—</span></button>
+  <div class="net-menu" id="net-menu" hidden role="menu">
+    <button class="net-menu-item" type="button" data-class="home"   role="menuitem">HOME</button>
+    <button class="net-menu-item" type="button" data-class="free"   role="menuitem">FREE</button>
+    <button class="net-menu-item" type="button" data-class="field"  role="menuitem">FIELD</button>
+    <button class="net-menu-item" type="button" data-class="offline" role="menuitem">OFFLINE</button>
   </div>
   <button class="wx-trigger" id="wx-trigger" type="button" aria-label="Open weather briefing">WX<span class="wx-trigger-badge" id="wx-trigger-badge"></span></button>
 </div>
@@ -2384,10 +2450,96 @@ const WX = (() => {
   return {bind, open, close, toggle};
 })();
 
+// ============================================================
+// NET selector. Reads/writes /api/v1/netclass. Pill in the top
+// strip shows current class; clicking opens a small menu of the
+// four classes. Operator picks one, daemon persists, daemon's
+// downstream subsystems (tilewarm, future stan-sync) consult.
+// ============================================================
+const NetClass = (() => {
+  const els = {
+    pill:  () => document.getElementById('net-pill'),
+    label: () => document.getElementById('net-pill-class'),
+    menu:  () => document.getElementById('net-menu'),
+  };
+
+  let isOpen = false;
+
+  function applyClass(cls) {
+    els.pill().setAttribute('data-class', cls);
+    els.label().textContent = (cls || 'unknown').toUpperCase();
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch('/api/v1/netclass');
+      if (res.status === 404) {
+        // Subsystem disabled. Hide the pill entirely.
+        els.pill().style.display = 'none';
+        els.menu().style.display = 'none';
+        return;
+      }
+      if (!res.ok) return;
+      const body = await res.json();
+      applyClass(body.class || 'offline');
+    } catch (e) {
+      // Network error - leave whatever the pill currently shows.
+    }
+  }
+
+  async function setClass(cls) {
+    try {
+      const res = await fetch('/api/v1/netclass', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({class: cls}),
+      });
+      if (res.ok || res.status === 204) {
+        applyClass(cls);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function openMenu() {
+    isOpen = true;
+    els.menu().hidden = false;
+  }
+  function closeMenu() {
+    isOpen = false;
+    els.menu().hidden = true;
+  }
+  function toggleMenu() { isOpen ? closeMenu() : openMenu(); }
+
+  function bind() {
+    els.pill().addEventListener('click', evt => {
+      evt.stopPropagation();
+      toggleMenu();
+    });
+    els.menu().querySelectorAll('.net-menu-item').forEach(btn => {
+      btn.addEventListener('click', evt => {
+        evt.stopPropagation();
+        const cls = btn.getAttribute('data-class');
+        closeMenu();
+        setClass(cls);
+      });
+    });
+    document.addEventListener('click', () => {
+      if (isOpen) closeMenu();
+    });
+    refresh();
+    setInterval(refresh, 30000);
+  }
+
+  return {bind};
+})();
+
 // ---- Init ----
 function init() {
   showDaemonVersion();
   WX.bind();
+  NetClass.bind();
   const params = new URLSearchParams(location.search);
   if (params.get('simulate') === '1') startSimulator();
   else                                 connectWS();

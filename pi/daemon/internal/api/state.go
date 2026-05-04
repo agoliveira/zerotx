@@ -389,6 +389,15 @@ type Providers struct {
 	// disabled; the API omits the field entirely.
 	WeatherAlerts func() []WeatherAlert
 
+	// NetClassGet returns the operator-declared network class as a
+	// string (e.g. "home", "free", "field", "offline"). nil means
+	// the subsystem is disabled; the API returns 404.
+	NetClassGet func() (class string, updatedAt time.Time)
+
+	// NetClassSet updates the network class. Returns an error if
+	// the class string is invalid. nil disables the endpoint.
+	NetClassSet func(class string) error
+
 	Version string
 	Uptime  func() time.Duration
 }

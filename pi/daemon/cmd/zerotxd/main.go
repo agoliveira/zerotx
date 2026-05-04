@@ -41,6 +41,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/netclass"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/tilewarm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/weather"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/wxalert"
@@ -48,7 +49,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.30.0-tilewarm"
+const version = "0.31.0-netclass"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -76,6 +77,7 @@ func main() {
 	tileWarmRadiusKm := flag.Float64("tilewarm-radius-km", 5.0, "radius around -site-lat/-site-lon to keep warm, km")
 	tileWarmMaxAgeDays := flag.Int("tilewarm-max-age-days", 30, "warm tile staleness threshold; older tiles get refetched")
 	tileWarmRate := flag.Float64("tilewarm-rate", 2.0, "warm tile fetch rate, requests per second (gentle background)")
+	netClassFile := flag.String("netclass-file", os.ExpandEnv("$HOME/.config/zerotx/netclass.json"), "file storing operator-declared network class. Empty = disable netclass subsystem (treat as Home).")
 	modelImage := flag.String("model-image", "", "path to model bitmap file (BMP/PNG/JPG); shown in Model tab if set")
 	panelFile := flag.String("panel-file", "", "GCS panel state YAML; live-reloaded on edit")
 	panelStdin := flag.Bool("panel-stdin", false, "read panel commands from stdin (mutually exclusive with -panel-file)")
@@ -764,9 +766,23 @@ func main() {
 			*wxNearSunsetMin, *wxShearDirDeg, *wxShearSpeedRatio)
 	}
 
+	// Construct the netclass holder. Operator-declared network class
+	// drives downstream policy in tilewarm and (later) stan-sync.
+	// File-backed for persistence across restarts.
+	var netClassHolder *netclass.Holder
+	{
+		var err error
+		netClassHolder, err = netclass.New(*netClassFile)
+		if err != nil {
+			log.Printf("netclass: load failed (%v); falling back to in-memory Offline", err)
+			netClassHolder, _ = netclass.New("")
+		}
+		log.Printf("netclass: %s (file=%s)", netClassHolder.Current(), *netClassFile)
+	}
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -797,7 +813,7 @@ func main() {
 			cfg.RadiusKm = *tileWarmRadiusKm
 			cfg.MaxAge = time.Duration(*tileWarmMaxAgeDays) * 24 * time.Hour
 			cfg.RatePerSec = *tileWarmRate
-			go runTileWarm(ctx, store, cfg)
+			go runTileWarm(ctx, store, cfg, netClassHolder)
 			log.Printf("tilewarm: scheduled (warm dir=%s)", *warmTilesDir)
 		}
 	}
@@ -1098,6 +1114,7 @@ func buildAPIProviders(
 	armMachine *arm.Machine,
 	weatherSvc *weather.Service,
 	wxAlerts *wxAlertHolder,
+	netClassHolder *netclass.Holder,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1280,6 +1297,23 @@ func buildAPIProviders(
 				}
 			}
 			return out
+		},
+		NetClassGet: func() (string, time.Time) {
+			if netClassHolder == nil {
+				return "", time.Time{}
+			}
+			s := netClassHolder.Snapshot()
+			return string(s.Class), s.UpdatedAt
+		},
+		NetClassSet: func(class string) error {
+			if netClassHolder == nil {
+				return errors.New("netclass disabled")
+			}
+			c := netclass.Class(class)
+			if !netclass.Valid(c) {
+				return netclass.ErrInvalidClass
+			}
+			return netClassHolder.Set(c)
 		},
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{
