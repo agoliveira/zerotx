@@ -42,11 +42,12 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/weather"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/wxalert"
 
 	"go.bug.st/serial"
 )
 
-const version = "0.27.0-weather-modal"
+const version = "0.28.0-wx-alerts"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -96,6 +97,13 @@ func main() {
 	siteLat := flag.Float64("site-lat", 0, "configured flight site latitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
 	siteLon := flag.Float64("site-lon", 0, "configured flight site longitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
 	noWeather := flag.Bool("no-weather", false, "disable weather subsystem entirely (no fetches, no API)")
+	wxMaxGustKmh := flag.Float64("wx-max-gust-kmh", 30, "weather alert: surface gust limit, km/h. Above this fires wind_gust_high.")
+	wxMaxWindKmh := flag.Float64("wx-max-wind-kmh", 20, "weather alert: surface sustained wind limit, km/h. Above this fires wind_speed_high.")
+	wxPrecipProbPct := flag.Float64("wx-precip-pct", 60, "weather alert: precipitation probability threshold (0-100) for next 3 hours.")
+	wxNearSunsetMin := flag.Int("wx-near-sunset-min", 30, "weather alert: minutes before sunset that fires near_sunset.")
+	wxShearDirDeg := flag.Float64("wx-shear-dir-deg", 45, "weather alert: surface-vs-80m wind direction delta threshold, degrees.")
+	wxShearSpeedRatio := flag.Float64("wx-shear-speed-ratio", 2.0, "weather alert: 80m/surface wind speed ratio threshold.")
+	wxGoldenElevDeg := flag.Float64("wx-golden-elev-deg", 6, "weather alert: sun elevation threshold (degrees) for golden_hour_active.")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -728,9 +736,31 @@ func main() {
 		}
 	}
 
+	// Construct the weather-alert subsystem if weather is enabled.
+	// Limits come from -wx-* flags; defaults match wxalert.Defaults().
+	// Holder owns the hysteresis tracker and exposes the active list
+	// to the API. Goroutine polls the weather cache once a minute,
+	// evaluates rules, fires TTS on transitions.
+	var wxAlerts *wxAlertHolder
+	if weatherSvc != nil {
+		wxAlerts = newWxAlertHolder(wxalert.Limits{
+			MaxWindKmh:           *wxMaxWindKmh,
+			MaxGustKmh:           *wxMaxGustKmh,
+			PrecipProbabilityPct: *wxPrecipProbPct,
+			NearSunsetMinutes:    *wxNearSunsetMin,
+			ShearDirDeg:          *wxShearDirDeg,
+			ShearSpeedRatio:      *wxShearSpeedRatio,
+			GoldenHourElevDeg:    *wxGoldenElevDeg,
+		})
+		go runWxAlerts(ctx, wxAlerts, weatherSvc, player)
+		log.Printf("wxalert: started (gust>%.0f wind>%.0f precip>%.0f%% sunset<%dm shear>%.0f° ratio>%.1fx)",
+			*wxMaxGustKmh, *wxMaxWindKmh, *wxPrecipProbPct,
+			*wxNearSunsetMin, *wxShearDirDeg, *wxShearSpeedRatio)
+	}
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1043,6 +1073,7 @@ func buildAPIProviders(
 	dispMgr *display.Manager,
 	armMachine *arm.Machine,
 	weatherSvc *weather.Service,
+	wxAlerts *wxAlertHolder,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1209,6 +1240,22 @@ func buildAPIProviders(
 				return nil, errors.New("weather not configured")
 			}
 			return weatherSvc.Get(ctx, lat, lon)
+		},
+		WeatherAlerts: func() []api.WeatherAlert {
+			if wxAlerts == nil {
+				return nil
+			}
+			snap := wxAlerts.snapshot()
+			out := make([]api.WeatherAlert, len(snap))
+			for i, a := range snap {
+				out[i] = api.WeatherAlert{
+					Name:     a.Name,
+					Severity: a.Severity.String(),
+					Message:  a.Message,
+					Detail:   a.Detail,
+				}
+			}
+			return out
 		},
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{

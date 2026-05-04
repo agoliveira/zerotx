@@ -384,8 +384,23 @@ type Providers struct {
 	// returns 503 without details.
 	WeatherFetch func(ctx context.Context, latDeg, lonDeg float64) (interface{}, error)
 
+	// WeatherAlerts returns the currently-active weather alerts.
+	// Empty slice means no alerts. nil means the subsystem is
+	// disabled; the API omits the field entirely.
+	WeatherAlerts func() []WeatherAlert
+
 	Version string
 	Uptime  func() time.Duration
+}
+
+// WeatherAlert is the API-facing shape of a wxalert.Alert. Defined
+// here (not imported from internal/wxalert) so the api package stays
+// dependency-free of the alert subsystem; the daemon adapts.
+type WeatherAlert struct {
+	Name     string `json:"name"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 // ArmChecklistRequest is the body for POST /api/v1/arm/checklist.

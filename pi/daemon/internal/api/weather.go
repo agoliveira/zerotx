@@ -68,8 +68,16 @@ func (s *Server) handleWeather(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"weather":     result,
 		"astro":       astroSnapshot(lat, lon, time.Now()),
+		"alerts":      currentAlerts(s),
 		"coordSource": src,
 	})
+}
+
+func currentAlerts(s *Server) []WeatherAlert {
+	if s.providers.WeatherAlerts == nil {
+		return nil
+	}
+	return s.providers.WeatherAlerts()
 }
 
 func (s *Server) handleWeatherExplicit(w http.ResponseWriter, r *http.Request, latStr, lonStr string) {
@@ -108,6 +116,7 @@ func (s *Server) handleWeatherExplicit(w http.ResponseWriter, r *http.Request, l
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"weather": result,
 		"astro":   astroSnapshot(lat, lon, time.Now()),
+		"alerts":  currentAlerts(s),
 	})
 }
 

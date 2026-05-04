@@ -573,6 +573,44 @@
       min-width: 44px;
       min-height: 28px;
       transition: border-color 0.15s, color 0.15s, background 0.15s;
+      position: relative;
+    }
+    .wx-trigger.has-alerts-warning {
+      border-color: var(--warn);
+      color: var(--warn);
+      animation: wx-trigger-pulse 1.5s infinite;
+    }
+    .wx-trigger.has-alerts-notice {
+      border-color: var(--info);
+      color: var(--info);
+    }
+    .wx-trigger-badge {
+      display: none;
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: var(--bad);
+      color: var(--bg-base);
+      font-size: 0.65rem;
+      font-weight: 700;
+      line-height: 16px;
+      text-align: center;
+    }
+    .wx-trigger.has-alerts-notice .wx-trigger-badge {
+      background: var(--info);
+      display: inline-block;
+    }
+    .wx-trigger.has-alerts-warning .wx-trigger-badge {
+      background: var(--warn);
+      display: inline-block;
+    }
+    @keyframes wx-trigger-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.5); }
+      50%      { box-shadow: 0 0 0 4px rgba(255, 215, 0, 0); }
     }
     .wx-trigger:hover,
     .wx-trigger:focus,
@@ -745,6 +783,51 @@
       min-height: 0;
     }
     .wx-data[hidden] { display: none !important; }
+
+    /* ALERTS section sits above the two-column grid when active.
+       Hidden when no alerts. */
+    .wx-alerts {
+      flex: 0 0 auto;
+      margin-bottom: 12px;
+      border: 1px solid var(--warn);
+      background: rgba(255, 215, 0, 0.08);
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .wx-alerts[hidden] { display: none !important; }
+    .wx-alerts.notice-only {
+      border-color: var(--info);
+      background: rgba(88, 166, 255, 0.08);
+    }
+    .wx-alerts-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      color: var(--warn);
+      margin: 0 0 4px 0;
+    }
+    .wx-alerts.notice-only .wx-alerts-title { color: var(--info); }
+    .wx-alert-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      font-size: 0.85rem;
+    }
+    .wx-alert-sev {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      min-width: 60px;
+    }
+    .wx-alert-sev.warning { color: var(--warn); }
+    .wx-alert-sev.notice  { color: var(--info); }
+    .wx-alert-msg {
+      color: var(--text-pri);
+    }
     .wx-col {
       display: flex;
       flex-direction: column;
@@ -957,9 +1040,9 @@
     <span class="label">UTC</span> <span class="val" id="utc-clock">--:--:--</span>
   </div>
   <div class="version-section">
-    <span id="frontend-ver">hud-v11</span> · <span id="daemon-ver">…</span>
+    <span id="frontend-ver">hud-v12</span> · <span id="daemon-ver">…</span>
   </div>
-  <button class="wx-trigger" id="wx-trigger" type="button" aria-label="Open weather briefing">WX</button>
+  <button class="wx-trigger" id="wx-trigger" type="button" aria-label="Open weather briefing">WX<span class="wx-trigger-badge" id="wx-trigger-badge"></span></button>
 </div>
 
 <div class="stage preflight" id="stage">
@@ -1196,6 +1279,14 @@
       <!-- Loading state. Shown during manual refresh. -->
       <div class="wx-loading" id="wx-loading" hidden>
         <div class="wx-loading-heading">FETCHING …</div>
+      </div>
+
+      <!-- Active alerts (only visible when alerts exist). -->
+      <div class="wx-alerts" id="wx-alerts" hidden>
+        <h3 class="wx-alerts-title" id="wx-alerts-title">ALERTS</h3>
+        <div id="wx-alerts-list">
+          <!-- rows injected by JS -->
+        </div>
       </div>
 
       <!-- Data state. Two-column dashboard. -->
@@ -1907,6 +1998,7 @@ const WX = (() => {
     modal:        () => document.getElementById('wx-modal'),
     backdrop:     () => document.getElementById('wx-backdrop'),
     trigger:      () => document.getElementById('wx-trigger'),
+    triggerBadge: () => document.getElementById('wx-trigger-badge'),
     closeBtn:     () => document.getElementById('wx-close'),
     refreshBtn:   () => document.getElementById('wx-refresh'),
     fetchedAt:    () => document.getElementById('wx-fetched-at'),
@@ -1916,6 +2008,8 @@ const WX = (() => {
     emptySub:     () => document.getElementById('wx-empty-sub'),
     loading:      () => document.getElementById('wx-loading'),
     data:         () => document.getElementById('wx-data'),
+    alertsBlock:  () => document.getElementById('wx-alerts'),
+    alertsList:   () => document.getElementById('wx-alerts-list'),
     temp:         () => document.getElementById('wx-temp'),
     humidity:     () => document.getElementById('wx-humidity'),
     pressure:     () => document.getElementById('wx-pressure'),
@@ -2031,6 +2125,10 @@ const WX = (() => {
     }
     show('data');
 
+    // Alerts section (above the data grid).
+    renderAlerts(payload.alerts || []);
+    updateBadge(payload.alerts || []);
+
     // Header timestamp.
     els.fetchedAt().textContent = fmtTimeUTC(w.fetchedAt);
     els.fetchedAge().textContent = fmtAge(w.fetchedAt);
@@ -2079,6 +2177,68 @@ const WX = (() => {
       const moonName = a.moon?.phaseName || '—';
       const moonPct  = a.moon?.illumination !== undefined ? `${Math.round(a.moon.illumination * 100)}%` : '';
       els.moon().textContent     = `${moonName} ${moonPct}`.trim();
+    }
+  }
+
+  // Renders the active-alerts block inside the modal. Empty list
+  // hides the block entirely.
+  function renderAlerts(alerts) {
+    const block = els.alertsBlock();
+    const list = els.alertsList();
+    if (!alerts.length) {
+      block.hidden = true;
+      list.innerHTML = '';
+      return;
+    }
+    const hasWarning = alerts.some(a => a.severity === 'warning' || a.severity === 'critical');
+    block.classList.toggle('notice-only', !hasWarning);
+    block.hidden = false;
+    list.innerHTML = alerts.map(a => `
+      <div class="wx-alert-row">
+        <span class="wx-alert-sev ${a.severity}">${a.severity.toUpperCase()}</span>
+        <span class="wx-alert-msg">${escapeHtml(a.message || a.name)}</span>
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // updateBadge sets the WX trigger button's color and badge count
+  // based on the active alerts. Highest severity wins.
+  function updateBadge(alerts) {
+    const trigger = els.trigger();
+    const badge = els.triggerBadge();
+    trigger.classList.remove('has-alerts-warning', 'has-alerts-notice');
+    if (!alerts.length) {
+      badge.textContent = '';
+      return;
+    }
+    badge.textContent = alerts.length;
+    const hasWarning = alerts.some(a => a.severity === 'warning' || a.severity === 'critical');
+    trigger.classList.add(hasWarning ? 'has-alerts-warning' : 'has-alerts-notice');
+  }
+
+  // pollAlerts is a lightweight background poll that runs even when
+  // the modal is closed. Just calls the API and updates the badge so
+  // the operator sees alert state without opening the modal.
+  async function pollAlerts() {
+    try {
+      const res = await fetch('/api/v1/weather');
+      if (!res.ok) {
+        updateBadge([]);
+        return;
+      }
+      const body = await res.json();
+      updateBadge(body.alerts || []);
+    } catch (e) {
+      updateBadge([]);
     }
   }
 
@@ -2201,6 +2361,11 @@ const WX = (() => {
         els.fetchedAge().textContent = fmtAge(lastPayload.weather.fetchedAt);
       }
     }, 30000);
+    // Background alerts poll - runs even when modal is closed so the
+    // WX button reflects current alert state. First poll after 5s
+    // (daemon needs time to fetch + evaluate). Then every 60s.
+    setTimeout(pollAlerts, 5000);
+    setInterval(pollAlerts, 60000);
   }
 
   return {bind, open, close, toggle};
