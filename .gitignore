@@ -58,3 +58,8 @@ maptiles/
 # Compiled binaries (built locally, not version-controlled)
 /zerotx
 /tools/maps/sat-download/sat-download
+
+# Daemon runtime state (not source)
+cache/
+*.tmp
+*.log
