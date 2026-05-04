@@ -257,3 +257,157 @@ func TestServer_HTTPRoundTrip(t *testing.T) {
 		t.Errorf("content-type: %s", ct)
 	}
 }
+
+// ----------------------------------------------------------------------------
+// Weather endpoint with astro folded in.
+// ----------------------------------------------------------------------------
+
+// fakeWeather is the opaque payload type the WeatherCurrent provider
+// returns. Mimics weather.Weather just enough that JSON encoding
+// produces the field names the GUI consumes. We don't import the
+// real package here to keep the api test independent.
+type fakeWeather struct {
+	LatDeg    float64   `json:"latDeg"`
+	LonDeg    float64   `json:"lonDeg"`
+	FetchedAt time.Time `json:"fetchedAt"`
+	Source    string    `json:"source"`
+}
+
+func makeWeatherProviders(haveCoords, haveData bool) *Providers {
+	p := makeProviders()
+	p.WeatherCurrent = func() (interface{}, float64, float64, string, bool) {
+		if !haveCoords {
+			return nil, 0, 0, "", false
+		}
+		if !haveData {
+			return nil, -22.91, -47.06, "site", false
+		}
+		return fakeWeather{
+			LatDeg:    -22.95,
+			LonDeg:    -47.07,
+			FetchedAt: time.Now().UTC(),
+			Source:    "fake",
+		}, -22.91, -47.06, "site", true
+	}
+	p.WeatherFetch = func(_ context.Context, lat, lon float64) (interface{}, error) {
+		return fakeWeather{
+			LatDeg:    lat,
+			LonDeg:    lon,
+			FetchedAt: time.Now().UTC(),
+			Source:    "fake",
+		}, nil
+	}
+	return p
+}
+
+func TestHandleWeather_NoCoords_404(t *testing.T) {
+	srv := NewServer("", makeWeatherProviders(false, false))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/weather", nil)
+	srv.handleWeather(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
+	}
+}
+
+func TestHandleWeather_CoordsButNoData_503(t *testing.T) {
+	srv := NewServer("", makeWeatherProviders(true, false))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/weather", nil)
+	srv.handleWeather(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rr.Code)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["coordSource"] != "site" {
+		t.Errorf("coordSource = %v, want site", body["coordSource"])
+	}
+}
+
+func TestHandleWeather_Cached_IncludesAstro(t *testing.T) {
+	srv := NewServer("", makeWeatherProviders(true, true))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/weather", nil)
+	srv.handleWeather(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["weather"] == nil {
+		t.Errorf("response missing weather field")
+	}
+	if body["coordSource"] != "site" {
+		t.Errorf("coordSource = %v, want site", body["coordSource"])
+	}
+	astroBlock, ok := body["astro"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("astro field missing or not an object: %v", body["astro"])
+	}
+	if _, ok := astroBlock["sunPosition"].(map[string]interface{}); !ok {
+		t.Errorf("astro.sunPosition missing")
+	}
+	if _, ok := astroBlock["sun"].(map[string]interface{}); !ok {
+		t.Errorf("astro.sun missing")
+	}
+	if _, ok := astroBlock["moon"].(map[string]interface{}); !ok {
+		t.Errorf("astro.moon missing")
+	}
+	// Confirm sun position uses the resolver's coords (not zero/zero).
+	// At Campinas in early May, civil time (~13:00 UTC), the sun is
+	// always above the horizon so elevation should be positive most
+	// of the time. We don't assert a specific value (depends on test
+	// run time) but we assert it's a number that decoded properly.
+	pos := astroBlock["sunPosition"].(map[string]interface{})
+	if _, ok := pos["azimuthDeg"].(float64); !ok {
+		t.Errorf("sunPosition.azimuthDeg not a number")
+	}
+	if _, ok := pos["elevationDeg"].(float64); !ok {
+		t.Errorf("sunPosition.elevationDeg not a number")
+	}
+}
+
+func TestHandleWeather_ExplicitCoords_IncludesAstro(t *testing.T) {
+	srv := NewServer("", makeWeatherProviders(true, true))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/weather?lat=-22.91&lon=-47.06", nil)
+	srv.handleWeather(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["astro"] == nil {
+		t.Errorf("explicit-coords response missing astro field")
+	}
+	if _, exists := body["coordSource"]; exists {
+		t.Errorf("explicit-coords response should not have coordSource")
+	}
+}
+
+func TestHandleWeather_BadCoords_400(t *testing.T) {
+	srv := NewServer("", makeWeatherProviders(true, true))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/weather?lat=banana&lon=-47", nil)
+	srv.handleWeather(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestHandleWeather_OutOfRange_400(t *testing.T) {
+	srv := NewServer("", makeWeatherProviders(true, true))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/weather?lat=200&lon=-47", nil)
+	srv.handleWeather(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for lat=200", rr.Code)
+	}
+}

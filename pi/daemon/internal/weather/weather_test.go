@@ -405,7 +405,7 @@ func TestService_GetCurrent_NoCoords_NotOk(t *testing.T) {
 	resolver := func() (float64, float64, string, bool) { return 0, 0, "", false }
 	svc, _ := New(Options{Source: src, Cache: c, Resolver: resolver})
 
-	_, _, ok := svc.GetCurrent()
+	_, _, _, _, ok := svc.GetCurrent()
 	if ok {
 		t.Errorf("GetCurrent should return ok=false when resolver fails")
 	}
@@ -428,7 +428,7 @@ func TestService_GetCurrent_ReadsFromCache(t *testing.T) {
 	}
 	svc, _ := New(Options{Source: src, Cache: c, Resolver: resolver})
 
-	w, src2, ok := svc.GetCurrent()
+	w, lat, lon, src2, ok := svc.GetCurrent()
 	if !ok {
 		t.Fatalf("GetCurrent ok=false unexpectedly")
 	}
@@ -437,6 +437,41 @@ func TestService_GetCurrent_ReadsFromCache(t *testing.T) {
 	}
 	if src2 != "gps" {
 		t.Errorf("coord source = %q, want gps", src2)
+	}
+	if lat != -22.91 || lon != -47.06 {
+		t.Errorf("returned coords = (%v, %v), want resolver coords (-22.91, -47.06)",
+			lat, lon)
+	}
+}
+
+// TestService_GetCurrent_ReturnsResolverCoords_NotCacheCoords confirms
+// that GetCurrent surfaces the resolver's request coordinates, not the
+// cached entry's grid-snapped coordinates. Astro computations need the
+// "where the operator is" coords, not "where the source's grid point is".
+func TestService_GetCurrent_ReturnsResolverCoords_NotCacheCoords(t *testing.T) {
+	c, _ := NewCache("")
+	// Cache entry with grid-snapped coords (different from resolver).
+	c.PutAt(-22.91, -47.06, Weather{
+		LatDeg: -22.95, LonDeg: -47.07, // snapped to grid
+		FetchedAt: time.Now().UTC(),
+		Source:    "fake",
+		Current:   Current{TempC: 22},
+	})
+	src := &fakeSource{produce: func(_, _ float64) (Weather, error) {
+		return Weather{}, nil
+	}}
+	resolver := func() (float64, float64, string, bool) {
+		return -22.91, -47.06, "site", true
+	}
+	svc, _ := New(Options{Source: src, Cache: c, Resolver: resolver})
+
+	_, lat, lon, _, ok := svc.GetCurrent()
+	if !ok {
+		t.Fatalf("GetCurrent ok=false unexpectedly")
+	}
+	if lat != -22.91 || lon != -47.06 {
+		t.Errorf("returned coords = (%v, %v), want resolver coords (-22.91, -47.06), not snapped (-22.95, -47.07)",
+			lat, lon)
 	}
 }
 

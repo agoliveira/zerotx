@@ -371,12 +371,12 @@ type Providers struct {
 	ArmChecklist func(ok bool)
 
 	// WeatherCurrent returns the cached weather for the observer's
-	// current location, plus a label describing where the
-	// coordinates came from ("gps", "home", "site"). ok=false means
-	// either no resolved coordinates or no cached data yet. The
-	// returned value is opaque interface{} so the api package
-	// doesn't import internal/weather.
-	WeatherCurrent func() (interface{}, string, bool)
+	// current location, plus the lat/lon used for the lookup and a
+	// label describing where the coordinates came from ("gps", "home",
+	// "site"). ok=false means either no resolved coordinates or no
+	// cached data yet. The weather value is opaque interface{} so
+	// the api package doesn't import internal/weather.
+	WeatherCurrent func() (data interface{}, latDeg, lonDeg float64, source string, ok bool)
 
 	// WeatherFetch returns the weather for the explicitly-given
 	// coordinates, fetching fresh if the cache is missing or stale.

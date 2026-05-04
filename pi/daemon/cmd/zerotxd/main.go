@@ -46,7 +46,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.25.0-weather"
+const version = "0.26.0-weather-astro"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -1194,15 +1194,15 @@ func buildAPIProviders(
 		},
 		ArmConfirm:   armMachine.Confirm,
 		ArmChecklist: armMachine.ChecklistOkChanged,
-		WeatherCurrent: func() (interface{}, string, bool) {
+		WeatherCurrent: func() (interface{}, float64, float64, string, bool) {
 			if weatherSvc == nil {
-				return nil, "", false
+				return nil, 0, 0, "", false
 			}
-			w, src, ok := weatherSvc.GetCurrent()
+			w, lat, lon, src, ok := weatherSvc.GetCurrent()
 			if !ok {
-				return nil, src, false
+				return nil, lat, lon, src, false
 			}
-			return w, src, true
+			return w, lat, lon, src, true
 		},
 		WeatherFetch: func(ctx context.Context, lat, lon float64) (interface{}, error) {
 			if weatherSvc == nil {

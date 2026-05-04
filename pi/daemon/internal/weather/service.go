@@ -120,18 +120,25 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 // GetCurrent returns the cached weather for the observer's current
-// location. ok=false on no resolved coordinates or no cached entry.
-// Does not trigger a fetch (the background loop owns that path).
-func (s *Service) GetCurrent() (Weather, string, bool) {
-	lat, lon, src, ok := s.resolve()
-	if !ok {
-		return Weather{}, "", false
+// location plus the resolver's own coordinates and source label.
+// ok=false on no resolved coordinates or no cached entry. Does not
+// trigger a fetch (the background loop owns that path).
+//
+// The lat/lon returned are the resolver's request coordinates, not
+// the cached Weather's grid-snapped coordinates. Consumers that need
+// "where the operator actually is" (e.g. astro computations) should
+// use these; consumers that need "where the data came from" should
+// read weather.LatDeg / weather.LonDeg from the returned Weather.
+func (s *Service) GetCurrent() (data Weather, latDeg, lonDeg float64, source string, ok bool) {
+	lat, lon, src, resolved := s.resolve()
+	if !resolved {
+		return Weather{}, 0, 0, "", false
 	}
-	w, ok := s.cache.Get(lat, lon)
-	if !ok {
-		return Weather{}, src, false
+	w, hit := s.cache.Get(lat, lon)
+	if !hit {
+		return Weather{}, lat, lon, src, false
 	}
-	return w, src, true
+	return w, lat, lon, src, true
 }
 
 // Get returns the cached weather for explicit coordinates. If the
