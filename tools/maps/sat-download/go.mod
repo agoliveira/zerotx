@@ -2,7 +2,10 @@ module github.com/agoliveira/zerotx/tools/maps/sat-download
 
 go 1.22
 
-require modernc.org/sqlite v1.34.5
+require (
+	golang.org/x/time v0.5.0
+	modernc.org/sqlite v1.34.5
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

@@ -6,17 +6,20 @@
 //
 //	sat-download \
 //	    -bbox "-53.20,-25.40,-44.10,-19.70" \
-//	    -zoom 5-17 \
+//	    -zoom 5-14 \
 //	    -out ~/zerotx/maptiles/sp-state-sat.mbtiles \
-//	    -rate 8
+//	    -workers 4 \
+//	    -rate 12 \
+//	    -pmtiles-out ~/zerotx/maptiles/sp-state-sat.pmtiles
 //
-// After running, convert to PMTiles:
+// Concurrency: a configurable worker pool fetches tiles in parallel,
+// sharing a single token-bucket rate limiter. Default is 4 workers at
+// 12 req/s sustained. Workers are HTTP-bound; the rate limiter governs
+// total polite-request rate against Esri regardless of worker count.
 //
-//	pmtiles convert sp-state-sat.mbtiles sp-state-sat.pmtiles
-//
-// Conservative rate limiting: default 8 req/sec sustained with random
-// jitter. Tile servers throttle aggressive scrapers; staying under
-// 10 req/sec is generally safe.
+// Adaptive rate: on HTTP 429/503 from Esri, the limiter halves its rate
+// and slowly recovers toward the configured target over ~5 minutes of
+// successful traffic. This protects against IP bans without aborting.
 //
 // Source URL pattern (Esri World Imagery, AGS REST API):
 //
@@ -24,6 +27,9 @@
 //	    World_Imagery/MapServer/tile/{z}/{y}/{x}
 //
 // Note y/x order is reversed from OSM's z/x/y.
+//
+// After download, if -pmtiles-out is set, runs `pmtiles convert` to
+// produce a serving-ready archive. The pmtiles binary must be in PATH.
 package main
 
 import (
@@ -35,16 +41,18 @@ import (
 	"io"
 	"log"
 	"math"
-	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"golang.org/x/time/rate"
 	_ "modernc.org/sqlite"
 )
 
@@ -55,12 +63,15 @@ const (
 )
 
 type config struct {
-	bbox     bbox
-	minZoom  int
-	maxZoom  int
-	outPath  string
-	rate     float64
-	maxRetry int
+	bbox        bbox
+	minZoom     int
+	maxZoom     int
+	outPath     string
+	pmtilesOut  string
+	rate        float64
+	workers     int
+	maxRetry    int
+	progressInt time.Duration
 }
 
 type bbox struct {
@@ -92,27 +103,26 @@ func parseZoomRange(s string) (int, int, error) {
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("expected MIN-MAX, got %q", s)
 	}
-	min, err := strconv.Atoi(parts[0])
+	mn, err := strconv.Atoi(parts[0])
 	if err != nil {
 		return 0, 0, fmt.Errorf("min zoom: %w", err)
 	}
-	max, err := strconv.Atoi(parts[1])
+	mx, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, 0, fmt.Errorf("max zoom: %w", err)
 	}
-	if min < 0 || max > 22 || min > max {
+	if mn < 0 || mx > 22 || mn > mx {
 		return 0, 0, fmt.Errorf("zoom out of range or inverted")
 	}
-	return min, max, nil
+	return mn, mx, nil
 }
 
-// tilesForZoom returns the inclusive tile-coordinate range covering the
-// bbox at the given zoom level.
+// tilesForZoom returns the inclusive XYZ tile-coordinate range covering
+// the bbox at the given zoom level.
 func tilesForZoom(b bbox, z int) (xMin, xMax, yMin, yMax int) {
 	n := math.Pow(2, float64(z))
 	xMin = int(math.Floor((b.west + 180) / 360 * n))
 	xMax = int(math.Floor((b.east + 180) / 360 * n))
-	// Y is inverted: north corresponds to smaller y.
 	yMin = int(math.Floor((1 - math.Log(math.Tan(b.north*math.Pi/180)+1/math.Cos(b.north*math.Pi/180))/math.Pi) / 2 * n))
 	yMax = int(math.Floor((1 - math.Log(math.Tan(b.south*math.Pi/180)+1/math.Cos(b.south*math.Pi/180))/math.Pi) / 2 * n))
 	if xMin < 0 {
@@ -124,34 +134,36 @@ func tilesForZoom(b bbox, z int) (xMin, xMax, yMin, yMax int) {
 	return
 }
 
-// totalTiles counts tiles across all zoom levels in the bbox. Used for
-// progress reporting.
-func totalTiles(b bbox, minZoom, maxZoom int) int {
-	total := 0
+// totalTiles counts tiles across all zoom levels in the bbox.
+func totalTiles(b bbox, minZoom, maxZoom int) int64 {
+	var total int64
 	for z := minZoom; z <= maxZoom; z++ {
 		xMin, xMax, yMin, yMax := tilesForZoom(b, z)
-		total += (xMax - xMin + 1) * (yMax - yMin + 1)
+		total += int64(xMax-xMin+1) * int64(yMax-yMin+1)
 	}
 	return total
 }
 
-// openMBTiles creates or opens an MBTiles file. MBTiles is an SQLite
-// database with a fixed schema; we use modernc.org/sqlite (pure Go,
-// no CGO).
+// openMBTiles creates or opens an MBTiles file. Existing archives are
+// extended: bounds and zoom-range metadata are widened to the union of
+// existing values and the requested run's parameters.
 func openMBTiles(path string, b bbox, minZoom, maxZoom int) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 
-	// Enable WAL mode for better concurrent read/write while we're
-	// busy writing tiles. Saves significant time on long runs.
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		return nil, fmt.Errorf("set wal: %w", err)
+	// WAL + larger cache: long-running writes plus concurrent reads.
+	for _, pragma := range []string{
+		`PRAGMA journal_mode=WAL`,
+		`PRAGMA synchronous=NORMAL`,
+		`PRAGMA cache_size=-65536`, // ~64MB
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			return nil, fmt.Errorf("pragma %q: %w", pragma, err)
+		}
 	}
 
-	// Standard MBTiles schema. The metadata table is required by the
-	// MBTiles 1.3 spec; the tiles table holds the actual data.
 	const schema = `
 		CREATE TABLE IF NOT EXISTS metadata (
 			name TEXT PRIMARY KEY,
@@ -169,19 +181,43 @@ func openMBTiles(path string, b bbox, minZoom, maxZoom int) (*sql.DB, error) {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 
-	// Populate metadata. Idempotent via upsert. MBTiles uses TMS y
-	// (origin south) by convention; we'll convert XYZ y on insert.
+	// Read existing metadata to widen union of bounds + zoom-range
+	// when extending an archive across multiple runs.
+	existing := map[string]string{}
+	rows, err := db.Query(`SELECT name, value FROM metadata`)
+	if err != nil {
+		return nil, fmt.Errorf("read metadata: %w", err)
+	}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err == nil {
+			existing[k] = v
+		}
+	}
+	rows.Close()
+
+	bounds := fmt.Sprintf("%.6f,%.6f,%.6f,%.6f", b.west, b.south, b.east, b.north)
+	if existing["bounds"] != "" {
+		bounds = unionBounds(existing["bounds"], b)
+	}
+	mn, mx := minZoom, maxZoom
+	if v, err := strconv.Atoi(existing["minzoom"]); err == nil && v < mn {
+		mn = v
+	}
+	if v, err := strconv.Atoi(existing["maxzoom"]); err == nil && v > mx {
+		mx = v
+	}
+
 	meta := map[string]string{
-		"name":        "ZeroTX Satellite Tiles",
-		"description": "Esri World Imagery, downloaded for offline FPV use",
+		"name":        firstNonEmpty(existing["name"], "ZeroTX Satellite Tiles"),
+		"description": firstNonEmpty(existing["description"], "Esri World Imagery, downloaded for offline FPV use"),
 		"format":      "jpg",
 		"version":     "1.3",
 		"type":        "baselayer",
-		"minzoom":     strconv.Itoa(minZoom),
-		"maxzoom":     strconv.Itoa(maxZoom),
-		"bounds":      fmt.Sprintf("%.6f,%.6f,%.6f,%.6f", b.west, b.south, b.east, b.north),
-		"center": fmt.Sprintf("%.6f,%.6f,%d",
-			(b.west+b.east)/2, (b.south+b.north)/2, (minZoom+maxZoom)/2),
+		"minzoom":     strconv.Itoa(mn),
+		"maxzoom":     strconv.Itoa(mx),
+		"bounds":      bounds,
+		"center":      computeCenter(bounds, mn, mx),
 	}
 	for k, v := range meta {
 		if _, err := db.Exec(
@@ -194,26 +230,76 @@ func openMBTiles(path string, b bbox, minZoom, maxZoom int) (*sql.DB, error) {
 	return db, nil
 }
 
-// tileExists returns true if the given XYZ tile is already in the
-// MBTiles file. Note MBTiles uses TMS y, so we convert.
-func tileExists(db *sql.DB, z, x, y int) (bool, error) {
-	tmsY := (1 << z) - 1 - y
-	var exists int
-	err := db.QueryRow(
-		`SELECT 1 FROM tiles
-		 WHERE zoom_level=? AND tile_column=? AND tile_row=?
-		 LIMIT 1`,
-		z, x, tmsY).Scan(&exists)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
 	}
-	if err != nil {
-		return false, err
-	}
-	return exists == 1, nil
+	return b
 }
 
-// writeTile inserts an XYZ tile into the MBTiles, converting y to TMS.
+func unionBounds(existing string, b bbox) string {
+	parts := strings.Split(existing, ",")
+	if len(parts) != 4 {
+		return fmt.Sprintf("%.6f,%.6f,%.6f,%.6f", b.west, b.south, b.east, b.north)
+	}
+	w, _ := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	s, _ := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	e, _ := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	n, _ := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
+	if b.west < w {
+		w = b.west
+	}
+	if b.south < s {
+		s = b.south
+	}
+	if b.east > e {
+		e = b.east
+	}
+	if b.north > n {
+		n = b.north
+	}
+	return fmt.Sprintf("%.6f,%.6f,%.6f,%.6f", w, s, e, n)
+}
+
+func computeCenter(bounds string, mn, mx int) string {
+	parts := strings.Split(bounds, ",")
+	if len(parts) != 4 {
+		return ""
+	}
+	w, _ := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	s, _ := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	e, _ := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	n, _ := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
+	return fmt.Sprintf("%.6f,%.6f,%d", (w+e)/2, (s+n)/2, (mn+mx)/2)
+}
+
+// loadExistingTiles returns the set of (x, tmsY) keys already in the
+// archive for the given zoom level and tile rectangle.
+func loadExistingTiles(db *sql.DB, z, xMin, xMax, yMinTms, yMaxTms int) (map[uint64]struct{}, error) {
+	set := make(map[uint64]struct{})
+	rows, err := db.Query(
+		`SELECT tile_column, tile_row FROM tiles
+		 WHERE zoom_level=? AND tile_column BETWEEN ? AND ? AND tile_row BETWEEN ? AND ?`,
+		z, xMin, xMax, yMinTms, yMaxTms)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var x, tmsY int
+		if err := rows.Scan(&x, &tmsY); err != nil {
+			return nil, err
+		}
+		set[encodeKey(x, tmsY)] = struct{}{}
+	}
+	return set, rows.Err()
+}
+
+func encodeKey(x, tmsY int) uint64 {
+	return uint64(uint32(x))<<32 | uint64(uint32(tmsY))
+}
+
+// writeTile inserts an XYZ tile, converting y to TMS for MBTiles.
 func writeTile(db *sql.DB, z, x, y int, data []byte) error {
 	tmsY := (1 << z) - 1 - y
 	_, err := db.Exec(
@@ -223,28 +309,27 @@ func writeTile(db *sql.DB, z, x, y int, data []byte) error {
 	return err
 }
 
-// fetchTile downloads a single tile with retries and exponential
-// backoff. Returns the tile bytes or an error after all retries
-// exhausted.
-func fetchTile(ctx context.Context, client *http.Client, z, x, y, maxRetry int) ([]byte, error) {
-	url := fmt.Sprintf(esriURLTemplate, z, y, x) // y/x order for Esri
+// fetchTile downloads a single tile with retries. The throttled return
+// flag is true if any attempt got 429/503; the rate controller uses it
+// to back off.
+func fetchTile(ctx context.Context, client *http.Client, z, x, y, maxRetry int) (data []byte, throttled bool, err error) {
+	url := fmt.Sprintf(esriURLTemplate, z, y, x)
 	var lastErr error
 	for attempt := 0; attempt < maxRetry; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			// Cap at 30s.
 			if backoff > 30*time.Second {
 				backoff = 30 * time.Second
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, throttled, ctx.Err()
 			case <-time.After(backoff):
 			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			return nil, err
+			return nil, throttled, err
 		}
 		req.Header.Set("User-Agent", userAgent)
 		resp, err := client.Do(req)
@@ -254,58 +339,270 @@ func fetchTile(ctx context.Context, client *http.Client, z, x, y, maxRetry int) 
 		}
 		switch resp.StatusCode {
 		case http.StatusOK:
-			data, err := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if err != nil {
 				lastErr = err
 				continue
 			}
-			return data, nil
+			return body, throttled, nil
 		case http.StatusTooManyRequests, http.StatusServiceUnavailable:
-			// Server is throttling. Backoff and try again.
 			resp.Body.Close()
+			throttled = true
 			lastErr = fmt.Errorf("status %d (throttle)", resp.StatusCode)
 			continue
 		case http.StatusNotFound:
-			// Some tile coordinates have no imagery (e.g., poles, certain
-			// remote areas). Treat as a permanent miss; don't retry.
 			resp.Body.Close()
-			return nil, errors.New("tile not found")
+			return nil, throttled, errors.New("tile not found")
 		default:
 			resp.Body.Close()
-			return nil, fmt.Errorf("status %d", resp.StatusCode)
+			return nil, throttled, fmt.Errorf("status %d", resp.StatusCode)
 		}
 	}
-	return nil, fmt.Errorf("after %d retries: %w", maxRetry, lastErr)
+	return nil, throttled, fmt.Errorf("after %d retries: %w", maxRetry, lastErr)
 }
 
-// rateLimit returns a channel that emits at the given rate (tokens per
-// second) with random jitter to make traffic look more human-like.
-func rateLimit(ctx context.Context, perSec float64) <-chan struct{} {
-	ch := make(chan struct{})
-	baseInterval := time.Duration(float64(time.Second) / perSec)
-	go func() {
-		defer close(ch)
-		for {
-			// Jitter: ±25% of base interval.
-			jitter := baseInterval/2 - time.Duration(rand.Int64N(int64(baseInterval)))
-			delay := baseInterval + jitter
-			if delay < 0 {
-				delay = baseInterval
+// rateController wraps a token-bucket limiter with adaptive behavior.
+// On throttle (429/503) halves the rate and pauses for 30s before
+// recovering linearly toward target.
+type rateController struct {
+	mu          sync.Mutex
+	limiter     *rate.Limiter
+	target      rate.Limit
+	current     rate.Limit
+	lastBackoff time.Time
+}
+
+func newRateController(target float64) *rateController {
+	t := rate.Limit(target)
+	return &rateController{
+		limiter: rate.NewLimiter(t, 1),
+		target:  t,
+		current: t,
+	}
+}
+
+func (rc *rateController) onThrottle() {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	now := time.Now()
+	if now.Sub(rc.lastBackoff) < 10*time.Second {
+		return // already in a fresh backoff
+	}
+	rc.current = rc.current / 2
+	if rc.current < 1 {
+		rc.current = 1
+	}
+	rc.limiter.SetLimit(rc.current)
+	rc.lastBackoff = now
+	log.Printf("rate: throttle detected, reducing to %.1f/s", float64(rc.current))
+}
+
+func (rc *rateController) onSuccess() {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.current >= rc.target {
+		return
+	}
+	if time.Since(rc.lastBackoff) < 30*time.Second {
+		return
+	}
+	step := rc.target / 300
+	if step < 0.01 {
+		step = 0.01
+	}
+	rc.current += step
+	if rc.current > rc.target {
+		rc.current = rc.target
+	}
+	rc.limiter.SetLimit(rc.current)
+}
+
+func (rc *rateController) currentRate() float64 {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return float64(rc.current)
+}
+
+type counters struct {
+	done       int64
+	downloaded int64
+	skipped    int64
+	notFound   int64
+	errs       int64
+}
+
+type tileJob struct {
+	z, x, y int
+}
+
+type tileResult struct {
+	job       tileJob
+	data      []byte
+	err       error
+	notFound  bool
+	throttled bool
+}
+
+func worker(
+	ctx context.Context,
+	jobs <-chan tileJob,
+	results chan<- tileResult,
+	rc *rateController,
+	client *http.Client,
+	maxRetry int,
+) {
+	for job := range jobs {
+		if err := rc.limiter.Wait(ctx); err != nil {
+			return
+		}
+		data, throttled, err := fetchTile(ctx, client, job.z, job.x, job.y, maxRetry)
+		notFound := err != nil && err.Error() == "tile not found"
+		select {
+		case <-ctx.Done():
+			return
+		case results <- tileResult{
+			job:       job,
+			data:      data,
+			err:       err,
+			notFound:  notFound,
+			throttled: throttled,
+		}:
+		}
+	}
+}
+
+func writer(
+	db *sql.DB,
+	results <-chan tileResult,
+	c *counters,
+	rc *rateController,
+	done chan<- struct{},
+) {
+	defer close(done)
+	for r := range results {
+		switch {
+		case r.err == nil && r.data != nil:
+			if err := writeTile(db, r.job.z, r.job.x, r.job.y, r.data); err != nil {
+				log.Printf("writeTile z=%d x=%d y=%d: %v", r.job.z, r.job.x, r.job.y, err)
+				atomic.AddInt64(&c.errs, 1)
+			} else {
+				atomic.AddInt64(&c.downloaded, 1)
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(delay):
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- struct{}{}:
+			rc.onSuccess()
+		case r.notFound:
+			atomic.AddInt64(&c.notFound, 1)
+		default:
+			atomic.AddInt64(&c.errs, 1)
+			if r.err != nil && !errors.Is(r.err, context.Canceled) {
+				log.Printf("fetch z=%d x=%d y=%d: %v", r.job.z, r.job.x, r.job.y, r.err)
 			}
 		}
-	}()
-	return ch
+		if r.throttled {
+			rc.onThrottle()
+		}
+		atomic.AddInt64(&c.done, 1)
+	}
+}
+
+func runZoom(
+	ctx context.Context,
+	z int,
+	b bbox,
+	db *sql.DB,
+	rc *rateController,
+	client *http.Client,
+	c *counters,
+	cfg config,
+) error {
+	xMin, xMax, yMin, yMax := tilesForZoom(b, z)
+	yMinTms := (1 << z) - 1 - yMax
+	yMaxTms := (1 << z) - 1 - yMin
+	nTotal := int64(xMax-xMin+1) * int64(yMax-yMin+1)
+
+	existing, err := loadExistingTiles(db, z, xMin, xMax, yMinTms, yMaxTms)
+	if err != nil {
+		return fmt.Errorf("loadExisting z=%d: %w", z, err)
+	}
+	nExisting := int64(len(existing))
+	nMissing := nTotal - nExisting
+	log.Printf("zoom %d: x=[%d,%d] y=[%d,%d] %d total, %d already present, %d to fetch",
+		z, xMin, xMax, yMin, yMax, nTotal, nExisting, nMissing)
+
+	atomic.AddInt64(&c.skipped, nExisting)
+	atomic.AddInt64(&c.done, nExisting)
+
+	if nMissing == 0 {
+		return nil
+	}
+
+	jobs := make(chan tileJob, cfg.workers*4)
+	results := make(chan tileResult, cfg.workers*4)
+	writerDone := make(chan struct{})
+
+	go writer(db, results, c, rc, writerDone)
+
+	var wg sync.WaitGroup
+	for i := 0; i < cfg.workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			worker(ctx, jobs, results, rc, client, cfg.maxRetry)
+		}()
+	}
+
+producer:
+	for y := yMin; y <= yMax; y++ {
+		tmsY := (1 << z) - 1 - y
+		for x := xMin; x <= xMax; x++ {
+			if _, has := existing[encodeKey(x, tmsY)]; has {
+				continue
+			}
+			select {
+			case <-ctx.Done():
+				break producer
+			case jobs <- tileJob{z: z, x: x, y: y}:
+			}
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+	<-writerDone
+	return ctx.Err()
+}
+
+func progressLogger(
+	ctx context.Context,
+	c *counters,
+	rc *rateController,
+	total int64,
+	startedAt time.Time,
+	interval time.Duration,
+) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			d := atomic.LoadInt64(&c.done)
+			dl := atomic.LoadInt64(&c.downloaded)
+			sk := atomic.LoadInt64(&c.skipped)
+			nf := atomic.LoadInt64(&c.notFound)
+			e := atomic.LoadInt64(&c.errs)
+			elapsed := time.Since(startedAt)
+			effRate := float64(dl) / elapsed.Seconds()
+			eta := time.Duration(0)
+			if effRate > 0 {
+				eta = time.Duration(float64(total-d)/effRate) * time.Second
+			}
+			log.Printf("progress: %d/%d (%.1f%%) downloaded=%d skipped=%d 404=%d err=%d effRate=%.1f/s curRate=%.1f/s ETA=%s",
+				d, total, 100*float64(d)/float64(total),
+				dl, sk, nf, e, effRate, rc.currentRate(), eta.Round(time.Second))
+		}
+	}
 }
 
 func run(cfg config) error {
@@ -318,131 +615,95 @@ func run(cfg config) error {
 	}
 	defer db.Close()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	tickets := rateLimit(ctx, cfg.rate)
+	transport := &http.Transport{
+		MaxIdleConns:        cfg.workers * 2,
+		MaxIdleConnsPerHost: cfg.workers * 2,
+		MaxConnsPerHost:     cfg.workers * 2,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 
+	rc := newRateController(cfg.rate)
+	c := &counters{}
 	total := totalTiles(cfg.bbox, cfg.minZoom, cfg.maxZoom)
-	log.Printf("planning %d tiles across zoom %d-%d", total, cfg.minZoom, cfg.maxZoom)
-
-	var (
-		done       int64
-		downloaded int64
-		skipped    int64
-		notFound   int64
-		errs       int64
-	)
+	log.Printf("planning %d tiles across zoom %d-%d (workers=%d, target rate=%.1f/s)",
+		total, cfg.minZoom, cfg.maxZoom, cfg.workers, cfg.rate)
 
 	startedAt := time.Now()
-
-	// Progress logger goroutine.
-	stopProgress := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopProgress:
-				return
-			case <-ticker.C:
-				d := atomic.LoadInt64(&done)
-				dl := atomic.LoadInt64(&downloaded)
-				sk := atomic.LoadInt64(&skipped)
-				nf := atomic.LoadInt64(&notFound)
-				e := atomic.LoadInt64(&errs)
-				elapsed := time.Since(startedAt)
-				rate := float64(d) / elapsed.Seconds()
-				remaining := time.Duration(0)
-				if rate > 0 {
-					remaining = time.Duration(float64(int64(total)-d)/rate) * time.Second
-				}
-				log.Printf("progress: %d/%d (%.1f%%) downloaded=%d skipped=%d 404=%d err=%d rate=%.1f/s ETA=%s",
-					d, total, 100*float64(d)/float64(total),
-					dl, sk, nf, e, rate, remaining.Round(time.Second))
-			}
-		}
-	}()
+	progCtx, progCancel := context.WithCancel(ctx)
+	defer progCancel()
+	go progressLogger(progCtx, c, rc, total, startedAt, cfg.progressInt)
 
 	for z := cfg.minZoom; z <= cfg.maxZoom; z++ {
-		xMin, xMax, yMin, yMax := tilesForZoom(cfg.bbox, z)
-		log.Printf("zoom %d: x=[%d,%d] y=[%d,%d] (%d tiles)",
-			z, xMin, xMax, yMin, yMax,
-			(xMax-xMin+1)*(yMax-yMin+1))
-		for y := yMin; y <= yMax; y++ {
-			for x := xMin; x <= xMax; x++ {
-				if ctx.Err() != nil {
-					close(stopProgress)
-					return ctx.Err()
-				}
-
-				exists, err := tileExists(db, z, x, y)
-				if err != nil {
-					log.Printf("tileExists error z=%d x=%d y=%d: %v", z, x, y, err)
-					atomic.AddInt64(&errs, 1)
-					atomic.AddInt64(&done, 1)
-					continue
-				}
-				if exists {
-					atomic.AddInt64(&skipped, 1)
-					atomic.AddInt64(&done, 1)
-					continue
-				}
-
-				// Wait for rate limiter token.
-				select {
-				case <-ctx.Done():
-					close(stopProgress)
-					return ctx.Err()
-				case <-tickets:
-				}
-
-				data, err := fetchTile(ctx, client, z, x, y, cfg.maxRetry)
-				if err != nil {
-					if err.Error() == "tile not found" {
-						atomic.AddInt64(&notFound, 1)
-					} else {
-						atomic.AddInt64(&errs, 1)
-						log.Printf("fetch z=%d x=%d y=%d: %v", z, x, y, err)
-					}
-					atomic.AddInt64(&done, 1)
-					continue
-				}
-
-				if err := writeTile(db, z, x, y, data); err != nil {
-					log.Printf("writeTile z=%d x=%d y=%d: %v", z, x, y, err)
-					atomic.AddInt64(&errs, 1)
-					atomic.AddInt64(&done, 1)
-					continue
-				}
-				atomic.AddInt64(&downloaded, 1)
-				atomic.AddInt64(&done, 1)
+		if err := runZoom(ctx, z, cfg.bbox, db, rc, client, c, cfg); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			return fmt.Errorf("runZoom %d: %w", z, err)
 		}
 	}
+	progCancel()
 
-	close(stopProgress)
-
-	d := atomic.LoadInt64(&done)
-	dl := atomic.LoadInt64(&downloaded)
-	sk := atomic.LoadInt64(&skipped)
-	nf := atomic.LoadInt64(&notFound)
-	e := atomic.LoadInt64(&errs)
+	d := atomic.LoadInt64(&c.done)
+	dl := atomic.LoadInt64(&c.downloaded)
+	sk := atomic.LoadInt64(&c.skipped)
+	nf := atomic.LoadInt64(&c.notFound)
+	e := atomic.LoadInt64(&c.errs)
 	log.Printf("complete: %d total, downloaded=%d skipped=%d 404=%d err=%d in %s",
 		d, dl, sk, nf, e, time.Since(startedAt).Round(time.Second))
 
+	if cfg.pmtilesOut != "" {
+		if err := convertToPMTiles(cfg.outPath, cfg.pmtilesOut); err != nil {
+			return fmt.Errorf("pmtiles convert: %w", err)
+		}
+	}
+	return nil
+}
+
+// convertToPMTiles shells out to `pmtiles convert` and atomically
+// renames the result into place.
+func convertToPMTiles(mbtilesPath, pmtilesOut string) error {
+	pmtilesBin, err := exec.LookPath("pmtiles")
+	if err != nil {
+		return fmt.Errorf("pmtiles binary not found in PATH (install: go install github.com/protomaps/go-pmtiles/cmd/pmtiles@latest)")
+	}
+	tmpOut := pmtilesOut + ".tmp"
+	_ = os.Remove(tmpOut)
+	log.Printf("converting %s -> %s via %s", mbtilesPath, pmtilesOut, pmtilesBin)
+	cmd := exec.Command(pmtilesBin, "convert", mbtilesPath, tmpOut)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(tmpOut)
+		return err
+	}
+	if err := os.Rename(tmpOut, pmtilesOut); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", tmpOut, pmtilesOut, err)
+	}
+	log.Printf("pmtiles ready: %s", pmtilesOut)
 	return nil
 }
 
 func main() {
 	bboxStr := flag.String("bbox", "", "bounding box W,S,E,N (decimal degrees)")
 	zoomStr := flag.String("zoom", "5-17", "zoom range MIN-MAX")
-	outPath := flag.String("out", "", "output MBTiles file path")
-	rate := flag.Float64("rate", 8.0, "max requests per second (sustained)")
+	outPath := flag.String("out", "", "output MBTiles file path (resumable)")
+	pmtilesOut := flag.String("pmtiles-out", "", "if set, run `pmtiles convert` to this path after a clean download")
+	rateF := flag.Float64("rate", 12.0, "target requests per second (sustained, shared across workers)")
+	workers := flag.Int("workers", 4, "concurrent download workers")
 	maxRetry := flag.Int("max-retry", 5, "max retries per tile on transient errors")
+	progressInt := flag.Duration("progress-interval", 30*time.Second, "interval between progress log lines")
 	flag.Parse()
 
 	if *bboxStr == "" || *outPath == "" {
 		flag.Usage()
 		os.Exit(2)
+	}
+	if *workers < 1 {
+		log.Fatalf("workers must be >= 1")
+	}
+	if *rateF <= 0 {
+		log.Fatalf("rate must be > 0")
 	}
 
 	b, err := parseBBox(*bboxStr)
@@ -455,17 +716,20 @@ func main() {
 	}
 
 	cfg := config{
-		bbox:     b,
-		minZoom:  minZ,
-		maxZoom:  maxZ,
-		outPath:  *outPath,
-		rate:     *rate,
-		maxRetry: *maxRetry,
+		bbox:        b,
+		minZoom:     minZ,
+		maxZoom:     maxZ,
+		outPath:     *outPath,
+		pmtilesOut:  *pmtilesOut,
+		rate:        *rateF,
+		workers:     *workers,
+		maxRetry:    *maxRetry,
+		progressInt: *progressInt,
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	log.Printf("sat-download starting: bbox=%v zoom=%d-%d rate=%.1f/s out=%s",
-		b, minZ, maxZ, *rate, *outPath)
+	log.Printf("sat-download starting: bbox=%v zoom=%d-%d workers=%d rate=%.1f/s out=%s",
+		b, minZ, maxZ, cfg.workers, cfg.rate, *outPath)
 
 	if err := run(cfg); err != nil {
 		if errors.Is(err, context.Canceled) {
