@@ -25,7 +25,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -120,62 +119,6 @@ func onlineTileURL(tileset string, z, x, y int) (string, error) {
 // httpTileClient is a shared HTTP client for upstream tile fetches.
 var httpTileClient = &http.Client{
 	Timeout: 10 * time.Second,
-}
-
-// handleMapStyle serves a style JSON from mapTilesDir/styles/, rewriting
-// relative URLs ("/tiles/...", "/fonts/...", "/sprites/...") into
-// absolute URLs based on the request's host and scheme. MapLibre's
-// vector tile fetcher constructs `new Request(url)` and rejects
-// origin-relative paths with "Failed to parse URL" — so we must serve
-// styles with absolute URLs at request time. Cannot bake them into the
-// static file because the same JSON serves over different hostnames
-// (127.0.0.1 from desktop preview, 127.0.0.1 from Pi kiosks too, but
-// hypothetically remote clients on the LAN would also work).
-func (s *Server) handleMapStyle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.mapTilesDir == "" {
-		http.NotFound(w, r)
-		return
-	}
-	// /styles/X.json -> mapTilesDir/styles/X.json
-	rel := strings.TrimPrefix(r.URL.Path, "/styles/")
-	if rel == "" || strings.Contains(rel, "..") {
-		http.NotFound(w, r)
-		return
-	}
-	full := s.mapTilesDir + "/styles/" + rel
-	raw, err := os.ReadFile(full)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	// Compute absolute base URL from the incoming request.
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	base := scheme + "://" + r.Host
-
-	// Replace string occurrences of "/tiles/", "/fonts/", "/sprites/"
-	// with absolute equivalents. The style JSON is text; no need to
-	// parse+reserialize. Use targeted replacements that are safe even
-	// if a layer happens to mention these strings in a filter (very
-	// unlikely; values appear in url-typed fields only).
-	body := string(raw)
-	body = strings.ReplaceAll(body, `"/tiles/`, `"`+base+`/tiles/`)
-	body = strings.ReplaceAll(body, `"/fonts/`, `"`+base+`/fonts/`)
-	body = strings.ReplaceAll(body, `"/sprites/`, `"`+base+`/sprites/`)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	if r.Method != http.MethodHead {
-		_, _ = w.Write([]byte(body))
-	}
 }
 
 // handleTile serves a map tile.

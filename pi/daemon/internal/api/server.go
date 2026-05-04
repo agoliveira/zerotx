@@ -96,20 +96,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/tiles/", s.handleTile)
 
 	// Static map assets served from mapTilesDir for fully-offline operation.
-	// Layout under -maptiles-dir:
-	//   styles/{name}.json             -> /styles/{name}.json (with URL rewrite)
-	//   fonts/{fontstack}/{range}.pbf  -> /fonts/{fontstack}/{range}.pbf
-	//   sprites/sprite.{png,json}      -> /sprites/sprite.{png,json}
-	//
-	// /styles/ uses a custom handler that rewrites relative URLs in the
-	// style JSON to absolute URLs at request time. This is required
-	// because MapLibre's vector source fetcher rejects origin-relative
-	// paths ("/tiles/...") with "Failed to parse URL".
+	// The map page (web/map/index.html) carries an inline style; only the
+	// glyph fonts referenced by that style need to be served from disk.
+	//   fonts/{fontstack}/{range}.pbf -> /fonts/{fontstack}/{range}.pbf
 	if s.mapTilesDir != "" {
 		mapAssets := http.FileServer(http.Dir(s.mapTilesDir))
-		mux.HandleFunc("/styles/", s.handleMapStyle)
 		mux.Handle("/fonts/", mapAssets)
-		mux.Handle("/sprites/", mapAssets)
 	}
 
 	// Static GUI at /. The embed.FS path is rooted; for dev iteration,

@@ -131,6 +131,14 @@
       background: var(--info);
     }
 
+    /* ----- Right side, below controls: layer toggles (osm tileset only) ----- */
+    .layer-toggles-panel {
+      position: absolute; top: 165px; right: 12px; z-index: 10;
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 8px;
+      min-width: 130px;
+    }
+
     /* ----- Bottom-left: scale bar ----- */
     .scale-bar {
       position: absolute; bottom: 30px; left: 12px; z-index: 10;
@@ -247,6 +255,25 @@
     </div>
   </div>
 
+  <div class="layer-toggles-panel panel" id="layer-toggles" style="display: none;">
+    <div class="ctrl-row">
+      <label>Labels</label>
+      <div class="ctrl-toggle" id="toggle-labels"></div>
+    </div>
+    <div class="ctrl-row">
+      <label>Landcover</label>
+      <div class="ctrl-toggle" id="toggle-landcover"></div>
+    </div>
+    <div class="ctrl-row">
+      <label>Buildings</label>
+      <div class="ctrl-toggle" id="toggle-buildings"></div>
+    </div>
+    <div class="ctrl-row">
+      <label>Aerodromes</label>
+      <div class="ctrl-toggle" id="toggle-aerodromes"></div>
+    </div>
+  </div>
+
   <div class="scale-bar panel" id="scale-bar">
     <span class="scale-bar-line" id="scale-line" style="width: 50px;"></span><span id="scale-label">100 m</span>
   </div>
@@ -274,27 +301,297 @@
   // Tilesets:
   //   satellite -> raster JPG tiles served by daemon from PMTiles
   //   osm       -> vector MVT tiles served by daemon from PMTiles, styled
-  //                via a local liberty-derived style JSON. The style file
-  //                references /tiles/osm, /fonts, /sprites all on this origin.
+  //                via the inline buildOSMStyle() spec below. Hand-tuned
+  //                for the FPV operator: dark theme matching HUD, ~20
+  //                layers, GitHub-Dark palette, single Latin font stack.
   const TILESETS = {
     satellite: { kind: 'raster', url: location.origin + '/tiles/satellite/{z}/{x}/{y}.jpg', attribution: 'Esri World Imagery' },
-    osm:       { kind: 'vector', styleUrl: location.origin + '/styles/liberty.json',         attribution: '© OpenStreetMap contributors' }
+    osm:       { kind: 'vector', attribution: '© OpenStreetMap contributors' }
   };
 
   // Build a MapLibre style spec for the requested tileset. For raster
   // tilesets, returns a minimal inline style with one raster layer. For
-  // vector tilesets, returns the URL of the style JSON to fetch (MapLibre
-  // accepts either).
+  // vector tilesets, returns the inline OSM style.
   function buildStyle(tilesetName) {
     const t = TILESETS[tilesetName];
     if (t.kind === 'vector') {
-      return t.styleUrl;
+      return buildOSMStyle();
     }
     // raster
     return {
       version: 8,
       sources: { 'tiles': { type: 'raster', tiles: [t.url], tileSize: 256, attribution: t.attribution, maxzoom: 19 } },
       layers: [{ id: 'tiles-layer', type: 'raster', source: 'tiles' }]
+    };
+  }
+
+  // Inline OSM vector style for ZeroTX. Hand-tuned for FPV operator use:
+  // dark theme, small layer count, GitHub-Dark palette, calibrated for
+  // wide zoom range (z=8 mission view through z=17 detail).
+  //
+  // OpenMapTiles source-layers consumed:
+  //   water, waterway, landcover, park, building, aeroway,
+  //   transportation, transportation_name, place, water_name,
+  //   aerodrome_label
+  //
+  // Toggleable groups (via metadata['zerotx:group']):
+  //   labels, landcover, buildings, aerodromes
+  function buildOSMStyle() {
+    return {
+      version: 8,
+      glyphs: location.origin + '/fonts/{fontstack}/{range}.pbf',
+      sources: {
+        openmaptiles: {
+          type: 'vector',
+          tiles: [location.origin + '/tiles/osm/{z}/{x}/{y}.pbf'],
+          minzoom: 0,
+          maxzoom: 14,
+          attribution: '© OpenStreetMap contributors'
+        }
+      },
+      layers: [
+        // Background.
+        { id: 'background', type: 'background',
+          paint: { 'background-color': '#ebe3d1' } },
+
+        // Landcover (forest/wood).
+        { id: 'landcover-forest', type: 'fill',
+          source: 'openmaptiles', 'source-layer': 'landcover',
+          filter: ['match', ['get', 'class'], ['wood', 'forest'], true, false],
+          minzoom: 6,
+          paint: { 'fill-color': '#95c078', 'fill-opacity': 0.7 },
+          metadata: { 'zerotx:group': 'landcover' } },
+
+        // Park.
+        { id: 'park', type: 'fill',
+          source: 'openmaptiles', 'source-layer': 'park',
+          minzoom: 10,
+          paint: { 'fill-color': '#b8d878', 'fill-opacity': 0.7 },
+          metadata: { 'zerotx:group': 'landcover' } },
+
+        // Water polygon.
+        { id: 'water', type: 'fill',
+          source: 'openmaptiles', 'source-layer': 'water',
+          paint: { 'fill-color': '#82b4d4' } },
+
+        // Waterway line.
+        { id: 'waterway', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'waterway',
+          minzoom: 8,
+          paint: {
+            'line-color': '#4490c0',
+            'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 1.5, 18, 2.5]
+          } },
+
+        // Aeroway lines (runways, taxiways).
+        { id: 'aeroway-line', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'aeroway',
+          filter: ['==', ['geometry-type'], 'LineString'],
+          minzoom: 11,
+          paint: {
+            'line-color': '#b89060',
+            'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 14, 1.5, 18, 4]
+          },
+          metadata: { 'zerotx:group': 'aerodromes' } },
+
+        // Buildings (2D fill, fade in z=13->14 so they don't appear abruptly).
+        { id: 'building', type: 'fill',
+          source: 'openmaptiles', 'source-layer': 'building',
+          minzoom: 13,
+          paint: {
+            'fill-color': '#d8c89c',
+            'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.7]
+          },
+          metadata: { 'zerotx:group': 'buildings' } },
+
+        // Road casings (drawn first so road fills overlay them; gives
+        // every road a dark outline for legibility against any background).
+        { id: 'road-minor-casing', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['minor', 'residential', 'unclassified'], true, false],
+          minzoom: 12,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#6a5440',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 12, 1, 15, 2, 18, 4]
+          } },
+        { id: 'road-secondary-casing', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['secondary', 'secondary_link', 'tertiary', 'tertiary_link'], true, false],
+          minzoom: 10,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#6a5440',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 10, 1, 14, 2.5, 18, 6]
+          } },
+        { id: 'road-primary-casing', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['primary', 'primary_link'], true, false],
+          minzoom: 8,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#6a5440',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 8, 1, 12, 2.5, 18, 8]
+          } },
+        { id: 'road-motorway-casing', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['motorway', 'motorway_link', 'trunk', 'trunk_link'], true, false],
+          minzoom: 5,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#6a5440',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 5, 1.5, 10, 4, 14, 7, 18, 12]
+          } },
+
+        // Road fills (drawn over casings, brightness scales with hierarchy).
+        { id: 'road-minor', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['minor', 'residential', 'unclassified'], true, false],
+          minzoom: 12,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#ffffff',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 12, 0.5, 15, 1, 18, 2.5]
+          } },
+        { id: 'road-secondary', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['secondary', 'secondary_link', 'tertiary', 'tertiary_link'], true, false],
+          minzoom: 10,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#fad878',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 10, 0.5, 14, 1.5, 18, 4]
+          } },
+        { id: 'road-primary', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['primary', 'primary_link'], true, false],
+          minzoom: 8,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#f4b850',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 8, 0.5, 12, 1.5, 18, 5]
+          } },
+        { id: 'road-motorway', type: 'line',
+          source: 'openmaptiles', 'source-layer': 'transportation',
+          filter: ['match', ['get', 'class'], ['motorway', 'motorway_link', 'trunk', 'trunk_link'], true, false],
+          minzoom: 5,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: {
+            'line-color': '#d4604a',
+            'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 5, 0.5, 10, 2, 14, 4, 18, 8]
+          } },
+
+        // Water labels.
+        { id: 'water-name', type: 'symbol',
+          source: 'openmaptiles', 'source-layer': 'water_name',
+          minzoom: 8,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 14, 13],
+            'text-max-width': 6,
+            'text-padding': 2
+          },
+          paint: {
+            'text-color': '#2a5878',
+            'text-halo-color': '#ebe3d1',
+            'text-halo-width': 1.2
+          },
+          metadata: { 'zerotx:group': 'labels' } },
+
+        // Road labels.
+        { id: 'road-name', type: 'symbol',
+          source: 'openmaptiles', 'source-layer': 'transportation_name',
+          filter: ['match', ['get', 'class'], ['motorway','trunk','primary','secondary','tertiary','minor','residential','unclassified'], true, false],
+          minzoom: 13,
+          layout: {
+            'symbol-placement': 'line',
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 11,
+            'text-rotation-alignment': 'map',
+            'symbol-spacing': 350,
+            'text-padding': 2
+          },
+          paint: {
+            'text-color': '#2a1808',
+            'text-halo-color': '#ebe3d1',
+            'text-halo-width': 1.5
+          },
+          metadata: { 'zerotx:group': 'labels' } },
+
+        // Aerodrome labels.
+        { id: 'aerodrome-label', type: 'symbol',
+          source: 'openmaptiles', 'source-layer': 'aerodrome_label',
+          minzoom: 10,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 11,
+            'text-anchor': 'top',
+            'text-offset': [0, 0.6],
+            'text-padding': 2
+          },
+          paint: {
+            'text-color': '#a04010',
+            'text-halo-color': '#ebe3d1',
+            'text-halo-width': 1.5
+          },
+          metadata: { 'zerotx:group': 'aerodromes' } },
+
+        // Place labels: village/hamlet/locality.
+        { id: 'place-village', type: 'symbol',
+          source: 'openmaptiles', 'source-layer': 'place',
+          filter: ['match', ['get', 'class'], ['village', 'hamlet', 'suburb', 'neighbourhood', 'locality'], true, false],
+          minzoom: 11,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10, 16, 13]
+          },
+          paint: {
+            'text-color': '#4a3018',
+            'text-halo-color': '#ebe3d1',
+            'text-halo-width': 1.2
+          },
+          metadata: { 'zerotx:group': 'labels' } },
+
+        // Place labels: town.
+        { id: 'place-town', type: 'symbol',
+          source: 'openmaptiles', 'source-layer': 'place',
+          filter: ['==', ['get', 'class'], 'town'],
+          minzoom: 8,
+          maxzoom: 15,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 8, 11, 13, 15]
+          },
+          paint: {
+            'text-color': '#3a2010',
+            'text-halo-color': '#ebe3d1',
+            'text-halo-width': 1.5
+          },
+          metadata: { 'zerotx:group': 'labels' } },
+
+        // Place labels: city.
+        { id: 'place-city', type: 'symbol',
+          source: 'openmaptiles', 'source-layer': 'place',
+          filter: ['==', ['get', 'class'], 'city'],
+          minzoom: 4,
+          maxzoom: 14,
+          layout: {
+            'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 4, 11, 8, 14, 12, 18]
+          },
+          paint: {
+            'text-color': '#2a1808',
+            'text-halo-color': '#ebe3d1',
+            'text-halo-width': 1.5
+          },
+          metadata: { 'zerotx:group': 'labels' } }
+      ]
     };
   }
 
@@ -769,13 +1066,68 @@
     }, tickMs);
   }
 
+  // Layer-group visibility prefs (osm tileset only). Persisted in
+  // localStorage. Toggle UI is hidden when the satellite tileset is
+  // active because raster styles have no layers carrying our group
+  // metadata.
+  const LAYER_GROUPS = ['labels', 'landcover', 'buildings', 'aerodromes'];
+  const LAYER_GROUP_DEFAULTS = { labels: true, landcover: true, buildings: false, aerodromes: true };
+  const LAYER_PREFS_KEY = 'zerotx.map.layerPrefs';
+
+  function loadLayerPrefs() {
+    try {
+      const raw = localStorage.getItem(LAYER_PREFS_KEY);
+      if (!raw) return { ...LAYER_GROUP_DEFAULTS };
+      const parsed = JSON.parse(raw);
+      return { ...LAYER_GROUP_DEFAULTS, ...parsed };
+    } catch (e) {
+      return { ...LAYER_GROUP_DEFAULTS };
+    }
+  }
+
+  function saveLayerPrefs(prefs) {
+    try { localStorage.setItem(LAYER_PREFS_KEY, JSON.stringify(prefs)); }
+    catch (e) { /* quota or unavailable; non-fatal */ }
+  }
+
+  let layerPrefs = loadLayerPrefs();
+
+  function applyLayerPrefs() {
+    // Walk the current style. Any layer with metadata['zerotx:group']
+    // gets its visibility set per the saved pref. Layers without that
+    // metadata are untouched.
+    if (!map || !map.getStyle()) return;
+    for (const layer of map.getStyle().layers) {
+      const group = (layer.metadata || {})['zerotx:group'];
+      if (!group) continue;
+      const visible = layerPrefs[group] !== false;
+      map.setLayoutProperty(layer.id, 'visibility', visible ? 'visible' : 'none');
+    }
+  }
+
+  function setLayerGroupVisibility(group, visible) {
+    layerPrefs[group] = visible;
+    saveLayerPrefs(layerPrefs);
+    applyLayerPrefs();
+  }
+
+  function syncLayerToggleVisibility() {
+    // Show layer-toggles only when the osm tileset is active.
+    const panel = document.getElementById('layer-toggles');
+    panel.style.display = (currentTileset === 'osm') ? '' : 'none';
+  }
+
   function setTileset(name) {
     if (name === currentTileset) return;
     currentTileset = name;
     map.setStyle(buildStyle(name), { diff: false });
     document.getElementById('btn-sat').classList.toggle('active', name === 'satellite');
     document.getElementById('btn-osm').classList.toggle('active', name === 'osm');
-    map.once('style.load', async () => { await refreshAllLayers(); });
+    syncLayerToggleVisibility();
+    map.once('style.load', async () => {
+      await refreshAllLayers();
+      applyLayerPrefs();
+    });
   }
 
   function setupToggle(id, getValue, setValue, onChange) {
@@ -827,6 +1179,8 @@
 
     map.on('load', async () => {
       await refreshAllLayers();
+      applyLayerPrefs();
+      syncLayerToggleVisibility();
       updateScaleBar();
       updateCompass();
 
@@ -864,6 +1218,16 @@
       v => { rangeRingsEnabled = v; },
       () => { updateRangeRings(); }
     );
+
+    // Layer-group toggles (osm tileset only). Each closes over its
+    // group name and calls setLayerGroupVisibility on change.
+    LAYER_GROUPS.forEach(group => {
+      setupToggle(`toggle-${group}`,
+        () => layerPrefs[group] !== false,
+        v => { setLayerGroupVisibility(group, v); },
+        null
+      );
+    });
   }
 
   init();
