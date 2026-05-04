@@ -271,13 +271,26 @@
   const FALLBACK_CENTER = [-47.0608, -22.9056];
   const FALLBACK_ZOOM = 13;
 
+  // Tilesets:
+  //   satellite -> raster JPG tiles served by daemon from PMTiles
+  //   osm       -> vector MVT tiles served by daemon from PMTiles, styled
+  //                via a local liberty-derived style JSON. The style file
+  //                references /tiles/osm, /fonts, /sprites all on this origin.
   const TILESETS = {
-    satellite: { url: location.origin + '/tiles/satellite/{z}/{x}/{y}.png', attribution: 'Esri World Imagery' },
-    osm:       { url: location.origin + '/tiles/osm/{z}/{x}/{y}.png',       attribution: '© OpenStreetMap contributors' }
+    satellite: { kind: 'raster', url: location.origin + '/tiles/satellite/{z}/{x}/{y}.jpg', attribution: 'Esri World Imagery' },
+    osm:       { kind: 'vector', styleUrl: location.origin + '/styles/liberty.json',         attribution: '© OpenStreetMap contributors' }
   };
 
+  // Build a MapLibre style spec for the requested tileset. For raster
+  // tilesets, returns a minimal inline style with one raster layer. For
+  // vector tilesets, returns the URL of the style JSON to fetch (MapLibre
+  // accepts either).
   function buildStyle(tilesetName) {
     const t = TILESETS[tilesetName];
+    if (t.kind === 'vector') {
+      return t.styleUrl;
+    }
+    // raster
     return {
       version: 8,
       sources: { 'tiles': { type: 'raster', tiles: [t.url], tileSize: 256, attribution: t.attribution, maxzoom: 19 } },

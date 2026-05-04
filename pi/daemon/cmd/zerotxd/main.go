@@ -65,6 +65,8 @@ func main() {
 	webDir := flag.String("web-dir", "", "serve web GUI from this filesystem path (default: embedded). Useful for fast iteration during development.")
 	mapTilesDir := flag.String("maptiles-dir", "", "directory containing PMTiles files for offline map tile serving. Empty = online proxy mode (development).")
 	noOnlineTiles := flag.Bool("no-online-tiles", false, "disable online tile proxy fallback. With -maptiles-dir empty, this disables tile serving entirely.")
+	tilesetOsmFile := flag.String("tileset-osm-file", "", "PMTiles file basename for the 'osm' tileset (e.g. 'sp-state-osm'). Empty = uses 'osm.pmtiles' if present.")
+	tilesetSatFile := flag.String("tileset-sat-file", "", "PMTiles file basename for the 'satellite' tileset (e.g. 'campinas-sat'). Empty = uses 'satellite.pmtiles' if present.")
 	modelImage := flag.String("model-image", "", "path to model bitmap file (BMP/PNG/JPG); shown in Model tab if set")
 	panelFile := flag.String("panel-file", "", "GCS panel state YAML; live-reloaded on edit")
 	panelStdin := flag.Bool("panel-stdin", false, "read panel commands from stdin (mutually exclusive with -panel-file)")
@@ -424,7 +426,6 @@ func main() {
 	} else {
 		log.Printf("narrate: periodic narration disabled (no fields configured); GUI/API can enable at runtime")
 	}
-
 	// Telemetry sampler: poll the telemetry snapshot at 5Hz and forward
 	// to the recorder. The recorder throttles internally to avoid
 	// duplicate rows when nothing has changed; this goroutine just has
@@ -683,6 +684,12 @@ func main() {
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
 		apiSrv.SetOnlineTileFallback(!*noOnlineTiles)
+		if *tilesetOsmFile != "" {
+			apiSrv.SetTilesetFile("osm", *tilesetOsmFile)
+		}
+		if *tilesetSatFile != "" {
+			apiSrv.SetTilesetFile("satellite", *tilesetSatFile)
+		}
 		go func() {
 			if err := apiSrv.Run(ctx); err != nil {
 				log.Printf("api: %v", err)

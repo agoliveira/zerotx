@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agoliveira/zerotx/pi/daemon/web"
+	"github.com/protomaps/go-pmtiles/pmtiles"
 )
 
 // Server hosts the HTTP + WebSocket API.
@@ -21,10 +22,18 @@ type Server struct {
 	webDir    string // if non-empty, serve from filesystem instead of embed
 
 	// Map tile config. mapTilesDir is the path to PMTiles files for
-	// offline serving (stage 2). onlineFallback controls whether to
-	// proxy to public tile servers when local tiles aren't available.
+	// offline serving. onlineFallback controls whether to proxy to
+	// public tile servers when local tiles aren't available.
+	// pmSrv is the embedded protomaps PMTiles HTTP server, lazily
+	// initialized on first tile request when mapTilesDir is set.
+	// tilesetFiles maps URL tileset names ("osm", "satellite") to
+	// PMTiles file basenames on disk ("sp-state-osm", "campinas-sat").
 	mapTilesDir    string
 	onlineFallback bool
+	pmSrv          *pmtiles.Server
+	pmSrvOnce      sync.Once
+	tilesetFiles   map[string]string
+	tilesetFilesMu sync.RWMutex
 
 	mu        sync.RWMutex
 	httpSrv   *http.Server
@@ -85,6 +94,23 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Map tile serving. /tiles/{tileset}/{z}/{x}/{y}.{ext}
 	mux.HandleFunc("/tiles/", s.handleTile)
+
+	// Static map assets served from mapTilesDir for fully-offline operation.
+	// Layout under -maptiles-dir:
+	//   styles/{name}.json             -> /styles/{name}.json (with URL rewrite)
+	//   fonts/{fontstack}/{range}.pbf  -> /fonts/{fontstack}/{range}.pbf
+	//   sprites/sprite.{png,json}      -> /sprites/sprite.{png,json}
+	//
+	// /styles/ uses a custom handler that rewrites relative URLs in the
+	// style JSON to absolute URLs at request time. This is required
+	// because MapLibre's vector source fetcher rejects origin-relative
+	// paths ("/tiles/...") with "Failed to parse URL".
+	if s.mapTilesDir != "" {
+		mapAssets := http.FileServer(http.Dir(s.mapTilesDir))
+		mux.HandleFunc("/styles/", s.handleMapStyle)
+		mux.Handle("/fonts/", mapAssets)
+		mux.Handle("/sprites/", mapAssets)
+	}
 
 	// Static GUI at /. The embed.FS path is rooted; for dev iteration,
 	// SetWebDir bypasses it.
