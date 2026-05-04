@@ -16,6 +16,7 @@
 package api
 
 import (
+	"context"
 	"time"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
@@ -368,6 +369,20 @@ type Providers struct {
 	// until a consumer (typically the GUI) says the checklist is
 	// satisfied or the operator has disabled the checklist policy.
 	ArmChecklist func(ok bool)
+
+	// WeatherCurrent returns the cached weather for the observer's
+	// current location, plus a label describing where the
+	// coordinates came from ("gps", "home", "site"). ok=false means
+	// either no resolved coordinates or no cached data yet. The
+	// returned value is opaque interface{} so the api package
+	// doesn't import internal/weather.
+	WeatherCurrent func() (interface{}, string, bool)
+
+	// WeatherFetch returns the weather for the explicitly-given
+	// coordinates, fetching fresh if the cache is missing or stale.
+	// Errors propagate to the API as 503. May be nil; the handler
+	// returns 503 without details.
+	WeatherFetch func(ctx context.Context, latDeg, lonDeg float64) (interface{}, error)
 
 	Version string
 	Uptime  func() time.Duration
