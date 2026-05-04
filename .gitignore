@@ -54,3 +54,7 @@ HANDOVER.md
 *.orig
 *.rej
 maptiles/
+
+# Compiled binaries (built locally, not version-controlled)
+/zerotx
+/tools/maps/sat-download/sat-download
