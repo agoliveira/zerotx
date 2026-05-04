@@ -6,8 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agoliveira/zerotx/pi/daemon/internal/arm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/astro"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/weather"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/wxalert"
 )
@@ -15,11 +17,31 @@ import (
 // wxAlertHolder owns the alert tracker and exposes the active alert
 // list to the API. Single goroutine writes via runWxAlerts; readers
 // take the snapshot pointer atomically (a cheap mutex is fine).
+//
+// The holder also maintains the LED-panel projection: which alert,
+// if any, is currently displayed as a DISP ALARM. The LED projection
+// is governed by these rules:
+//
+//   - Skipped entirely when armed. Flight data must remain visible
+//     on the panel during flight; TTS still announces. Operator sees
+//     in-flight alerts on HUD/Map pages, not on LED.
+//
+//   - Highest-severity active alert wins. Ties broken alphabetically
+//     by rule name.
+//
+//   - The daemon owns the DISP ALARM channel for now (no other code
+//     paths fire alarms). When that changes, this needs a proper
+//     priority abstraction.
 type wxAlertHolder struct {
 	mu      sync.RWMutex
 	tracker *wxalert.Tracker
 	limits  wxalert.Limits
 	active  []wxalert.Alert
+
+	// ledShown is the rule name of the alert currently displayed on
+	// the LED panel via DISP ALARM, or "" if no alarm is shown.
+	// Driven only from runWxAlerts.
+	ledShown string
 }
 
 func newWxAlertHolder(lim wxalert.Limits) *wxAlertHolder {
@@ -44,13 +66,14 @@ func (h *wxAlertHolder) limitsCopy() wxalert.Limits {
 }
 
 // runWxAlerts polls the weather cache once a minute, evaluates rules,
-// updates the hysteresis tracker, fires TTS on transitions, and
-// refreshes the holder's published active-alert list.
+// updates the hysteresis tracker, fires TTS on transitions, refreshes
+// the holder's published active-alert list, and projects the
+// highest-severity alert to the LED panel (when not armed).
 //
 // Cadence rationale: weather data refreshes every ~10 minutes, but
 // we evaluate every minute so the hysteresis windows have minute-level
 // granularity (5 min above to fire, 10 min below to clear).
-func runWxAlerts(ctx context.Context, holder *wxAlertHolder, svc *weather.Service, player audio.Player) {
+func runWxAlerts(ctx context.Context, holder *wxAlertHolder, svc *weather.Service, player audio.Player, dispMgr *display.Manager, armMachine *arm.Machine) {
 	if holder == nil || svc == nil {
 		return
 	}
@@ -59,19 +82,19 @@ func runWxAlerts(ctx context.Context, holder *wxAlertHolder, svc *weather.Servic
 
 	// Run once immediately so first activation has a chance even on
 	// fast weather refresh.
-	evaluateOnce(holder, svc, player, time.Now())
+	evaluateOnce(holder, svc, player, dispMgr, armMachine, time.Now())
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			evaluateOnce(holder, svc, player, now)
+			evaluateOnce(holder, svc, player, dispMgr, armMachine, now)
 		}
 	}
 }
 
-func evaluateOnce(holder *wxAlertHolder, svc *weather.Service, player audio.Player, now time.Time) {
+func evaluateOnce(holder *wxAlertHolder, svc *weather.Service, player audio.Player, dispMgr *display.Manager, armMachine *arm.Machine, now time.Time) {
 	w, lat, lon, _, ok := svc.GetCurrent()
 	if !ok {
 		return // no weather data yet; can't evaluate
@@ -88,6 +111,106 @@ func evaluateOnce(holder *wxAlertHolder, svc *weather.Service, player audio.Play
 	for _, tr := range transitions {
 		announceTransition(tr, player)
 	}
+
+	// LED projection: pick the highest-severity active alert (ties
+	// broken alphabetically), unless armed. Compare to the last-shown
+	// rule name; only emit DISP ALARM/CLEAR-ALARM on transitions.
+	updateLEDProjection(holder, dispMgr, armMachine)
+}
+
+// updateLEDProjection compares the desired LED state against the
+// last-emitted state and issues DISP ALARM / DISP CLEAR-ALARM to
+// produce the desired state. Skipped when armed (FLIGHT mode keeps
+// rendering flight data; TTS already announces in-flight alerts).
+func updateLEDProjection(holder *wxAlertHolder, dispMgr *display.Manager, armMachine *arm.Machine) {
+	if dispMgr == nil {
+		return
+	}
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+
+	armed := armMachine != nil && armMachine.State() == arm.StateArmed
+	desired := pickHighestSeverity(holder.active)
+
+	switch {
+	case armed:
+		// In flight: never preempt the panel. If we previously had
+		// an alarm shown (e.g. operator armed during pre-flight with
+		// a wind alert active), clear it now so flight data is
+		// visible. The HUD/Map chips still show the alert visually.
+		if holder.ledShown != "" {
+			dispMgr.ClearAlarm()
+			log.Printf("wxalert: LED cleared (armed; was showing %q)", holder.ledShown)
+			holder.ledShown = ""
+		}
+	case desired == nil:
+		if holder.ledShown != "" {
+			dispMgr.ClearAlarm()
+			log.Printf("wxalert: LED cleared (no active alerts; was showing %q)", holder.ledShown)
+			holder.ledShown = ""
+		}
+	case holder.ledShown != desired.Name:
+		level := alarmLevelFromSeverity(desired.Severity)
+		text := ledBannerText(*desired)
+		dispMgr.FireAlarm(level, text)
+		log.Printf("wxalert: LED showing %q (%s) text=%q",
+			desired.Name, level, text)
+		holder.ledShown = desired.Name
+	}
+}
+
+// pickHighestSeverity returns the alert with the highest severity from
+// the slice. Ties broken alphabetically by rule name. Returns nil for
+// empty input. (ActiveAlerts is already sorted by name, so we just
+// pick the highest severity and the alphabetical-tie-break is implicit.)
+func pickHighestSeverity(alerts []wxalert.Alert) *wxalert.Alert {
+	if len(alerts) == 0 {
+		return nil
+	}
+	best := &alerts[0]
+	for i := range alerts[1:] {
+		a := &alerts[1+i]
+		if a.Severity > best.Severity {
+			best = a
+		}
+	}
+	return best
+}
+
+// alarmLevelFromSeverity maps wxalert severities to the display
+// package's alarm levels. The display level governs banner color.
+func alarmLevelFromSeverity(s wxalert.Severity) display.AlarmLevel {
+	switch s {
+	case wxalert.SeverityCritical:
+		return display.AlarmCritical
+	case wxalert.SeverityWarning:
+		return display.AlarmWarning
+	}
+	return display.AlarmNotice
+}
+
+// ledBannerText produces the text shown on the LED panel for an
+// active alert. Panel is 128x32 - room for ~16 chars at 16px or so.
+// We send a short label per rule and let the display firmware deal
+// with rendering.
+func ledBannerText(a wxalert.Alert) string {
+	switch a.Name {
+	case "wind_gust_high":
+		return "WX: GUSTS HIGH"
+	case "wind_speed_high":
+		return "WX: WIND HIGH"
+	case "wind_aloft_shear":
+		return "WX: SHEAR ALOFT"
+	case "precip_imminent":
+		return "WX: RAIN SOON"
+	case "low_visibility":
+		return "WX: LOW VIS"
+	case "near_sunset":
+		return "WX: NEAR SUNSET"
+	case "golden_hour_active":
+		return "WX: SUN LOW"
+	}
+	return "WX: " + a.Name
 }
 
 // buildConditions packs the data wxalert.Conditions needs from a

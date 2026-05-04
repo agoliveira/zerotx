@@ -47,7 +47,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.28.0-wx-alerts"
+const version = "0.29.0-wx-led-map"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -752,7 +752,7 @@ func main() {
 			ShearSpeedRatio:      *wxShearSpeedRatio,
 			GoldenHourElevDeg:    *wxGoldenElevDeg,
 		})
-		go runWxAlerts(ctx, wxAlerts, weatherSvc, player)
+		go runWxAlerts(ctx, wxAlerts, weatherSvc, player, dispMgr, armMachine)
 		log.Printf("wxalert: started (gust>%.0f wind>%.0f precip>%.0f%% sunset<%dm shear>%.0f° ratio>%.1fx)",
 			*wxMaxGustKmh, *wxMaxWindKmh, *wxPrecipProbPct,
 			*wxNearSunsetMin, *wxShearDirDeg, *wxShearSpeedRatio)

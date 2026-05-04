@@ -778,50 +778,62 @@
     .wx-data {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: 10px;
       height: 100%;
       min-height: 0;
     }
     .wx-data[hidden] { display: none !important; }
 
-    /* ALERTS section sits above the two-column grid when active.
-       Hidden when no alerts. */
+    /* ALERTS section is ALWAYS visible above the two-column grid.
+       Fixed height so the layout doesn't shift between alert and
+       no-alert states. Holds two compact rows comfortably; more
+       overflow into a small scroll area within. Empty state shows
+       a muted "NO ACTIVE ALERTS" placeholder. */
     .wx-alerts {
       flex: 0 0 auto;
-      margin-bottom: 12px;
-      border: 1px solid var(--warn);
-      background: rgba(255, 215, 0, 0.08);
-      padding: 8px 12px;
+      height: 36px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border-soft);
+      background: rgba(20, 12, 4, 0.4);
+      padding: 4px 10px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 2px;
+      overflow-y: auto;
     }
-    .wx-alerts[hidden] { display: none !important; }
-    .wx-alerts.notice-only {
+    .wx-alerts.severity-warning {
+      border-color: var(--warn);
+      background: rgba(255, 215, 0, 0.08);
+    }
+    .wx-alerts.severity-notice {
       border-color: var(--info);
       background: rgba(88, 166, 255, 0.08);
     }
-    .wx-alerts-title {
+    .wx-alerts-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
       font-family: 'Orbitron', sans-serif;
-      font-size: 0.7rem;
+      font-size: 0.65rem;
       letter-spacing: 0.2em;
-      color: var(--warn);
-      margin: 0 0 4px 0;
+      color: var(--text-muted);
     }
-    .wx-alerts.notice-only .wx-alerts-title { color: var(--info); }
     .wx-alert-row {
       display: flex;
       align-items: baseline;
-      gap: 10px;
-      font-size: 0.85rem;
+      gap: 8px;
+      font-size: 0.8rem;
+      line-height: 1.3;
     }
     .wx-alert-sev {
       font-family: 'Orbitron', sans-serif;
-      font-size: 0.65rem;
+      font-size: 0.6rem;
+      font-weight: 700;
       letter-spacing: 0.1em;
       color: var(--text-muted);
       text-transform: uppercase;
-      min-width: 60px;
+      min-width: 56px;
     }
     .wx-alert-sev.warning { color: var(--warn); }
     .wx-alert-sev.notice  { color: var(--info); }
@@ -831,17 +843,17 @@
     .wx-col {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
       min-height: 0;
       overflow: hidden;
     }
     .wx-card {
       background: var(--bg-elev);
       border: 1px solid var(--border-soft);
-      padding: 10px 12px;
+      padding: 8px 12px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       min-height: 0;
     }
     .wx-card-title {
@@ -895,13 +907,13 @@
     .wx-wind-surface { flex: 0 0 auto; }
     .wx-wind-main {
       display: grid;
-      grid-template-columns: 100px 1fr;
-      gap: 16px;
+      grid-template-columns: 80px 1fr;
+      gap: 14px;
       align-items: center;
     }
     .wx-wind-rose {
-      width: 100px;
-      height: 100px;
+      width: 80px;
+      height: 80px;
     }
     .wx-wind-readout {
       display: flex;
@@ -1040,7 +1052,7 @@
     <span class="label">UTC</span> <span class="val" id="utc-clock">--:--:--</span>
   </div>
   <div class="version-section">
-    <span id="frontend-ver">hud-v12</span> · <span id="daemon-ver">…</span>
+    <span id="frontend-ver">hud-v14</span> · <span id="daemon-ver">…</span>
   </div>
   <button class="wx-trigger" id="wx-trigger" type="button" aria-label="Open weather briefing">WX<span class="wx-trigger-badge" id="wx-trigger-badge"></span></button>
 </div>
@@ -1281,9 +1293,10 @@
         <div class="wx-loading-heading">FETCHING …</div>
       </div>
 
-      <!-- Active alerts (only visible when alerts exist). -->
-      <div class="wx-alerts" id="wx-alerts" hidden>
-        <h3 class="wx-alerts-title" id="wx-alerts-title">ALERTS</h3>
+      <!-- Active alerts. Always rendered (fixed height) so the
+           layout doesn't shift between alert / no-alert states.
+           Empty state shows a muted "NO ACTIVE ALERTS" placeholder. -->
+      <div class="wx-alerts" id="wx-alerts">
         <div id="wx-alerts-list">
           <!-- rows injected by JS -->
         </div>
@@ -2180,19 +2193,19 @@ const WX = (() => {
     }
   }
 
-  // Renders the active-alerts block inside the modal. Empty list
-  // hides the block entirely.
+  // Renders the active-alerts block inside the modal. Block is
+  // always visible (fixed-height layout). Empty list shows a muted
+  // placeholder so the operator sees "I checked, nothing's wrong".
   function renderAlerts(alerts) {
     const block = els.alertsBlock();
     const list = els.alertsList();
+    block.classList.remove('severity-warning', 'severity-notice');
     if (!alerts.length) {
-      block.hidden = true;
-      list.innerHTML = '';
+      list.innerHTML = '<div class="wx-alerts-empty">NO ACTIVE ALERTS</div>';
       return;
     }
     const hasWarning = alerts.some(a => a.severity === 'warning' || a.severity === 'critical');
-    block.classList.toggle('notice-only', !hasWarning);
-    block.hidden = false;
+    block.classList.add(hasWarning ? 'severity-warning' : 'severity-notice');
     list.innerHTML = alerts.map(a => `
       <div class="wx-alert-row">
         <span class="wx-alert-sev ${a.severity}">${a.severity.toUpperCase()}</span>

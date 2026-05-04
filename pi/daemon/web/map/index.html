@@ -97,6 +97,44 @@
     .status-pill.armed     { color: var(--good); border-color: var(--good); }
     .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(255, 215, 0, 0.12); }
     .status-pill.failsafe  { color: var(--bad);  border-color: var(--bad);  background: rgba(255, 64, 48, 0.18); animation: pulse 1s infinite; }
+
+    /* ----- WX chip (top-right, below tileset toggle) ----- */
+    /* Passive alert indicator; non-interactive. The full modal lives
+       on the HUD page, so this chip just signals presence/severity.
+       Hidden when no alerts are active. */
+    .wx-chip {
+      position: absolute; top: 60px; right: 12px; z-index: 10;
+      display: none;
+      align-items: baseline;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--info);
+      background: rgba(88, 166, 255, 0.10);
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      color: var(--info);
+      pointer-events: none;
+    }
+    .wx-chip[data-visible="1"] { display: inline-flex; }
+    .wx-chip.warning {
+      border-color: var(--warn);
+      background: rgba(255, 215, 0, 0.12);
+      color: var(--warn);
+      animation: wx-chip-pulse 1.5s infinite;
+    }
+    .wx-chip-label { font-weight: 700; }
+    .wx-chip-count {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      color: var(--data-bright);
+    }
+    .wx-chip.warning .wx-chip-count { color: var(--warn); }
+    @keyframes wx-chip-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.4); }
+      50%      { box-shadow: 0 0 0 4px rgba(255, 215, 0, 0); }
+    }
     @keyframes pulse {
       0%, 100% { opacity: 1; } 50% { opacity: 0.5; }
     }
@@ -247,6 +285,13 @@
   <div class="tileset-toggle panel">
     <button id="btn-sat" class="active">SAT</button>
     <button id="btn-osm">OSM</button>
+  </div>
+
+  <!-- WX chip: passive alert indicator. Hidden when no alerts.
+       Non-interactive (modal lives on HUD page). -->
+  <div class="wx-chip panel" id="wx-chip" aria-live="polite">
+    <span class="wx-chip-label" id="wx-chip-label">WX</span>
+    <span class="wx-chip-count" id="wx-chip-count">—</span>
   </div>
 
   <div class="status-pill panel disarmed" id="status-pill">DISARMED</div>
@@ -1311,6 +1356,58 @@
       );
     });
   }
+
+  // WX chip: passive alert indicator. Polls /api/v1/weather every 60s
+  // and updates the chip's visibility, color, and count. Pre-flight
+  // and in-flight both render the same way; the LED panel is the one
+  // that distinguishes (per daemon-side projection logic).
+  function updateWxChip(alerts) {
+    const chip = document.getElementById('wx-chip');
+    const count = document.getElementById('wx-chip-count');
+    const label = document.getElementById('wx-chip-label');
+    if (!alerts || !alerts.length) {
+      chip.removeAttribute('data-visible');
+      chip.classList.remove('warning');
+      return;
+    }
+    const hasWarning = alerts.some(a => a.severity === 'warning' || a.severity === 'critical');
+    chip.classList.toggle('warning', hasWarning);
+    chip.setAttribute('data-visible', '1');
+    count.textContent = String(alerts.length);
+    // Slot the rule name of the highest-severity alert into the
+    // label so the chip is informative without a click.
+    const sevOrder = {critical: 3, warning: 2, notice: 1};
+    const top = [...alerts].sort((a, b) => (sevOrder[b.severity] || 0) - (sevOrder[a.severity] || 0))[0];
+    const friendly = ({
+      'wind_gust_high': 'GUSTS',
+      'wind_speed_high': 'WIND',
+      'wind_aloft_shear': 'SHEAR',
+      'precip_imminent': 'RAIN',
+      'low_visibility': 'LOW VIS',
+      'near_sunset': 'SUNSET',
+      'golden_hour_active': 'SUN LOW',
+    })[top.name] || top.name.toUpperCase();
+    label.textContent = 'WX · ' + friendly;
+  }
+
+  async function pollWxChip() {
+    try {
+      const res = await fetch('/api/v1/weather');
+      if (!res.ok) {
+        updateWxChip([]);
+        return;
+      }
+      const body = await res.json();
+      updateWxChip(body.alerts || []);
+    } catch (e) {
+      updateWxChip([]);
+    }
+  }
+
+  // First poll after 5s (daemon needs time to fetch + evaluate).
+  // Then every 60s, matching the HUD page.
+  setTimeout(pollWxChip, 5000);
+  setInterval(pollWxChip, 60000);
 
   init();
   </script>
