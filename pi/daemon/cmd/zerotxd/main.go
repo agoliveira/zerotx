@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -40,11 +41,12 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/weather"
 
 	"go.bug.st/serial"
 )
 
-const version = "0.24.0-hud-revamp"
+const version = "0.25.0-weather"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -90,6 +92,10 @@ func main() {
 	mwpTeeAddr := flag.String("mwp-tee-addr", "127.0.0.1:5761", "TCP listen addr for CRSF telemetry tee to mwp; empty disables")
 	vfdPort := flag.String("vfd-port", "", "VFD diagnostic display: serial path (e.g. /dev/ttyACM2), \"log\" to scaffold via daemon log, or empty to disable")
 	geoDB := flag.String("geo-db", "", "Offline place-name database for post-flight narration (built by tools/build-geo.sh). Empty disables location enrichment.")
+	weatherCacheDir := flag.String("weather-cache-dir", os.ExpandEnv("$HOME/zerotx/cache/weather"), "directory for cached weather JSON. Empty disables persistence (cache held in memory only).")
+	siteLat := flag.Float64("site-lat", 0, "configured flight site latitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
+	siteLon := flag.Float64("site-lon", 0, "configured flight site longitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
+	noWeather := flag.Bool("no-weather", false, "disable weather subsystem entirely (no fetches, no API)")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -677,9 +683,54 @@ func main() {
 		go vfdEvt.Run(ctx)
 	}
 
+	// Construct the weather service if enabled. Resolver tier today
+	// is "configured site only" via -site-lat / -site-lon. GPS and
+	// home-position fallbacks slot in later when the pre-flight gate
+	// work needs them.
+	var weatherSvc *weather.Service
+	if !*noWeather {
+		cache, err := weather.NewCache(*weatherCacheDir)
+		if err != nil {
+			log.Printf("weather: cache init failed (%v); disabling", err)
+		} else {
+			lat := *siteLat
+			lon := *siteLon
+			resolver := func() (float64, float64, string, bool) {
+				if lat != 0 || lon != 0 {
+					return lat, lon, "site", true
+				}
+				return 0, 0, "", false
+			}
+			src := weather.NewOpenMeteoSource(weather.OpenMeteoConfig{
+				UserAgent: "zerotx/" + version,
+			})
+			svc, err := weather.New(weather.Options{
+				Source:   src,
+				Cache:    cache,
+				Resolver: resolver,
+			})
+			if err != nil {
+				log.Printf("weather: service init failed (%v); disabling", err)
+			} else {
+				weatherSvc = svc
+				go func() {
+					if err := svc.Run(ctx); err != nil {
+						log.Printf("weather: %v", err)
+					}
+				}()
+				if lat != 0 || lon != 0 {
+					log.Printf("weather: started, configured site lat=%.4f lon=%.4f cache=%s",
+						lat, lon, *weatherCacheDir)
+				} else {
+					log.Printf("weather: started but no site coordinates configured (-site-lat/-site-lon); fetches will be skipped until coordinates are available")
+				}
+			}
+		}
+	}
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -991,6 +1042,7 @@ func buildAPIProviders(
 	startedAt time.Time,
 	dispMgr *display.Manager,
 	armMachine *arm.Machine,
+	weatherSvc *weather.Service,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1142,6 +1194,22 @@ func buildAPIProviders(
 		},
 		ArmConfirm:   armMachine.Confirm,
 		ArmChecklist: armMachine.ChecklistOkChanged,
+		WeatherCurrent: func() (interface{}, string, bool) {
+			if weatherSvc == nil {
+				return nil, "", false
+			}
+			w, src, ok := weatherSvc.GetCurrent()
+			if !ok {
+				return nil, src, false
+			}
+			return w, src, true
+		},
+		WeatherFetch: func(ctx context.Context, lat, lon float64) (interface{}, error) {
+			if weatherSvc == nil {
+				return nil, errors.New("weather not configured")
+			}
+			return weatherSvc.Get(ctx, lat, lon)
+		},
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{
 				Threshold:    player.Threshold().String(),
