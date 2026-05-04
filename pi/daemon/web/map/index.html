@@ -6,24 +6,53 @@
   <title>ZeroTX Map</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
   <style>
+    /* Self-hosted fonts shared with the HUD page (served at /hud/fonts/). */
+    @font-face {
+      font-family: 'Orbitron';
+      src: url('/hud/fonts/Orbitron-VariableFont_wght.ttf') format('truetype-variations'),
+           url('/hud/fonts/Orbitron-VariableFont_wght.ttf') format('truetype');
+      font-weight: 400 900;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'DSEG14 Classic';
+      src: url('/hud/fonts/DSEG14Classic-Regular.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'DSEG14 Classic';
+      src: url('/hud/fonts/DSEG14Classic-Bold.ttf') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+
     :root {
-      --bg-base:    #0a0e14;
-      --bg-panel:   rgba(10, 14, 20, 0.85);
-      --bg-panel-strong: rgba(10, 14, 20, 0.95);
-      --border:     #30363d;
-      --text-pri:   #c9d1d9;
-      --text-sec:   #8b949e;
-      --text-muted: #6e7681;
-      --good:       #3fb950;
-      --warn:       #d29922;
-      --bad:        #f85149;
-      --info:       #58a6ff;
+      --bg-base:        #050201;
+      --bg-panel:       rgba(8, 5, 2, 0.92);
+      --bg-panel-strong: rgba(8, 5, 2, 0.96);
+      --border:         #6b4a18;
+      --border-soft:    #3a2a10;
+      --text-pri:       #ffc858;
+      --text-sec:       #d49a4c;
+      --text-muted:     #a87234;
+      --good:           #5be65b;
+      --warn:           #ffd700;
+      --bad:            #ff4030;
+      --info:           #58a6ff;
+      --amber-bright:   #ffe085;
+      --data-bright:    #a8e0ff;
+      --vv-color:       #5be8b8;
+      --mono: 'DSEG14 Classic', ui-monospace, "SF Mono", Menlo, monospace;
     }
 
     html, body {
       margin: 0; padding: 0; width: 100vw; height: 100vh;
       background: var(--bg-base); color: var(--text-pri);
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: 'Orbitron', system-ui, -apple-system, sans-serif;
       overflow: hidden;
     }
     #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
@@ -49,8 +78,8 @@
       letter-spacing: 0.05em; border-radius: 5px;
       cursor: pointer; transition: background 0.15s, color 0.15s;
     }
-    .tileset-toggle button:hover { background: #21262d; color: var(--text-pri); }
-    .tileset-toggle button.active { background: #1f6feb; color: #fff; }
+    .tileset-toggle button:hover { background: #1a1006; color: var(--amber-bright); }
+    .tileset-toggle button.active { background: #6b4a18; color: var(--amber-bright); }
 
     /* ----- Top-center: status pill ----- */
     .status-pill {
@@ -66,8 +95,8 @@
     .status-pill.disarmed  { color: var(--text-sec); border-color: var(--border); }
     .status-pill.arming    { color: var(--warn); border-color: var(--warn); }
     .status-pill.armed     { color: var(--good); border-color: var(--good); }
-    .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(210, 153, 34, 0.1); }
-    .status-pill.failsafe  { color: var(--bad);  border-color: var(--bad);  background: rgba(248, 81, 73, 0.15); animation: pulse 1s infinite; }
+    .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(255, 215, 0, 0.12); }
+    .status-pill.failsafe  { color: var(--bad);  border-color: var(--bad);  background: rgba(255, 64, 48, 0.18); animation: pulse 1s infinite; }
     @keyframes pulse {
       0%, 100% { opacity: 1; } 50% { opacity: 0.5; }
     }
@@ -86,57 +115,76 @@
     }
     .compass-row {
       display: flex; justify-content: space-between;
-      color: var(--text-sec);
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      color: var(--text-muted);
+      font-family: var(--mono);
+      font-size: 0.78rem;
     }
-    .compass-row .val { color: var(--text-pri); font-weight: 600; }
+    .compass-row .val { color: var(--data-bright); font-weight: 400; }
 
     /* ----- Right side, below tileset: map controls ----- */
     .controls-panel {
       position: absolute; top: 60px; right: 12px; z-index: 10;
-      display: flex; flex-direction: column; gap: 6px;
-      padding: 8px;
+      display: flex; flex-direction: column; gap: 5px;
+      padding: 8px 10px;
+      min-width: 150px;
+    }
+    .panel-header {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding-bottom: 4px;
+      margin-bottom: 2px;
+      border-bottom: 1px solid var(--border-soft);
     }
     .ctrl-row {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 10px;
       font-size: 0.75rem; color: var(--text-sec);
     }
     .ctrl-row label {
       flex: 1;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
+      font-weight: 500;
     }
+    /* LED-indicator style toggle: rectangular, sharp corners, amber LED
+       slides + glows when active. Replaces the iOS-pill aesthetic with
+       an instrument-panel feel. */
     .ctrl-toggle {
-      width: 36px; height: 20px;
-      background: #21262d;
-      border-radius: 999px;
+      width: 32px; height: 16px;
+      background: rgba(8, 5, 2, 0.7);
       border: 1px solid var(--border);
+      border-radius: 2px;
       position: relative;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: border-color 0.15s, background 0.15s;
     }
     .ctrl-toggle::after {
       content: '';
       position: absolute;
-      width: 14px; height: 14px;
+      width: 10px; height: 10px;
       top: 2px; left: 2px;
-      background: var(--text-sec);
-      border-radius: 50%;
-      transition: left 0.15s, background 0.15s;
+      background: var(--text-muted);
+      border-radius: 1px;
+      transition: left 0.15s, background 0.15s, box-shadow 0.15s;
     }
     .ctrl-toggle.on {
-      background: rgba(31, 111, 235, 0.4);
+      background: rgba(255, 200, 88, 0.12);
+      border-color: var(--text-sec);
     }
     .ctrl-toggle.on::after {
       left: 18px;
-      background: var(--info);
+      background: var(--amber-bright);
+      box-shadow: 0 0 4px rgba(255, 200, 88, 0.85);
     }
 
     /* ----- Right side, below controls: layer toggles (osm tileset only) ----- */
     .layer-toggles-panel {
-      position: absolute; top: 165px; right: 12px; z-index: 10;
-      display: flex; flex-direction: column; gap: 6px;
-      padding: 8px;
-      min-width: 130px;
+      position: absolute; top: 195px; right: 12px; z-index: 10;
+      display: flex; flex-direction: column; gap: 5px;
+      padding: 8px 10px;
+      min-width: 150px;
     }
 
     /* ----- Bottom-left: scale bar ----- */
@@ -144,7 +192,7 @@
       position: absolute; bottom: 30px; left: 12px; z-index: 10;
       padding: 4px 8px;
       font-size: 0.7rem;
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-family: var(--mono);
       color: var(--text-pri);
     }
     .scale-bar-line {
@@ -162,7 +210,7 @@
       z-index: 10;
       padding: 3px 10px;
       font-size: 0.7rem;
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-family: var(--mono);
       color: var(--text-sec);
     }
 
@@ -173,7 +221,7 @@
       padding: 3px 8px;
       border-radius: 4px;
       letter-spacing: 0.05em;
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-family: var(--mono);
     }
 
     /* ----- MapLibre control restyling for the dark theme ----- */
@@ -187,9 +235,9 @@
     .maplibregl-ctrl-group button {
       background-color: transparent !important;
     }
-    .maplibregl-ctrl-group button:hover { background-color: #21262d !important; }
+    .maplibregl-ctrl-group button:hover { background-color: #1a1006 !important; }
     .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
-      filter: invert(0.85);
+      filter: invert(0.85) sepia(0.5) saturate(2) hue-rotate(-10deg);
     }
   </style>
 </head>
@@ -206,24 +254,52 @@
   <div class="compass-panel panel">
     <div class="compass-svg-wrap" id="compass-wrap">
       <svg width="100" height="100" viewBox="0 0 100 100" id="compass-svg">
-        <!-- Outer ring + cardinal labels (rotated when map rotates) -->
+        <!-- Outer ring + cardinal labels + tick marks (rotated as a unit) -->
         <g id="compass-ring">
-          <circle cx="50" cy="50" r="44" fill="none" stroke="var(--border)" stroke-width="1"/>
-          <text x="50" y="13" text-anchor="middle" fill="var(--text-pri)" font-size="9" font-weight="600">N</text>
-          <text x="50" y="93" text-anchor="middle" fill="var(--text-sec)" font-size="9">S</text>
-          <text x="91" y="53" text-anchor="middle" fill="var(--text-sec)" font-size="9">E</text>
-          <text x="9"  y="53" text-anchor="middle" fill="var(--text-sec)" font-size="9">W</text>
+          <!-- Outer ring -->
+          <circle cx="50" cy="50" r="44" fill="none" stroke="var(--border)" stroke-width="0.8"/>
+          <!-- Inner faint ring for depth -->
+          <circle cx="50" cy="50" r="36" fill="none" stroke="var(--border-soft)" stroke-width="0.5" stroke-dasharray="1 1.5"/>
+          <!-- Major tick marks (cardinal): longer/thicker -->
+          <g stroke="var(--text-pri)" stroke-width="1" stroke-linecap="round">
+            <line x1="50" y1="6"  x2="50" y2="12"/>
+            <line x1="50" y1="88" x2="50" y2="94" transform="rotate(180 50 50)"/>
+            <line x1="50" y1="6"  x2="50" y2="12" transform="rotate(90 50 50)"/>
+            <line x1="50" y1="6"  x2="50" y2="12" transform="rotate(270 50 50)"/>
+          </g>
+          <!-- Minor tick marks at 30, 60, 120, 150, 210, 240, 300, 330 -->
+          <g stroke="var(--text-muted)" stroke-width="0.6" stroke-linecap="round" opacity="0.7">
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(30 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(60 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(120 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(150 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(210 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(240 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(300 50 50)"/>
+            <line x1="50" y1="7"  x2="50" y2="11" transform="rotate(330 50 50)"/>
+          </g>
+          <!-- Cardinal labels (Orbitron, N brighter to draw the eye) -->
+          <text x="50" y="22" text-anchor="middle" fill="var(--amber-bright)" font-size="9" font-weight="700" font-family="'Orbitron',sans-serif">N</text>
+          <text x="50" y="86" text-anchor="middle" fill="var(--text-sec)" font-size="7.5" font-weight="500" font-family="'Orbitron',sans-serif">S</text>
+          <text x="84" y="53" text-anchor="middle" fill="var(--text-sec)" font-size="7.5" font-weight="500" font-family="'Orbitron',sans-serif">E</text>
+          <text x="16" y="53" text-anchor="middle" fill="var(--text-sec)" font-size="7.5" font-weight="500" font-family="'Orbitron',sans-serif">W</text>
         </g>
-        <!-- Aircraft heading arrow (green) -->
+        <!-- Aircraft heading: stylized airplane silhouette pointing up.
+             Rotates to indicate aircraft heading. -->
         <g id="compass-hdg" transform="rotate(0 50 50)">
-          <polygon points="50,18 46,30 54,30" fill="var(--good)" />
+          <polygon points="50,16 47,28 53,28" fill="var(--good)"/>
+          <rect x="41" y="24" width="18" height="1.8" fill="var(--good)" rx="0.5"/>
+          <rect x="47.5" y="30" width="5" height="1.6" fill="var(--good)" rx="0.5"/>
         </g>
-        <!-- Bearing-to-home arrow (blue, dashed-style outline) -->
+        <!-- Bearing-to-home: hollow blue arrowhead at outer ring, points toward home. -->
         <g id="compass-home" transform="rotate(0 50 50)">
-          <polygon points="50,22 47,32 53,32" fill="none" stroke="var(--info)" stroke-width="1.5"/>
+          <polygon points="50,8 46,16 54,16" fill="none" stroke="var(--info)" stroke-width="1.4" stroke-linejoin="round"/>
         </g>
-        <!-- Center dot -->
-        <circle cx="50" cy="50" r="2.5" fill="var(--text-pri)" />
+        <!-- Center reticle: small ring with dot, gold (matches HUD aircraft ref) -->
+        <g>
+          <circle cx="50" cy="50" r="2.6" fill="none" stroke="var(--warn)" stroke-width="0.8"/>
+          <circle cx="50" cy="50" r="1" fill="var(--warn)"/>
+        </g>
       </svg>
     </div>
     <div class="compass-row">
@@ -241,6 +317,7 @@
   </div>
 
   <div class="controls-panel panel">
+    <div class="panel-header">DISPLAY</div>
     <div class="ctrl-row">
       <label>Follow aircraft</label>
       <div class="ctrl-toggle" id="toggle-follow"></div>
@@ -256,6 +333,7 @@
   </div>
 
   <div class="layer-toggles-panel panel" id="layer-toggles" style="display: none;">
+    <div class="panel-header">LAYERS</div>
     <div class="ctrl-row">
       <label>Labels</label>
       <div class="ctrl-toggle" id="toggle-labels"></div>
@@ -350,69 +428,73 @@
         }
       },
       layers: [
-        // Background.
+        // Background: warm-black, matches HUD bg-base.
         { id: 'background', type: 'background',
-          paint: { 'background-color': '#ebe3d1' } },
+          paint: { 'background-color': '#2a1f10' } },
 
-        // Landcover (forest/wood).
+        // Landcover (forest/wood). Muted dark sage with amber undertone.
         { id: 'landcover-forest', type: 'fill',
           source: 'openmaptiles', 'source-layer': 'landcover',
           filter: ['match', ['get', 'class'], ['wood', 'forest'], true, false],
           minzoom: 6,
-          paint: { 'fill-color': '#95c078', 'fill-opacity': 0.7 },
+          paint: { 'fill-color': '#2a4418', 'fill-opacity': 0.75 },
           metadata: { 'zerotx:group': 'landcover' } },
 
-        // Park.
+        // Park: slightly brighter sage.
         { id: 'park', type: 'fill',
           source: 'openmaptiles', 'source-layer': 'park',
           minzoom: 10,
-          paint: { 'fill-color': '#b8d878', 'fill-opacity': 0.7 },
+          paint: { 'fill-color': '#3a5824', 'fill-opacity': 0.7 },
           metadata: { 'zerotx:group': 'landcover' } },
 
-        // Water polygon.
+        // Water polygon: dark cool navy. Distinctly cooler than warm land.
         { id: 'water', type: 'fill',
           source: 'openmaptiles', 'source-layer': 'water',
-          paint: { 'fill-color': '#82b4d4' } },
+          paint: { 'fill-color': '#1a3a5e' } },
 
-        // Waterway line.
+        // Waterway line (rivers, streams). Subtle steel-blue.
         { id: 'waterway', type: 'line',
           source: 'openmaptiles', 'source-layer': 'waterway',
           minzoom: 8,
           paint: {
-            'line-color': '#4490c0',
+            'line-color': '#6a98c4',
             'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 1.5, 18, 2.5]
           } },
 
-        // Aeroway lines (runways, taxiways).
+        // Aeroway lines (runways, taxiways). Mint cyan, matches velocity vector
+        // on the HUD. Operationally important for a drone pilot.
         { id: 'aeroway-line', type: 'line',
           source: 'openmaptiles', 'source-layer': 'aeroway',
           filter: ['==', ['geometry-type'], 'LineString'],
           minzoom: 11,
           paint: {
-            'line-color': '#b89060',
-            'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 14, 1.5, 18, 4]
+            'line-color': '#5be8b8',
+            'line-opacity': 0.85,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.6, 14, 1.6, 18, 4]
           },
           metadata: { 'zerotx:group': 'aerodromes' } },
 
-        // Buildings (2D fill, fade in z=13->14 so they don't appear abruptly).
+        // Buildings: warm dark gray, slightly differentiated from base.
         { id: 'building', type: 'fill',
           source: 'openmaptiles', 'source-layer': 'building',
           minzoom: 13,
           paint: {
-            'fill-color': '#d8c89c',
-            'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.7]
+            'fill-color': '#1c1308',
+            'fill-outline-color': '#4a3a18',
+            'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.85]
           },
           metadata: { 'zerotx:group': 'buildings' } },
 
-        // Road casings (drawn first so road fills overlay them; gives
-        // every road a dark outline for legibility against any background).
+        // Road casings: very dark warm-black for outline. Same color across
+        // the hierarchy; widths increase with road class. Drawn first so road
+        // fills overlay them.
         { id: 'road-minor-casing', type: 'line',
           source: 'openmaptiles', 'source-layer': 'transportation',
           filter: ['match', ['get', 'class'], ['minor', 'residential', 'unclassified'], true, false],
           minzoom: 12,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#6a5440',
+            'line-color': '#1a1308',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 12, 1, 15, 2, 18, 4]
           } },
         { id: 'road-secondary-casing', type: 'line',
@@ -421,7 +503,7 @@
           minzoom: 10,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#6a5440',
+            'line-color': '#1a1308',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 10, 1, 14, 2.5, 18, 6]
           } },
         { id: 'road-primary-casing', type: 'line',
@@ -430,7 +512,7 @@
           minzoom: 8,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#6a5440',
+            'line-color': '#1a1308',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 8, 1, 12, 2.5, 18, 8]
           } },
         { id: 'road-motorway-casing', type: 'line',
@@ -439,18 +521,18 @@
           minzoom: 5,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#6a5440',
+            'line-color': '#1a1308',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 5, 1.5, 10, 4, 14, 7, 18, 12]
           } },
 
-        // Road fills (drawn over casings, brightness scales with hierarchy).
+        // Road fills: amber hierarchy from dim (minor) to brightest (motorway).
         { id: 'road-minor', type: 'line',
           source: 'openmaptiles', 'source-layer': 'transportation',
           filter: ['match', ['get', 'class'], ['minor', 'residential', 'unclassified'], true, false],
           minzoom: 12,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#ffffff',
+            'line-color': '#826838',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 12, 0.5, 15, 1, 18, 2.5]
           } },
         { id: 'road-secondary', type: 'line',
@@ -459,7 +541,7 @@
           minzoom: 10,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#fad878',
+            'line-color': '#a87234',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 10, 0.5, 14, 1.5, 18, 4]
           } },
         { id: 'road-primary', type: 'line',
@@ -468,7 +550,7 @@
           minzoom: 8,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#f4b850',
+            'line-color': '#d49a4c',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 8, 0.5, 12, 1.5, 18, 5]
           } },
         { id: 'road-motorway', type: 'line',
@@ -477,11 +559,11 @@
           minzoom: 5,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#d4604a',
+            'line-color': '#ffd070',
             'line-width': ['interpolate', ['exponential', 1.4], ['zoom'], 5, 0.5, 10, 2, 14, 4, 18, 8]
           } },
 
-        // Water labels.
+        // Water labels: light cyan, distinct from amber labels.
         { id: 'water-name', type: 'symbol',
           source: 'openmaptiles', 'source-layer': 'water_name',
           minzoom: 8,
@@ -493,13 +575,13 @@
             'text-padding': 2
           },
           paint: {
-            'text-color': '#2a5878',
-            'text-halo-color': '#ebe3d1',
-            'text-halo-width': 1.2
+            'text-color': '#82d4ee',
+            'text-halo-color': '#150e08',
+            'text-halo-width': 1.5
           },
           metadata: { 'zerotx:group': 'labels' } },
 
-        // Road labels.
+        // Road labels: dim amber, dark halo for legibility against road colors.
         { id: 'road-name', type: 'symbol',
           source: 'openmaptiles', 'source-layer': 'transportation_name',
           filter: ['match', ['get', 'class'], ['motorway','trunk','primary','secondary','tertiary','minor','residential','unclassified'], true, false],
@@ -514,13 +596,13 @@
             'text-padding': 2
           },
           paint: {
-            'text-color': '#2a1808',
-            'text-halo-color': '#ebe3d1',
-            'text-halo-width': 1.5
+            'text-color': '#d49a4c',
+            'text-halo-color': '#150e08',
+            'text-halo-width': 1.6
           },
           metadata: { 'zerotx:group': 'labels' } },
 
-        // Aerodrome labels.
+        // Aerodrome labels: mint cyan, matches aeroway lines.
         { id: 'aerodrome-label', type: 'symbol',
           source: 'openmaptiles', 'source-layer': 'aerodrome_label',
           minzoom: 10,
@@ -533,13 +615,13 @@
             'text-padding': 2
           },
           paint: {
-            'text-color': '#a04010',
-            'text-halo-color': '#ebe3d1',
+            'text-color': '#5be8b8',
+            'text-halo-color': '#150e08',
             'text-halo-width': 1.5
           },
           metadata: { 'zerotx:group': 'aerodromes' } },
 
-        // Place labels: village/hamlet/locality.
+        // Place labels: village/hamlet/locality. Amber.
         { id: 'place-village', type: 'symbol',
           source: 'openmaptiles', 'source-layer': 'place',
           filter: ['match', ['get', 'class'], ['village', 'hamlet', 'suburb', 'neighbourhood', 'locality'], true, false],
@@ -550,13 +632,13 @@
             'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10, 16, 13]
           },
           paint: {
-            'text-color': '#4a3018',
-            'text-halo-color': '#ebe3d1',
-            'text-halo-width': 1.2
+            'text-color': '#c08838',
+            'text-halo-color': '#150e08',
+            'text-halo-width': 1.4
           },
           metadata: { 'zerotx:group': 'labels' } },
 
-        // Place labels: town.
+        // Place labels: town. Brighter amber.
         { id: 'place-town', type: 'symbol',
           source: 'openmaptiles', 'source-layer': 'place',
           filter: ['==', ['get', 'class'], 'town'],
@@ -568,13 +650,13 @@
             'text-size': ['interpolate', ['linear'], ['zoom'], 8, 11, 13, 15]
           },
           paint: {
-            'text-color': '#3a2010',
-            'text-halo-color': '#ebe3d1',
-            'text-halo-width': 1.5
+            'text-color': '#ffc858',
+            'text-halo-color': '#150e08',
+            'text-halo-width': 1.6
           },
           metadata: { 'zerotx:group': 'labels' } },
 
-        // Place labels: city.
+        // Place labels: city. Brightest amber.
         { id: 'place-city', type: 'symbol',
           source: 'openmaptiles', 'source-layer': 'place',
           filter: ['==', ['get', 'class'], 'city'],
@@ -586,9 +668,9 @@
             'text-size': ['interpolate', ['linear'], ['zoom'], 4, 11, 8, 14, 12, 18]
           },
           paint: {
-            'text-color': '#2a1808',
-            'text-halo-color': '#ebe3d1',
-            'text-halo-width': 1.5
+            'text-color': '#ffe085',
+            'text-halo-color': '#150e08',
+            'text-halo-width': 1.8
           },
           metadata: { 'zerotx:group': 'labels' } }
       ]
