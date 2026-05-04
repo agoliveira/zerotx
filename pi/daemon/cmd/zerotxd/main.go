@@ -46,7 +46,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.26.0-weather-astro"
+const version = "0.27.0-weather-modal"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any

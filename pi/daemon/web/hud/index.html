@@ -553,6 +553,396 @@
     .stage:not(.preflight) .preflight-banner {
       display: none;
     }
+    /* ============================================================
+       Weather modal. Touch-sized hit areas (>= 44px). Two columns at
+       1024x600. Backdrop dims the page; shell is the modal proper.
+       Reuses the existing palette via CSS variables.
+       ============================================================ */
+    .wx-trigger {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      color: var(--amber-bright);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 14px;
+      margin-left: 10px;
+      cursor: pointer;
+      min-width: 44px;
+      min-height: 28px;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .wx-trigger:hover,
+    .wx-trigger:focus,
+    .wx-trigger:active {
+      color: var(--bg-base);
+      background: var(--amber-bright);
+      border-color: var(--amber-bright);
+      outline: none;
+    }
+
+    .wx-modal[hidden] { display: none !important; }
+    .wx-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .wx-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(2, 1, 0, 0.85);
+      backdrop-filter: blur(2px);
+    }
+    .wx-shell {
+      position: relative;
+      width: 960px;
+      height: 580px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 32px);
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      box-shadow: 0 0 32px rgba(255, 200, 88, 0.12),
+                  inset 0 0 0 1px rgba(107, 74, 24, 0.4);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .wx-header {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elev);
+    }
+    .wx-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: var(--amber-bright);
+      margin: 0;
+      text-shadow: 0 0 6px var(--amber-glow);
+    }
+    .wx-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      flex: 1 1 auto;
+      font-size: 0.7rem;
+    }
+    .wx-fetched-label {
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+    }
+    .wx-fetched-value {
+      font-family: var(--mono);
+      color: var(--data-bright);
+      font-size: 0.85rem;
+    }
+    .wx-fetched-age {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+    }
+    .wx-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .wx-btn {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      padding: 10px 18px;
+      min-height: 44px;
+      min-width: 88px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .wx-btn-refresh {
+      background: transparent;
+      color: var(--amber-bright);
+      border: 1px solid var(--border);
+    }
+    .wx-btn-refresh:hover,
+    .wx-btn-refresh:focus,
+    .wx-btn-refresh:active {
+      background: var(--amber-bright);
+      color: var(--bg-base);
+      border-color: var(--amber-bright);
+      outline: none;
+    }
+    .wx-btn-refresh.loading {
+      opacity: 0.6;
+      pointer-events: none;
+    }
+    .wx-btn-close {
+      background: transparent;
+      color: var(--text-sec);
+      border: 1px solid var(--border-soft);
+    }
+    .wx-btn-close:hover,
+    .wx-btn-close:focus,
+    .wx-btn-close:active {
+      background: var(--bad);
+      color: var(--bg-base);
+      border-color: var(--bad);
+      outline: none;
+    }
+
+    .wx-body {
+      flex: 1 1 auto;
+      overflow: hidden;
+      padding: 14px;
+      position: relative;
+    }
+    .wx-empty,
+    .wx-loading {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .wx-empty[hidden],
+    .wx-loading[hidden] { display: none !important; }
+    .wx-empty-heading,
+    .wx-loading-heading {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.3rem;
+      letter-spacing: 0.2em;
+      color: var(--text-sec);
+    }
+    .wx-empty-sub {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-align: center;
+      max-width: 60%;
+    }
+    .wx-loading-heading {
+      animation: wx-pulse 1.2s infinite;
+    }
+    @keyframes wx-pulse {
+      0%, 100% { opacity: 0.4; }
+      50%      { opacity: 1.0; }
+    }
+
+    .wx-data {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      height: 100%;
+      min-height: 0;
+    }
+    .wx-data[hidden] { display: none !important; }
+    .wx-col {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .wx-card {
+      background: var(--bg-elev);
+      border: 1px solid var(--border-soft);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+    .wx-card-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      color: var(--text-sec);
+      margin: 0;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    /* CURRENT card */
+    .wx-current { flex: 0 0 auto; }
+    .wx-current-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .wx-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .wx-stat-label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+    }
+    .wx-stat-val {
+      font-family: var(--mono);
+      font-size: 1.6rem;
+      color: var(--data-bright);
+      line-height: 1;
+    }
+    .wx-stat-temp .wx-stat-val { color: var(--amber-bright); }
+    .wx-stat-unit {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+    }
+    .wx-condition {
+      font-size: 0.85rem;
+      color: var(--text-pri);
+      text-align: center;
+      letter-spacing: 0.05em;
+      padding-top: 4px;
+    }
+
+    /* WIND SURFACE card */
+    .wx-wind-surface { flex: 0 0 auto; }
+    .wx-wind-main {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+    .wx-wind-rose {
+      width: 100px;
+      height: 100px;
+    }
+    .wx-wind-readout {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .wx-wind-row {
+      display: grid;
+      grid-template-columns: 50px 1fr 60px;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .wx-wind-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+    }
+    .wx-wind-val {
+      font-family: var(--mono);
+      font-size: 1.4rem;
+      color: var(--data-bright);
+      text-align: right;
+    }
+    .wx-wind-unit {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+    }
+    .wx-wind-gust-row .wx-wind-val { color: var(--warn); }
+
+    /* WIND ALOFT card */
+    .wx-wind-aloft {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .wx-aloft-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      table-layout: fixed;
+    }
+    .wx-aloft-table th,
+    .wx-aloft-table td {
+      width: 33.33%;
+      text-align: center;
+      padding: 4px 6px;
+    }
+    .wx-aloft-table th {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 400;
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .wx-aloft-table td {
+      font-family: var(--mono);
+      color: var(--data-bright);
+    }
+    .wx-aloft-table .wx-aloft-h-cell {
+      color: var(--text-pri);
+      font-weight: 700;
+    }
+
+    /* FORECAST card */
+    .wx-forecast {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .wx-forecast-svg {
+      flex: 1 1 auto;
+      width: 100%;
+      min-height: 0;
+      max-height: 240px;
+    }
+    .wx-forecast-legend {
+      display: flex;
+      gap: 16px;
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+    }
+    .wx-leg-temp { color: var(--amber-bright); }
+    .wx-leg-wind { color: var(--data-bright); }
+    .wx-leg-precip { color: var(--info); }
+
+    /* ASTRO card */
+    .wx-astro { flex: 0 0 auto; }
+    .wx-astro-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .wx-astro-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 6px;
+      background: var(--bg-base);
+      border: 1px solid var(--border-soft);
+    }
+    .wx-astro-moon {
+      grid-column: span 3;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .wx-astro-label {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      letter-spacing: 0.1em;
+    }
+    .wx-astro-val {
+      font-family: var(--mono);
+      font-size: 0.95rem;
+      color: var(--data-bright);
+    }
+    .wx-astro-moon .wx-astro-val {
+      color: var(--text-pri);
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
   </style>
 </head>
 <body>
@@ -567,8 +957,9 @@
     <span class="label">UTC</span> <span class="val" id="utc-clock">--:--:--</span>
   </div>
   <div class="version-section">
-    <span id="frontend-ver">hud-v10</span> · <span id="daemon-ver">…</span>
+    <span id="frontend-ver">hud-v11</span> · <span id="daemon-ver">…</span>
   </div>
+  <button class="wx-trigger" id="wx-trigger" type="button" aria-label="Open weather briefing">WX</button>
 </div>
 
 <div class="stage preflight" id="stage">
@@ -769,6 +1160,183 @@
   </div>
 
 </div>
+
+<!-- ============================================================
+     Weather briefing modal. Pre/post-flight only; opens via the WX
+     button in the top strip or Ctrl+Alt+W. Two columns at 1024x600:
+     left = current conditions + wind surface + wind aloft;
+     right = 24h forecast strip + astro panel.
+     ============================================================ -->
+<div class="wx-modal" id="wx-modal" hidden aria-hidden="true" role="dialog" aria-labelledby="wx-modal-title">
+  <div class="wx-backdrop" id="wx-backdrop"></div>
+  <div class="wx-shell" role="document">
+
+    <header class="wx-header">
+      <h2 class="wx-title" id="wx-modal-title">WEATHER BRIEFING</h2>
+      <div class="wx-meta">
+        <span class="wx-fetched-label">FETCHED</span>
+        <span class="wx-fetched-value" id="wx-fetched-at">—</span>
+        <span class="wx-fetched-age" id="wx-fetched-age"></span>
+      </div>
+      <div class="wx-actions">
+        <button class="wx-btn wx-btn-refresh" id="wx-refresh" type="button" aria-label="Refresh weather data">REFRESH</button>
+        <button class="wx-btn wx-btn-close" id="wx-close" type="button" aria-label="Close">CLOSE</button>
+      </div>
+    </header>
+
+    <div class="wx-body" id="wx-body">
+
+      <!-- Empty state. Shown when no weather data is available
+           (no internet, no cached fetch yet, no coords resolved). -->
+      <div class="wx-empty" id="wx-empty" hidden>
+        <div class="wx-empty-heading">NO WEATHER DATA</div>
+        <div class="wx-empty-sub" id="wx-empty-sub">Background fetch has not completed yet. Check connectivity.</div>
+      </div>
+
+      <!-- Loading state. Shown during manual refresh. -->
+      <div class="wx-loading" id="wx-loading" hidden>
+        <div class="wx-loading-heading">FETCHING …</div>
+      </div>
+
+      <!-- Data state. Two-column dashboard. -->
+      <div class="wx-data" id="wx-data">
+
+        <div class="wx-col wx-col-left">
+
+          <section class="wx-card wx-current">
+            <h3 class="wx-card-title">CURRENT</h3>
+            <div class="wx-current-row">
+              <div class="wx-stat wx-stat-temp">
+                <div class="wx-stat-label">TEMP</div>
+                <div class="wx-stat-val" id="wx-temp">—</div>
+                <div class="wx-stat-unit">°C</div>
+              </div>
+              <div class="wx-stat">
+                <div class="wx-stat-label">RH</div>
+                <div class="wx-stat-val" id="wx-humidity">—</div>
+                <div class="wx-stat-unit">%</div>
+              </div>
+              <div class="wx-stat">
+                <div class="wx-stat-label">QFE</div>
+                <div class="wx-stat-val" id="wx-pressure">—</div>
+                <div class="wx-stat-unit">hPa</div>
+              </div>
+              <div class="wx-stat">
+                <div class="wx-stat-label">CLD</div>
+                <div class="wx-stat-val" id="wx-cloud">—</div>
+                <div class="wx-stat-unit">%</div>
+              </div>
+            </div>
+            <div class="wx-condition" id="wx-condition">—</div>
+          </section>
+
+          <section class="wx-card wx-wind-surface">
+            <h3 class="wx-card-title">WIND · SURFACE</h3>
+            <div class="wx-wind-main">
+              <svg class="wx-wind-rose" id="wx-wind-rose" viewBox="-50 -50 100 100" aria-hidden="true">
+                <circle cx="0" cy="0" r="42" fill="none" stroke="var(--border-soft)" stroke-width="0.6"/>
+                <circle cx="0" cy="0" r="32" fill="none" stroke="var(--border-soft)" stroke-width="0.4" stroke-dasharray="1 2"/>
+                <text x="0" y="-44" text-anchor="middle" font-family="Orbitron" font-size="6" fill="var(--text-pri)" font-weight="700">N</text>
+                <text x="46" y="2" text-anchor="middle" font-family="Orbitron" font-size="5" fill="var(--text-muted)">E</text>
+                <text x="0" y="50" text-anchor="middle" font-family="Orbitron" font-size="5" fill="var(--text-muted)">S</text>
+                <text x="-46" y="2" text-anchor="middle" font-family="Orbitron" font-size="5" fill="var(--text-muted)">W</text>
+                <g id="wx-wind-arrow" transform="rotate(0)">
+                  <path d="M 0 -36 L -5 -22 L 0 -26 L 5 -22 Z" fill="var(--data-bright)" stroke="var(--data-bright)" stroke-width="0.5"/>
+                </g>
+              </svg>
+              <div class="wx-wind-readout">
+                <div class="wx-wind-row">
+                  <span class="wx-wind-label">SPD</span>
+                  <span class="wx-wind-val" id="wx-wind-spd">—</span>
+                  <span class="wx-wind-unit">km/h</span>
+                </div>
+                <div class="wx-wind-row">
+                  <span class="wx-wind-label">DIR</span>
+                  <span class="wx-wind-val" id="wx-wind-dir">—</span>
+                  <span class="wx-wind-unit">° from</span>
+                </div>
+                <div class="wx-wind-row wx-wind-gust-row">
+                  <span class="wx-wind-label">GUST</span>
+                  <span class="wx-wind-val" id="wx-wind-gust">—</span>
+                  <span class="wx-wind-unit">km/h</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="wx-card wx-wind-aloft">
+            <h3 class="wx-card-title">WIND · ALOFT</h3>
+            <table class="wx-aloft-table" id="wx-aloft-table">
+              <thead>
+                <tr>
+                  <th class="wx-aloft-h">ALT</th>
+                  <th class="wx-aloft-s">SPEED</th>
+                  <th class="wx-aloft-d">DIR</th>
+                </tr>
+              </thead>
+              <tbody id="wx-aloft-tbody">
+                <!-- rows injected by JS -->
+              </tbody>
+            </table>
+          </section>
+
+        </div><!-- /wx-col-left -->
+
+        <div class="wx-col wx-col-right">
+
+          <section class="wx-card wx-forecast">
+            <h3 class="wx-card-title">NEXT 24H</h3>
+            <svg class="wx-forecast-svg" id="wx-forecast-svg" viewBox="0 0 480 180" preserveAspectRatio="none" aria-hidden="true">
+              <!-- populated by JS -->
+            </svg>
+            <div class="wx-forecast-legend">
+              <span class="wx-leg-temp">— TEMP °C</span>
+              <span class="wx-leg-wind">— WIND km/h</span>
+              <span class="wx-leg-precip">▒ PRECIP %</span>
+            </div>
+          </section>
+
+          <section class="wx-card wx-astro">
+            <h3 class="wx-card-title">ASTRO</h3>
+            <div class="wx-astro-grid">
+              <div class="wx-astro-cell">
+                <div class="wx-astro-label">SUNRISE</div>
+                <div class="wx-astro-val" id="wx-sunrise">—</div>
+              </div>
+              <div class="wx-astro-cell">
+                <div class="wx-astro-label">SUNSET</div>
+                <div class="wx-astro-val" id="wx-sunset">—</div>
+              </div>
+              <div class="wx-astro-cell">
+                <div class="wx-astro-label">DAY LEN</div>
+                <div class="wx-astro-val" id="wx-daylen">—</div>
+              </div>
+              <div class="wx-astro-cell">
+                <div class="wx-astro-label">SUN ELEV</div>
+                <div class="wx-astro-val" id="wx-sun-elev">—</div>
+              </div>
+              <div class="wx-astro-cell">
+                <div class="wx-astro-label">SUN AZ</div>
+                <div class="wx-astro-val" id="wx-sun-az">—</div>
+              </div>
+              <div class="wx-astro-cell">
+                <div class="wx-astro-label">GOLDEN PM</div>
+                <div class="wx-astro-val" id="wx-golden-pm">—</div>
+              </div>
+              <div class="wx-astro-cell wx-astro-moon">
+                <div class="wx-astro-label">MOON</div>
+                <div class="wx-astro-val" id="wx-moon">—</div>
+              </div>
+            </div>
+          </section>
+
+        </div><!-- /wx-col-right -->
+
+      </div><!-- /wx-data -->
+    </div><!-- /wx-body -->
+
+  </div><!-- /wx-shell -->
+</div><!-- /wx-modal -->
 
 <script>
 // ZeroTX Left LCD HUD
@@ -1327,9 +1895,321 @@ function startSimulator() {
   }, tickMs);
 }
 
+// ============================================================
+// Weather modal. Opens via the WX button or Ctrl+Alt+W. Pulls
+// /api/v1/weather; renders current/wind/aloft/forecast/astro.
+// Pre/post-flight only by intent (the operator decides when to
+// open it). Network/connectivity errors degrade silently to the
+// empty state; nothing about flight ops depends on this data.
+// ============================================================
+const WX = (() => {
+  const els = {
+    modal:        () => document.getElementById('wx-modal'),
+    backdrop:     () => document.getElementById('wx-backdrop'),
+    trigger:      () => document.getElementById('wx-trigger'),
+    closeBtn:     () => document.getElementById('wx-close'),
+    refreshBtn:   () => document.getElementById('wx-refresh'),
+    fetchedAt:    () => document.getElementById('wx-fetched-at'),
+    fetchedAge:   () => document.getElementById('wx-fetched-age'),
+    body:         () => document.getElementById('wx-body'),
+    empty:        () => document.getElementById('wx-empty'),
+    emptySub:     () => document.getElementById('wx-empty-sub'),
+    loading:      () => document.getElementById('wx-loading'),
+    data:         () => document.getElementById('wx-data'),
+    temp:         () => document.getElementById('wx-temp'),
+    humidity:     () => document.getElementById('wx-humidity'),
+    pressure:     () => document.getElementById('wx-pressure'),
+    cloud:        () => document.getElementById('wx-cloud'),
+    condition:    () => document.getElementById('wx-condition'),
+    windSpd:      () => document.getElementById('wx-wind-spd'),
+    windDir:      () => document.getElementById('wx-wind-dir'),
+    windGust:     () => document.getElementById('wx-wind-gust'),
+    windArrow:    () => document.getElementById('wx-wind-arrow'),
+    aloftBody:    () => document.getElementById('wx-aloft-tbody'),
+    forecastSvg:  () => document.getElementById('wx-forecast-svg'),
+    sunrise:      () => document.getElementById('wx-sunrise'),
+    sunset:       () => document.getElementById('wx-sunset'),
+    daylen:       () => document.getElementById('wx-daylen'),
+    sunElev:      () => document.getElementById('wx-sun-elev'),
+    sunAz:        () => document.getElementById('wx-sun-az'),
+    goldenPm:     () => document.getElementById('wx-golden-pm'),
+    moon:         () => document.getElementById('wx-moon'),
+  };
+
+  // WMO weather code -> human label. Subset; covers the common cases
+  // the operator will see in Brazil.
+  const WX_CODES = {
+    0: 'Clear sky',
+    1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+    45: 'Fog', 48: 'Rime fog',
+    51: 'Light drizzle', 53: 'Moderate drizzle', 55: 'Dense drizzle',
+    61: 'Light rain', 63: 'Moderate rain', 65: 'Heavy rain',
+    71: 'Light snow', 73: 'Moderate snow', 75: 'Heavy snow',
+    80: 'Light showers', 81: 'Moderate showers', 82: 'Violent showers',
+    95: 'Thunderstorm', 96: 'Thunderstorm w/ hail', 99: 'Thunderstorm w/ heavy hail',
+  };
+
+  let lastPayload = null;
+  let isOpen = false;
+  let inflight = null;
+
+  function fmtTimeUTC(iso) {
+    if (!iso || iso.startsWith('0001-')) return '—';
+    const d = new Date(iso);
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return `${hh}:${mm}Z`;
+  }
+  function fmtTimeLocal(iso) {
+    if (!iso || iso.startsWith('0001-')) return '—';
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+  }
+  function fmtDuration(sec) {
+    if (!sec || sec <= 0) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return `${h}h ${m.toString().padStart(2, '0')}m`;
+  }
+  function fmtAge(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const ageMs = Date.now() - d.getTime();
+    const mins = Math.round(ageMs / 60000);
+    if (mins < 1) return '· just now';
+    if (mins === 1) return '· 1 min ago';
+    if (mins < 60) return `· ${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    return `· ${hrs}h ago`;
+  }
+  function fmtNum(v, digits) {
+    if (v === null || v === undefined || Number.isNaN(v)) return '—';
+    return Number(v).toFixed(digits);
+  }
+
+  function show(elKey) {
+    for (const k of ['empty', 'loading', 'data']) {
+      els[k]().hidden = (k !== elKey);
+    }
+  }
+
+  async function fetchData(opts = {}) {
+    const {explicit = false, lat = null, lon = null} = opts;
+    let url = '/api/v1/weather';
+    if (explicit) url += `?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+
+    if (inflight) inflight.abort();
+    const ctl = new AbortController();
+    inflight = ctl;
+    try {
+      const res = await fetch(url, {signal: ctl.signal});
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {ok: false, status: res.status, body};
+      }
+      return {ok: true, status: 200, body};
+    } catch (err) {
+      if (err.name === 'AbortError') return {ok: false, status: 0, aborted: true};
+      return {ok: false, status: 0, error: err.message};
+    } finally {
+      if (inflight === ctl) inflight = null;
+    }
+  }
+
+  function renderEmpty(reason) {
+    els.emptySub().textContent = reason || 'Background fetch has not completed yet. Check connectivity.';
+    show('empty');
+  }
+
+  function render(payload) {
+    lastPayload = payload;
+    const w = payload.weather;
+    const a = payload.astro;
+    if (!w || !w.current) {
+      renderEmpty('Response missing weather data.');
+      return;
+    }
+    show('data');
+
+    // Header timestamp.
+    els.fetchedAt().textContent = fmtTimeUTC(w.fetchedAt);
+    els.fetchedAge().textContent = fmtAge(w.fetchedAt);
+
+    // Current.
+    const c = w.current;
+    els.temp().textContent     = fmtNum(c.tempC, 1);
+    els.humidity().textContent = fmtNum(c.humidity, 0);
+    els.pressure().textContent = fmtNum(c.pressureHpa, 0);
+    els.cloud().textContent    = fmtNum(c.cloudCover, 0);
+    els.condition().textContent = WX_CODES[c.weatherCode] || `Code ${c.weatherCode}`;
+
+    // Wind surface.
+    els.windSpd().textContent  = fmtNum(c.windSpeedKmh, 1);
+    els.windDir().textContent  = fmtNum(c.windDirDeg, 0);
+    els.windGust().textContent = fmtNum(c.windGustKmh, 1);
+    // Wind direction is "where wind comes from". Arrow points TO the
+    // observer (i.e. opposite of "from" direction). Add 180.
+    const dirRot = (Number(c.windDirDeg) || 0) + 180;
+    els.windArrow().setAttribute('transform', `rotate(${dirRot})`);
+
+    // Wind aloft.
+    const tbody = els.aloftBody();
+    tbody.innerHTML = '';
+    (w.windAloft || []).forEach(lvl => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="wx-aloft-h-cell">${lvl.heightM}m</td>
+        <td class="wx-aloft-s-cell">${fmtNum(lvl.speedKmh, 1)} km/h</td>
+        <td class="wx-aloft-d-cell">${fmtNum(lvl.dirDeg, 0)}°</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Forecast (24h strip).
+    renderForecast(w.hourly || []);
+
+    // Astro.
+    if (a) {
+      els.sunrise().textContent  = fmtTimeLocal(a.sun?.sunrise);
+      els.sunset().textContent   = fmtTimeLocal(a.sun?.sunset);
+      els.daylen().textContent   = fmtDuration(a.sun?.dayLengthSec);
+      els.sunElev().textContent  = fmtNum(a.sunPosition?.elevationDeg, 1) + '°';
+      els.sunAz().textContent    = fmtNum(a.sunPosition?.azimuthDeg, 0) + '°';
+      els.goldenPm().textContent = fmtTimeLocal(a.sun?.eveningGoldenBegin);
+      const moonName = a.moon?.phaseName || '—';
+      const moonPct  = a.moon?.illumination !== undefined ? `${Math.round(a.moon.illumination * 100)}%` : '';
+      els.moon().textContent     = `${moonName} ${moonPct}`.trim();
+    }
+  }
+
+  // Renders a compact 3-track strip in the forecast SVG: temp line
+  // (amber), wind speed line (ice-blue, with gust filled below),
+  // precipitation probability shaded background.
+  function renderForecast(hourly) {
+    const svg = els.forecastSvg();
+    if (!hourly.length) {
+      svg.innerHTML = '<text x="240" y="90" text-anchor="middle" fill="#a87234" font-family="Orbitron" font-size="12">no forecast data</text>';
+      return;
+    }
+    const W = 480, H = 180;
+    const padL = 28, padR = 8, padT = 6, padB = 22;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    const xAt = i => padL + (i / Math.max(1, hourly.length - 1)) * plotW;
+
+    const temps = hourly.map(h => h.tempC);
+    const winds = hourly.map(h => h.windSpeedKmh);
+    const gusts = hourly.map(h => h.windGustKmh);
+
+    const tMin = Math.min(...temps), tMax = Math.max(...temps);
+    const tRange = Math.max(1, tMax - tMin);
+    const tY = v => padT + plotH - ((v - tMin) / tRange) * plotH;
+
+    const wMax = Math.max(20, Math.max(...gusts));
+    const wY = v => padT + plotH - (v / wMax) * plotH;
+
+    const tempPath = temps.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${tY(v)}`).join(' ');
+    const windPath = winds.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${wY(v)}`).join(' ');
+    const gustPath = gusts.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${wY(v)}`).join(' ');
+
+    const precipBars = hourly.map((h, i) => {
+      const p = (h.precipProbability || 0) / 100;
+      if (p <= 0) return '';
+      const x = xAt(i);
+      const barW = plotW / hourly.length;
+      return `<rect x="${x - barW/2}" y="${padT}" width="${barW}" height="${plotH}" fill="#58a6ff" opacity="${p * 0.25}"/>`;
+    }).join('');
+
+    const xLabels = hourly.map((h, i) => {
+      if (i % 4 !== 0 && i !== hourly.length - 1) return '';
+      const d = new Date(h.time);
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      return `<text x="${xAt(i)}" y="${H - 6}" text-anchor="middle" fill="#a87234" font-family="DSEG14 Classic" font-size="9">${hh}Z</text>`;
+    }).join('');
+
+    const tempLabels = `
+      <text x="${padL - 4}" y="${tY(tMax) + 4}" text-anchor="end" fill="#ffe085" font-family="DSEG14 Classic" font-size="9">${tMax.toFixed(0)}</text>
+      <text x="${padL - 4}" y="${tY(tMin) + 4}" text-anchor="end" fill="#ffe085" font-family="DSEG14 Classic" font-size="9">${tMin.toFixed(0)}</text>
+    `;
+
+    svg.innerHTML = `
+      ${precipBars}
+      <line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#3a2a10" stroke-width="0.5"/>
+      <path d="${gustPath}" fill="none" stroke="#a8e0ff" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/>
+      <path d="${windPath}" fill="none" stroke="#a8e0ff" stroke-width="1.5"/>
+      <path d="${tempPath}" fill="none" stroke="#ffe085" stroke-width="1.8"/>
+      ${tempLabels}
+      ${xLabels}
+    `;
+  }
+
+  async function refresh() {
+    show('loading');
+    els.refreshBtn().classList.add('loading');
+    const result = await fetchData();
+    els.refreshBtn().classList.remove('loading');
+    if (result.aborted) return;
+    if (!result.ok) {
+      const reason = (result.body && result.body.reason)
+        || (result.body && result.body.error)
+        || `HTTP ${result.status}`;
+      renderEmpty(reason);
+      return;
+    }
+    render(result.body);
+  }
+
+  function open() {
+    if (isOpen) return;
+    isOpen = true;
+    const m = els.modal();
+    m.hidden = false;
+    m.setAttribute('aria-hidden', 'false');
+    refresh();
+  }
+  function close() {
+    if (!isOpen) return;
+    isOpen = false;
+    const m = els.modal();
+    m.hidden = true;
+    m.setAttribute('aria-hidden', 'true');
+    if (inflight) { inflight.abort(); inflight = null; }
+  }
+  function toggle() { isOpen ? close() : open(); }
+
+  function bind() {
+    els.trigger().addEventListener('click', open);
+    els.closeBtn().addEventListener('click', close);
+    els.backdrop().addEventListener('click', close);
+    els.refreshBtn().addEventListener('click', refresh);
+    document.addEventListener('keydown', evt => {
+      // Ctrl+Alt+W toggles. Escape closes when open.
+      if (evt.ctrlKey && evt.altKey && (evt.key === 'w' || evt.key === 'W')) {
+        evt.preventDefault();
+        toggle();
+        return;
+      }
+      if (isOpen && evt.key === 'Escape') {
+        evt.preventDefault();
+        close();
+      }
+    });
+    // Periodic age refresh while modal is open (just the timestamp,
+    // not a full re-fetch).
+    setInterval(() => {
+      if (isOpen && lastPayload && lastPayload.weather) {
+        els.fetchedAge().textContent = fmtAge(lastPayload.weather.fetchedAt);
+      }
+    }, 30000);
+  }
+
+  return {bind, open, close, toggle};
+})();
+
 // ---- Init ----
 function init() {
   showDaemonVersion();
+  WX.bind();
   const params = new URLSearchParams(location.search);
   if (params.get('simulate') === '1') startSimulator();
   else                                 connectWS();
