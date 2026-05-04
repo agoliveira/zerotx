@@ -6,22 +6,61 @@
   <title>ZeroTX HUD</title>
   <style>
     /* ============================================================
+       Self-hosted fonts. Files served by the daemon under
+       /hud/fonts/. Populate via tools/fetch-hud-fonts.sh.
+       ============================================================ */
+    @font-face {
+      font-family: 'Orbitron';
+      src: url('fonts/Orbitron-VariableFont_wght.ttf') format('truetype-variations'),
+           url('fonts/Orbitron-VariableFont_wght.ttf') format('truetype');
+      font-weight: 400 900;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'DSEG14 Classic';
+      src: url('fonts/DSEG14Classic-Regular.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'DSEG14 Classic';
+      src: url('fonts/DSEG14Classic-Bold.ttf') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    /* Force web-font on SVG text. Some browsers don't reliably apply
+       @font-face fonts to SVG via the font-family attribute on a parent
+       <g>; a CSS rule on the host SVG works deterministically. */
+    #horizon-svg text,
+    #heading-svg text {
+      font-family: 'DSEG14 Classic', ui-monospace, monospace;
+    }
+
+    /* ============================================================
        Color palette (matches map for cross-LCD consistency).
        ============================================================ */
     :root {
-      --bg-base:    #0a0e14;
-      --bg-panel:   rgba(10, 14, 20, 0.88);
-      --bg-elev:    #161b22;
-      --border:     #30363d;
-      --border-soft:#21262d;
-      --text-pri:   #c9d1d9;
-      --text-sec:   #8b949e;
-      --text-muted: #6e7681;
-      --good:       #3fb950;
-      --warn:       #d29922;
-      --bad:        #f85149;
-      --info:       #58a6ff;
-      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --bg-base:    #050201;
+      --bg-panel:   rgba(8, 5, 2, 0.95);
+      --bg-elev:    #0c0703;
+      --border:     #6b4a18;
+      --border-soft:#3a2a10;
+      --text-pri:   #ffc858;
+      --text-sec:   #d49a4c;
+      --text-muted: #a87234;
+      --good:       #5be65b;
+      --warn:       #ffd700;
+      --bad:        #ff4030;
+      --info:       #58a6ff;       /* unchanged: bearing-to-home arrow stays blue (operator convention) */
+      --amber-bright: #ffe085;
+      --amber-glow:   rgba(255, 200, 88, 0.35);
+      --data-bright:  #a8e0ff;     /* pale ice-blue for data values that should pop */
+      --vv-color:     #5be8b8;     /* velocity-vector mint cyan, distinct from amber/blue/green */
+      --mono: 'DSEG14 Classic', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     }
 
     * { box-sizing: border-box; }
@@ -31,7 +70,7 @@
       width: 100vw; height: 100vh;
       background: var(--bg-base);
       color: var(--text-pri);
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: 'Orbitron', system-ui, -apple-system, sans-serif;
       overflow: hidden;
       user-select: none;
     }
@@ -41,6 +80,32 @@
       border: 1px solid var(--border);
       border-radius: 8px;
     }
+
+    /* ============================================================
+       CRT effects: scan lines + phosphor glow on big readouts.
+       Pure CSS, no JS, GPU-friendly. Pi 400 doesn't break a sweat.
+       ============================================================ */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0)   0px,
+        rgba(0, 0, 0, 0)   2px,
+        rgba(0, 0, 0, 0.05) 2px,
+        rgba(0, 0, 0, 0.05) 4px
+      );
+    }
+    .tile-main .num,
+    .horizon-readout .val,
+    .clock-section,
+    .mode-badge {
+      text-shadow: 0 0 3px var(--amber-glow);
+    }
+
 
     /* ============================================================
        Top strip: status pill + flight clock + version.
@@ -87,8 +152,8 @@
     .status-pill.disarmed  { color: var(--text-sec); border-color: var(--border); }
     .status-pill.arming    { color: var(--warn); border-color: var(--warn); }
     .status-pill.armed     { color: var(--good); border-color: var(--good); }
-    .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(210, 153, 34, 0.1); }
-    .status-pill.failsafe  { color: var(--bad); border-color: var(--bad); background: rgba(248, 81, 73, 0.15); animation: pulse 0.8s infinite; }
+    .status-pill.rth       { color: var(--warn); border-color: var(--warn); background: rgba(255, 215, 0, 0.12); }
+    .status-pill.failsafe  { color: var(--bad); border-color: var(--bad); background: rgba(255, 64, 48, 0.18); animation: pulse 0.8s infinite; }
     @keyframes pulse {
       0%, 100% { opacity: 1; } 50% { opacity: 0.55; }
     }
@@ -103,10 +168,11 @@
       font-size: 0.7rem;
       letter-spacing: 0.1em;
       text-transform: uppercase;
+      font-family: 'Orbitron', system-ui, sans-serif;
     }
     .clock-section .val {
       color: var(--text-pri);
-      font-weight: 600;
+      font-weight: 400;
     }
 
     .version-section {
@@ -177,10 +243,10 @@
     }
     .altrow-cell .val {
       font-family: var(--mono);
-      font-size: 1.55rem;
-      font-weight: 700;
+      font-size: 1.2rem;
+      font-weight: 400;
       line-height: 1.05;
-      color: var(--text-pri);
+      color: var(--data-bright);
     }
     .altrow-cell .unit {
       font-size: 0.7rem;
@@ -220,7 +286,7 @@
       gap: 12px;
     }
     .horizon-readout {
-      background: rgba(10, 14, 20, 0.7);
+      background: rgba(8, 5, 2, 0.85);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 8px 12px;
@@ -236,8 +302,8 @@
     }
     .horizon-readout .val {
       font-family: var(--mono);
-      font-size: 1.6rem;
-      font-weight: 700;
+      font-size: 1.2rem;
+      font-weight: 400;
       color: var(--text-pri);
       line-height: 1;
     }
@@ -248,16 +314,34 @@
     }
     .horizon-readout.right { text-align: right; }
 
-    .horizon-center-marker {
+    /* ============================================================
+       Artificial Horizon overlay: fixed-frame elements that don't
+       rotate with the world (roll arc, aircraft reference, bank
+       readout, corner brackets).
+       ============================================================ */
+    .horizon-frame-overlay {
       position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      width: 80px; height: 4px;
-      background: var(--warn);
-      border-radius: 2px;
-      box-shadow: 0 0 8px rgba(210, 153, 34, 0.6);
+      inset: 0;
       pointer-events: none;
+      z-index: 2;
     }
+    .horizon-frame-overlay svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .horizon-corner {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      pointer-events: none;
+      z-index: 3;
+    }
+    .horizon-corner.tl { top: 6px;    left:  6px; border-top:    2px solid var(--text-sec); border-left:  2px solid var(--text-sec); }
+    .horizon-corner.tr { top: 6px;    right: 6px; border-top:    2px solid var(--text-sec); border-right: 2px solid var(--text-sec); }
+    .horizon-corner.bl { bottom: 6px; left:  6px; border-bottom: 2px solid var(--text-sec); border-left:  2px solid var(--text-sec); }
+    .horizon-corner.br { bottom: 6px; right: 6px; border-bottom: 2px solid var(--text-sec); border-right: 2px solid var(--text-sec); }
 
     /* ============================================================
        Right-column tile stack.
@@ -285,8 +369,8 @@
     }
     .tile-main .num {
       font-family: var(--mono);
-      font-size: 2.6rem;
-      font-weight: 700;
+      font-size: 1.9rem;
+      font-weight: 400;
       line-height: 1;
       color: var(--text-pri);
     }
@@ -300,7 +384,7 @@
     .tile-secondary {
       font-family: var(--mono);
       font-size: 0.85rem;
-      color: var(--text-sec);
+      color: var(--data-bright);
       margin-top: 4px;
     }
     .tile-bar {
@@ -327,7 +411,7 @@
       font-size: 1.05rem;
     }
     .tile-grid .k { color: var(--text-muted); font-size: 0.78rem; align-self: center; letter-spacing: 0.06em; }
-    .tile-grid .v { color: var(--text-pri); text-align: right; font-weight: 700; }
+    .tile-grid .v { color: var(--data-bright); text-align: right; font-weight: 400; }
 
     /* ============================================================
        Bottom-left: link/RSSI strip with rolling LQ graph.
@@ -370,8 +454,8 @@
       letter-spacing: 0.06em;
     }
     .linkbar-stats .stat .v {
-      color: var(--text-pri);
-      font-weight: 700;
+      color: var(--data-bright);
+      font-weight: 400;
     }
     .lq-graph {
       flex: 1;
@@ -420,7 +504,12 @@
       padding: 1px 0;
     }
     .alarms-list .item .ts { color: var(--text-muted); }
-    .alarms-list .item .msg { color: var(--text-pri); }
+    .alarms-list .item .msg {
+      color: var(--amber-bright);
+      font-family: 'Orbitron', system-ui, sans-serif;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+    }
     .alarms-list .item.warn .msg { color: var(--warn); }
     .alarms-list .item.bad  .msg { color: var(--bad); }
     .alarms-list .empty {
@@ -490,13 +579,21 @@
       <svg class="horizon-svg" id="horizon-svg" viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid slice">
         <g id="horizon-content" transform="translate(0,0)">
           <!-- Sky -->
-          <rect x="-400" y="-400" width="800" height="400" fill="#1e3a5f"/>
+          <rect x="-400" y="-400" width="800" height="400" fill="#162540"/>
           <!-- Ground -->
-          <rect x="-400" y="0" width="800" height="400" fill="#5a3a1e"/>
+          <rect x="-400" y="0" width="800" height="400" fill="#3a2410"/>
           <!-- Horizon line -->
-          <line x1="-400" y1="0" x2="400" y2="0" stroke="#c9d1d9" stroke-width="0.6"/>
+          <line x1="-400" y1="0" x2="400" y2="0" stroke="#ffc858" stroke-width="0.6"/>
           <!-- Pitch ladder -->
-          <g stroke="#c9d1d9" stroke-width="0.5" font-size="4" font-family="ui-monospace, monospace" fill="#c9d1d9" opacity="0.85">
+          <g stroke="#ffc858" stroke-width="0.2" fill="none" opacity="0.4">
+            <line x1="-1.5" y1="-25" x2="1.5" y2="-25" stroke-dasharray="none"/>
+            <line x1="-1.5" y1="-15" x2="1.5" y2="-15" stroke-dasharray="none"/>
+            <line x1="-1.5" y1="-5" x2="1.5" y2="-5" stroke-dasharray="none"/>
+            <line x1="-1.5" y1="5" x2="1.5" y2="5" stroke-dasharray="none"/>
+            <line x1="-1.5" y1="15" x2="1.5" y2="15" stroke-dasharray="none"/>
+            <line x1="-1.5" y1="25" x2="1.5" y2="25" stroke-dasharray="none"/>
+          </g>
+          <g stroke="#ffc858" stroke-width="0.3" font-size="2.6" fill="#ffc858" opacity="0.7" stroke-dasharray="1 0.7">
             <line x1="-15" y1="-30" x2="15" y2="-30"/><text x="-18" y="-29" text-anchor="end">30</text><text x="18" y="-29">30</text>
             <line x1="-12" y1="-20" x2="12" y2="-20"/><text x="-15" y="-19" text-anchor="end">20</text><text x="15" y="-19">20</text>
             <line x1="-9"  y1="-10" x2="9"  y2="-10"/><text x="-11" y="-9"  text-anchor="end">10</text><text x="11" y="-9">10</text>
@@ -507,7 +604,62 @@
         </g>
       </svg>
     </div>
-    <div class="horizon-center-marker"></div>
+    <!-- Fixed-frame overlay: roll indicator, aircraft ref, brackets -->
+    <div class="horizon-frame-overlay">
+      <svg viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet">
+        <!-- Roll arc -->
+        <g fill="none" stroke="var(--text-pri)" stroke-width="0.6" opacity="0.85">
+          <path d="M -56.29 -32.50 A 65 65 0 0 1 56.29 -32.50"/>
+        </g>
+        <!-- Roll arc ticks -->
+        <g stroke-linecap="round">
+            <line x1="-56.29" y1="-32.50" x2="-60.62" y2="-35.00" stroke="var(--text-pri)" stroke-width="0.9" opacity="0.85"/>
+            <line x1="-32.50" y1="-56.29" x2="-35.00" y2="-60.62" stroke="var(--text-pri)" stroke-width="0.9" opacity="0.85"/>
+            <line x1="0.00" y1="-65.00" x2="0.00" y2="-70.00" stroke="var(--text-pri)" stroke-width="0.9" opacity="0.85"/>
+            <line x1="32.50" y1="-56.29" x2="35.00" y2="-60.62" stroke="var(--text-pri)" stroke-width="0.9" opacity="0.85"/>
+            <line x1="56.29" y1="-32.50" x2="60.62" y2="-35.00" stroke="var(--text-pri)" stroke-width="0.9" opacity="0.85"/>
+            <line x1="-45.96" y1="-45.96" x2="-48.08" y2="-48.08" stroke="var(--text-pri)" stroke-width="0.5" opacity="0.85"/>
+            <line x1="-22.23" y1="-61.08" x2="-23.26" y2="-63.90" stroke="var(--text-pri)" stroke-width="0.5" opacity="0.85"/>
+            <line x1="-11.29" y1="-64.01" x2="-11.81" y2="-66.97" stroke="var(--text-pri)" stroke-width="0.5" opacity="0.85"/>
+            <line x1="11.29" y1="-64.01" x2="11.81" y2="-66.97" stroke="var(--text-pri)" stroke-width="0.5" opacity="0.85"/>
+            <line x1="22.23" y1="-61.08" x2="23.26" y2="-63.90" stroke="var(--text-pri)" stroke-width="0.5" opacity="0.85"/>
+            <line x1="45.96" y1="-45.96" x2="48.08" y2="-48.08" stroke="var(--text-pri)" stroke-width="0.5" opacity="0.85"/>
+        </g>
+        <!-- Zero reference triangle (downward, just inside the arc top) -->
+        <polygon points="0,-62 -2.5,-66 2.5,-66" fill="var(--text-pri)" opacity="0.95"/>
+        <!-- Roll pointer (rotates with bank angle around 0,0) -->
+        <g id="roll-pointer" transform="rotate(0)">
+          <polygon points="0,-73 -3,-78 3,-78" fill="var(--warn)" stroke="var(--bg-base)" stroke-width="0.3"/>
+        </g>
+        <!-- Bank readout (digital, centered under the arc) -->
+        <text id="bank-readout" x="0" y="-50" text-anchor="middle" font-size="7" font-family="'DSEG14 Classic', ui-monospace, monospace" fill="var(--text-sec)">0&#176;</text>
+        <!-- "BANK" label under the readout -->
+        <text x="0" y="-43" text-anchor="middle" font-size="2.4" font-family="'Orbitron', sans-serif" font-weight="500" letter-spacing="0.4" fill="var(--text-muted)">BANK</text>
+        <!-- Aircraft reference symbol (wings + dot + tail) -->
+        <g fill="var(--warn)" stroke="var(--bg-base)" stroke-width="0.3" stroke-linejoin="miter">
+          <!-- Left wing -->
+          <rect x="-15" y="-1" width="10" height="2"/>
+          <!-- Right wing -->
+          <rect x="5" y="-1" width="10" height="2"/>
+          <!-- Tail (downward stub) -->
+          <rect x="-0.9" y="0" width="1.8" height="4"/>
+          <!-- Center dot -->
+          <circle cx="0" cy="0" r="1.4"/>
+        </g>
+        <!-- Velocity vector: shows actual flight path vs nose direction.
+             Hidden by default; revealed when ground speed exceeds threshold. -->
+        <g id="velocity-vector" transform="translate(0,0)" style="display:none">
+          <circle cx="0" cy="0" r="2.2" fill="none" stroke="var(--vv-color)" stroke-width="0.7"/>
+          <line x1="-5" y1="0" x2="-2.2" y2="0" stroke="var(--vv-color)" stroke-width="0.7"/>
+          <line x1="2.2" y1="0" x2="5" y2="0" stroke="var(--vv-color)" stroke-width="0.7"/>
+          <line x1="0" y1="-2.2" x2="0" y2="-4" stroke="var(--vv-color)" stroke-width="0.7"/>
+        </g>
+      </svg>
+    </div>
+    <div class="horizon-corner tl"></div>
+    <div class="horizon-corner tr"></div>
+    <div class="horizon-corner bl"></div>
+    <div class="horizon-corner br"></div>
   </div>
 
   <!-- Heading band (above horizon in DOM order, visually above per grid) -->
@@ -519,7 +671,7 @@
         <!-- Tick marks every 10 degrees from -180..540 (covers wraparound). -->
       </g>
       <!-- Center marker (fixed): triangle pointing down from top center -->
-      <polygon points="0,-26 -3,-22 3,-22" fill="#d29922"/>
+      <polygon points="0,-26 -3,-22 3,-22" fill="#ffd700"/>
       <!-- Home marker (animated): blue triangle that slides along the band. -->
       <polygon id="heading-home-marker" points="0,-2 -4,-7 4,-7" fill="#58a6ff" transform="translate(-1000,0)"/>
     </svg>
@@ -721,6 +873,45 @@ function setHorizon(rollDeg, pitchDeg) {
   const content = document.getElementById('horizon-content');
   if (content) content.setAttribute('transform', `translate(0, ${pitchDeg})`);
   if (svg) svg.setAttribute('style', `transform: rotate(${-rollDeg}deg)`);
+  // Roll pointer (sky pointer convention: rotates same direction as bank)
+  const ptr = document.getElementById('roll-pointer');
+  if (ptr) ptr.setAttribute('transform', `rotate(${rollDeg})`);
+  const bank = document.getElementById('bank-readout');
+  if (bank) {
+    const a = Math.abs(rollDeg);
+    let s = a.toFixed(0) + '\u00B0';
+    if      (rollDeg >  0.5) s += 'R';
+    else if (rollDeg < -0.5) s += 'L';
+    bank.textContent = s;
+  }
+}
+
+// Velocity vector: positions a small reticle showing the actual flight
+// path relative to the nose direction. X = (track - heading) wrapped to
+// the visible band; Y = -FPA where FPA = atan2(verticalSpeed, groundSpeed).
+// Hidden when groundSpeed is below threshold (data is too noisy at low
+// speeds and the vector flickers around).
+function updateVelocityVector(groundKmh, trackDeg, headingDeg, varioMs) {
+  const vv = document.getElementById('velocity-vector');
+  if (!vv) return;
+  const groundMs = (groundKmh || 0) / 3.6;
+  if (!Number.isFinite(groundMs) || groundMs < 1.4 ||
+      !Number.isFinite(trackDeg) || !Number.isFinite(headingDeg)) {
+    vv.style.display = 'none';
+    return;
+  }
+  // Wrap track-heading delta to [-180, 180]
+  let dx = trackDeg - headingDeg;
+  while (dx >  180) dx -= 360;
+  while (dx < -180) dx += 360;
+  // Clamp horizontal to keep on-screen (viewBox units = degrees)
+  const dxClamped = Math.max(-50, Math.min(50, dx));
+  // Flight path angle from vario / ground speed
+  const fpa = Math.atan2(varioMs || 0, Math.max(0.5, groundMs)) * 180 / Math.PI;
+  const fpaClamped = Math.max(-30, Math.min(30, fpa));
+  // SVG y is inverted (positive = down)
+  vv.setAttribute('transform', `translate(${dxClamped.toFixed(2)}, ${(-fpaClamped).toFixed(2)})`);
+  vv.style.display = '';
 }
 
 // ---- Heading band ----
@@ -743,12 +934,12 @@ function buildHeadingStrip() {
       const isMajor = (h % 30) === 0;
       const isCardinal = (h % 90) === 0;
       const tickH = isMajor ? 8 : 4;
-      svg += `<line x1="${x}" y1="-${tickH}" x2="${x}" y2="0" stroke="#c9d1d9" stroke-width="0.6" opacity="${isMajor ? 0.95 : 0.55}"/>`;
+      svg += `<line x1="${x}" y1="-${tickH}" x2="${x}" y2="0" stroke="#ffc858" stroke-width="0.6" opacity="${isMajor ? 0.95 : 0.55}"/>`;
       if (isCardinal) {
         const lbl = ({0:'N', 90:'E', 180:'S', 270:'W'})[h];
-        svg += `<text x="${x}" y="-12" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" font-weight="700" fill="#c9d1d9">${lbl}</text>`;
+        svg += `<text x="${x}" y="-12" text-anchor="middle" font-size="10" font-weight="700" fill="#ffe085">${lbl}</text>`;
       } else if (isMajor) {
-        svg += `<text x="${x}" y="-12" text-anchor="middle" font-family="ui-monospace, monospace" font-size="7" fill="#8b949e">${h}</text>`;
+        svg += `<text x="${x}" y="-12" text-anchor="middle" font-size="7" fill="#d49a4c">${h}</text>`;
       }
     }
   }
@@ -810,7 +1001,7 @@ function drawLqGraph() {
   const now = Date.now();
   const startTs = now - LQ_HISTORY_S * 1000;
   // Reference markers at 50% and 80%.
-  ctx.strokeStyle = '#21262d';
+  ctx.strokeStyle = '#3a2a10';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, cssH * (1 - 0.5)); ctx.lineTo(cssW, cssH * (1 - 0.5));
@@ -825,7 +1016,7 @@ function drawLqGraph() {
     const bx = ((b.ts - startTs) / (LQ_HISTORY_S * 1000)) * cssW;
     const by = cssH * (1 - b.lq / 100);
     const lq = (a.lq + b.lq) / 2;
-    ctx.strokeStyle = lq < 50 ? '#f85149' : (lq < 80 ? '#d29922' : '#3fb950');
+    ctx.strokeStyle = lq < 50 ? '#ff4030' : (lq < 80 ? '#ffd700' : '#5be65b');
     ctx.lineWidth = 1.8;
     ctx.beginPath();
     ctx.moveTo(ax, ay);
@@ -938,14 +1129,18 @@ function handleStateMessage(state) {
     document.getElementById('hz-spd').textContent = Math.round(kmh);
     aircraftHdg = gps.headingDeg ?? 0;
     // Vario from altitude derivative (cheap, sample-to-sample).
+    let varioMs = 0;
     if (lastGps && lastGps.altMeters !== undefined) {
       const dt = (Date.now() - lastGps.t) / 1000;
       if (dt > 0) {
-        const v = (altM - lastGps.altMeters) / dt;
-        document.getElementById('hz-vario').textContent = (v >= 0 ? '+' : '') + v.toFixed(1);
+        varioMs = (altM - lastGps.altMeters) / dt;
+        document.getElementById('hz-vario').textContent = (varioMs >= 0 ? '+' : '') + varioMs.toFixed(1);
       }
     }
     lastGps = { altMeters: altM, t: Date.now() };
+    // Velocity vector update: needs ground speed, GPS track, mag heading, vario.
+    const yawDeg = att?.yawDeg;
+    updateVelocityVector(kmh, aircraftHdg, yawDeg, varioMs);
     document.getElementById('gps-sats').textContent = gps.sats ?? '--';
     document.getElementById('gps-fix').textContent = gps.fix === 3 ? '3D' : (gps.fix === 2 ? '2D' : 'NO');
     if (Number.isFinite(gps.hdop)) {
