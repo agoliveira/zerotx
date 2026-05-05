@@ -457,11 +457,18 @@ constexpr const char* FW_VERSION = "0.19.0-rp2040";
 
 // HUB75 pin map for RP2040-Zero. Six RGB pins, four address pins
 // (1/16 scan = 4 lines), and three control pins (CLK/LAT/OE).
+//
+// GP9-GP13 are deliberately AVOIDED here because on the RP2040-Zero
+// they sit on the edge opposite the USB-C connector, which is the
+// physically hardest edge to wire. The address/clock/latch lines
+// move to the left-edge analog pins (GP26-29, which are fully
+// digital-capable in addition to being ADC-capable) and to GP14/GP15
+// on the bottom corners.
 static uint8_t rgbPins[]  = { 2, 4, 3,    // R1, B1, G1   (G/B swap for Waveshare)
                               5, 7, 6 };  // R2, B2, G2
-static uint8_t addrPins[] = { 8, 9, 10, 11 };   // A, B, C, D (no E for 1/16 scan)
-static const uint8_t clockPin = 12;
-static const uint8_t latchPin = 13;
+static uint8_t addrPins[] = { 8, 15, 26, 27 };  // A, B, C, D (no E for 1/16 scan)
+static const uint8_t clockPin = 28;
+static const uint8_t latchPin = 29;
 static const uint8_t oePin    = 14;
 
 // Bit depth: 4 bits per channel = 4096 colors. Higher depths cost
@@ -469,14 +476,16 @@ static const uint8_t oePin    = 14;
 // spot for our color-rich vintage-VFD aesthetic without flicker.
 static constexpr uint8_t MATRIX_BIT_DEPTH = 4;
 
-// Protomatter constructor: width=64 per panel, chained 2 = 128 wide.
-// addrCount=4 (1/16 scan). doublebuffer=false: single-buffer is
-// sufficient because we redraw on state change and the dirty-flag
-// loop already coalesces frames.
+// Protomatter constructor:
+//   bitWidth = 128 (full chained width, NOT per-panel width)
+//   bitDepth = MATRIX_BIT_DEPTH (4 = 4bpp = 4096 colors)
+//   rgbCount = 1 (one set of R1G1B1+R2G2B2 pins; chained panels share)
+//   addrCount = 4 (1/16 scan -> A,B,C,D, no E)
+//   doubleBuffer = false (we coalesce via a dirty flag in render dispatcher)
 Adafruit_Protomatter matrix(
-    64,                          // width per panel
+    128,                         // bitWidth: total chain width
     MATRIX_BIT_DEPTH,            // bit depth
-    1, rgbPins,                  // 1 chain of RGB pin pairs
+    1, rgbPins,                  // 1 set of RGB pins for the chain
     4, addrPins,                 // 4 address lines
     clockPin, latchPin, oePin,
     false                        // single buffered

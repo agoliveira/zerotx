@@ -46,9 +46,14 @@ firmware/display/
 ```
 RGB:  R1=GP2  G1=GP4  B1=GP3        # Note G/B swap for Waveshare panels
       R2=GP5  G2=GP7  B2=GP6
-ADDR: A=GP8  B=GP9  C=GP10  D=GP11   # 1/16 scan = 4 lines, no E
-CTRL: CLK=GP12  LAT=GP13  OE=GP14
+ADDR: A=GP8  B=GP15  C=GP26  D=GP27   # 1/16 scan = 4 lines, no E
+CTRL: CLK=GP28  LAT=GP29  OE=GP14
 ```
+
+This pin map deliberately avoids GP9-GP13, which sit on the edge of
+the RP2040-Zero opposite the USB-C connector and are the hardest
+edge to physically wire. Address/clock/latch lines live on
+GP14-GP15 and GP26-GP29 instead.
 
 The Waveshare P2.5 panels swap GREEN and BLUE channels at the wire
 level; the firmware handles this by reordering the entries in
