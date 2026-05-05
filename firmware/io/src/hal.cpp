@@ -81,6 +81,11 @@ static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
   /* HAL_RELAY_1             */ 23,
   /* HAL_RELAY_2             */ 24,
   /* HAL_RELAY_3             */ 25,
+  /* HAL_LDR_0               */ 54,  // = A0 on the Mega
+  /* HAL_BUZZER              */ 50,
+  /* HAL_ENC0_A              */ 51,
+  /* HAL_ENC0_B              */ 52,
+  /* HAL_ENC0_SW             */ 53,
 };
 
 // Default flags: 0 across the board (active-high). Operator can flip
@@ -112,6 +117,11 @@ static const char* const kHalPinNames[HAL_PIN_COUNT] = {
   /* HAL_RELAY_1             */ "relay_1",
   /* HAL_RELAY_2             */ "relay_2",
   /* HAL_RELAY_3             */ "relay_3",
+  /* HAL_LDR_0               */ "ldr_0",
+  /* HAL_BUZZER              */ "buzzer",
+  /* HAL_ENC0_A              */ "enc0_a",
+  /* HAL_ENC0_B              */ "enc0_b",
+  /* HAL_ENC0_SW             */ "enc0_sw",
 };
 
 // ----- Module state -----------------------------------------------------

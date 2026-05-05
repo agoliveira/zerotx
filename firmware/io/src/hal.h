@@ -58,6 +58,19 @@ enum HalPinId : uint8_t {
   HAL_RELAY_1 = 19,
   HAL_RELAY_2 = 20,
   HAL_RELAY_3 = 21,
+  // LDR (light-dependent resistor) analog input. Default A0 which
+  // is digital pin 54 on the Mega; analogRead() accepts the digital
+  // pin number directly.
+  HAL_LDR_0 = 22,
+  // Buzzer output. Drives a passive piezo via tone(). Active piezo
+  // works too - it just sounds at its native frequency regardless
+  // of the requested freq.
+  HAL_BUZZER = 23,
+  // Rotary encoder (KY-040 style): A and B quadrature pins plus a
+  // push-button switch. All three idle HIGH via internal pull-ups.
+  HAL_ENC0_A  = 24,
+  HAL_ENC0_B  = 25,
+  HAL_ENC0_SW = 26,
   HAL_PIN_COUNT  // sentinel; must be last
 };
 

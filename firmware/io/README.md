@@ -1,10 +1,10 @@
 # zerotx-io firmware (Mega 2560)
 
 General IO board firmware. Replaces the Pro Micro VFD firmware with a
-multi-subsystem design: Noritake VFD(s), trackball status LEDs,
-indicator LEDs, panel buttons, WS2813 strip, relays, plus future LDR
-and buzzer all share one Mega 2560 connected to the daemon over
-USB-CDC.
+multi-subsystem design: Noritake VFD, trackball status LEDs,
+indicator LEDs, panel buttons, WS2813 strip, relays, LDR ambient-
+light sensor, piezo buzzer, and rotary encoder all share one Mega
+2560 connected to the daemon over USB-CDC.
 
 ## Status
 
@@ -15,31 +15,21 @@ USB-CDC.
   reconfigurable at runtime; no reflash needed to re-pin or change
   polarity on a buried Mega.
 - VFD subsystem: Noritake CU20025ECPB-W1J 2x20 in 4-bit HD44780 mode.
-- Trackball LEDs subsystem: five canonical states with on-firmware
-  animation.
-- Button subsystem: 5 panel buttons, polling-based with 20ms debounce.
-- LED subsystem: 4 generic indicator LEDs (pure on/off).
-- Relay subsystem: 4 relays (pure on/off, separate from led for
-  protocol-level intent clarity).
-- WS2813 strip: 16 individually-addressable pixels.
-- Pending: LDR sensor, buzzer.
+- Trackball LEDs: five canonical states with on-firmware animation.
+- Buttons: 5 panel buttons, 20ms polling debounce, edge events.
+- LEDs: 4 generic indicator LEDs.
+- Relays: 4 relays (separate from led for protocol clarity).
+- WS2813: 16-pixel strip.
+- LDR: analog light sensor with deadband + heartbeat-driven events.
+- Buzzer: passive/active piezo via tone().
+- Encoder: rotary encoder (KY-040 style), 4 transitions per detent,
+  push-button included.
 
 ## Polarity convention
 
-The firmware default for every output (LEDs, relays, trackball ring)
-is **active-HIGH**: HIGH = active = energized. This is the universal
-rule across the codebase. There is no built-in inversion logic.
-
-Some hardware needs active-low (e.g., relay boards that wire their
-input through an inverting transistor stage). For those cases the
-HAL stores a per-pin ACTIVE_LOW flag that flips polarity at the
-output level only:
-
-```
-SET hal flag relay_0 0x01    # relay_0 becomes active-low
-SET hal reboot               # apply
-```
-
+Default for every output (LEDs, relays, trackball ring): active-HIGH.
+HIGH = active = energized. The HAL ACTIVE_LOW flag flips polarity
+per-pin for boards wired through an inverting transistor stage.
 Inverted logic is opt-in per pin, never assumed.
 
 ## Protocol
@@ -53,33 +43,23 @@ EVENT <subsystem>[.<instance>] [args...]    # firmware -> daemon only
 ```
 
 Responses to `GET` look like `> body...`. Errors look like
-`! subsystem message`. Lines starting with `#` are comments.
+`! subsystem message`.
 
 Examples:
 
 ```
 GET version
-> version zerotx-io 0.5.0-relay
+> version zerotx-io 0.6.0-sense
 
 GET caps
-> caps hal led.trackball vfd.0 button.0 button.1 button.2 button.3 button.4 led.0 led.1 led.2 led.3 relay.0 relay.1 relay.2 relay.3 ws.0
+> caps hal led.trackball vfd.0 button.0..4 led.0..3 relay.0..3 ws.0 ldr.0 buzzer enc.0
 
-# Relays:
-SET relay.0 on
-SET relay.1 off
-GET relay.2
-> relay.2 off
-
-# HAL map now shows pin AND flags:
-GET hal map
-> hal map source=eeprom count=22
-> hal pin 0 led_trackball_green 8 0x00
-> hal pin 1 led_trackball_red 9 0x00
-> hal pin 2 vfd0_rs 30 0x00
-...
-> hal pin 18 relay_0 22 0x00
-> hal pin 19 relay_1 23 0x00
-...
+EVENT ldr.0 raw=412
+EVENT enc.0 cw
+EVENT enc.0 press
+SET buzzer beep 2000 100
+SET vfd.0 mode armed
+SET led.0 on
 ```
 
 ## Subsystem command summary
@@ -87,8 +67,8 @@ GET hal map
 ### `vfd.0` - 2x20 character VFD
 ```
 SET vfd.0 mode <banner|idle|ambient|armed>
-SET vfd.0 brightness <0..3>           # 0 = brightest
-SET vfd.0 line <row> <text...>        # multi-word, ~2s hold
+SET vfd.0 brightness <0..3>
+SET vfd.0 line <row> <text...>
 SET vfd.0 clear
 SET vfd.0 tick [<n>]
 SET vfd.0 arm <0|1>
@@ -121,8 +101,8 @@ GET relay.<n>
 ### `button.<0..4>` - panel buttons
 ```
 GET button.<n>            # > button.<n> <pressed|released>
-EVENT button.<n> down     # emitted on press edge
-EVENT button.<n> up       # emitted on release edge
+EVENT button.<n> down     # press edge
+EVENT button.<n> up       # release edge
 ```
 
 ### `ws.0` - WS2813 strip (16 pixels)
@@ -134,19 +114,42 @@ SET ws.0 clear
 GET ws.0
 ```
 
+### `ldr.0` - ambient light sensor
+```
+SET ldr.0 deadband <0..1023>      # silence below this delta
+SET ldr.0 heartbeat-ms <100..600000>
+GET ldr.0                         # > ldr.0 raw=<n>
+EVENT ldr.0 raw=<n>               # emitted on change > deadband or heartbeat
+```
+
+### `buzzer` - piezo buzzer
+```
+SET buzzer beep <freq_hz> <dur_ms>
+SET buzzer silence
+GET buzzer                        # > buzzer <sounding|idle>
+```
+
+### `enc.0` - rotary encoder + push button
+```
+GET enc.0                         # > enc.0 button=<pressed|released>
+EVENT enc.0 cw                    # one detent clockwise
+EVENT enc.0 ccw                   # one detent counter-clockwise
+EVENT enc.0 press                 # button down edge
+EVENT enc.0 release               # button up edge
+```
+
 ## HAL: runtime pin and flag configuration
 
 The Mega's pin assignments AND per-pin flags live in EEPROM. To
 re-pin without reflash:
 
 ```
-SET hal pin button_0 22                # stages new pin in EEPROM
+SET hal pin button_0 22                # stages new pin
 SET hal flag relay_0 0x01              # stages active-low for relay_0
 SET hal reboot                         # apply both
 ```
 
 Other HAL commands:
-
 ```
 GET hal map                # full pin map: pin AND flags, with source
 GET hal source             # "eeprom" or "defaults"
@@ -157,11 +160,13 @@ SET hal reboot             # soft reset via watchdog
 ```
 
 Flag bit definitions:
-- bit 0 (0x01): ACTIVE_LOW — invert output polarity. LOW = active.
+- bit 0 (0x01): ACTIVE_LOW - invert output polarity. LOW = active.
 
-If a bad pin map ever bricks a subsystem, `SET hal reset-defaults`
-followed by `SET hal reboot` recovers because USB Serial0 is
-hardcoded and can't be remapped.
+USB Serial0 (pins 0/1) is hardcoded and cannot be remapped, so
+`SET hal reset-defaults` is always reachable for recovery.
+
+The companion `tools/zerotx-iohal-config` CLI automates JSON-driven
+pin/flag management.
 
 ## EEPROM layout (v2)
 
@@ -173,10 +178,9 @@ hardcoded and can't be remapped.
 [end..+1]   CRC16 over preceding bytes
 ```
 
-Upgrading from v1 (single-byte pin entries, no flags) is automatic:
-the firmware sees the version mismatch on boot and reverts to
-compiled defaults, then writes a v2 record. The operator just
-re-applies any custom pin assignments they had.
+Adding new pins to the firmware bumps the count, which forces a
+fallback to defaults on first boot of the new firmware. Operator
+re-applies any custom assignments via the iohal-config tool.
 
 ## Adding a subsystem
 
@@ -188,9 +192,8 @@ re-applies any custom pin assignments they had.
 
 3. If new pins are involved: add an entry to `HalPinId` in `hal.h`,
    add the default + name in `hal.cpp` (`kHalPinDefaults`,
-   `kHalPinNames`, and `kHalFlagDefaults` if non-zero default).
-   Subsystem reads the pin via `hal::pin(id)` and polarity via
-   `hal::activeLow(id)`.
+   `kHalPinNames`). Subsystem reads pin number via `hal::pin(id)`
+   and polarity via `hal::activeLow(id)`.
 
 ## Build and flash
 
@@ -203,9 +206,5 @@ pio device monitor
 ## Watchdog
 
 500ms hardware watchdog kicked every loop iteration. Boot reason
-reported as the first event after reset (`EVENT boot power-on` or
-`EVENT boot watchdog-reset`).
-
-`SET hal reboot` triggers a watchdog reset deliberately to apply
-staged HAL changes. The daemon should expect USB to drop briefly
-and re-enumerate, then re-handshake.
+reported via `EVENT boot power-on` or `EVENT boot watchdog-reset`.
+`SET hal reboot` triggers a watchdog reset deliberately.
