@@ -1,0 +1,31 @@
+{
+  "pins": {
+    "led_trackball_green": { "pin": 8 },
+    "led_trackball_red":   { "pin": 9 },
+
+    "vfd0_rs": { "pin": 30 },
+    "vfd0_en": { "pin": 31 },
+    "vfd0_d4": { "pin": 32 },
+    "vfd0_d5": { "pin": 33 },
+    "vfd0_d6": { "pin": 34 },
+    "vfd0_d7": { "pin": 35 },
+
+    "button_0": { "pin": 38 },
+    "button_1": { "pin": 39 },
+    "button_2": { "pin": 40 },
+    "button_3": { "pin": 41 },
+    "button_4": { "pin": 42 },
+
+    "led_0": { "pin": 44 },
+    "led_1": { "pin": 45 },
+    "led_2": { "pin": 46 },
+    "led_3": { "pin": 47 },
+
+    "ws_data": { "pin": 49 },
+
+    "relay_0": { "pin": 22 },
+    "relay_1": { "pin": 23 },
+    "relay_2": { "pin": 24 },
+    "relay_3": { "pin": 25 }
+  }
+}

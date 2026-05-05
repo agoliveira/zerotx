@@ -695,6 +695,18 @@ func main() {
 	// serial device path.
 	hub := iohub.New(*vfdPort)
 	defer hub.Close()
+	// Default event handler: log unsolicited EVENT lines so button
+	// presses, boot events, and ready signals from the Mega are
+	// visible in the daemon log. Subsystem-specific consumers
+	// (e.g. semantic button dispatch) can register additional
+	// handlers - all subscribers receive every event.
+	hub.OnEvent(func(target, payload string) {
+		if payload == "" {
+			log.Printf("iohub: EVENT %s", target)
+		} else {
+			log.Printf("iohub: EVENT %s %s", target, payload)
+		}
+	})
 	go func() {
 		if err := hub.Run(ctx); err != nil {
 			log.Printf("iohub: run: %v", err)
