@@ -6,11 +6,46 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/netclass"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/tilewarm"
 )
+
+// tileWarmStats records the most recent tilewarm run for the metrics
+// endpoint to expose. Single-writer (the runTileWarm goroutine);
+// readers take the mutex briefly.
+type tileWarmStats struct {
+	mu          sync.Mutex
+	lastRunAt   time.Time
+	lastReason  string
+	lastResult  tilewarm.Stats
+	lastError   string
+	totalRuns   int64
+	totalErrors int64
+}
+
+func (s *tileWarmStats) record(reason string, st tilewarm.Stats, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastRunAt = time.Now()
+	s.lastReason = reason
+	s.lastResult = st
+	if err != nil {
+		s.lastError = err.Error()
+		s.totalErrors++
+	} else {
+		s.lastError = ""
+	}
+	s.totalRuns++
+}
+
+func (s *tileWarmStats) snapshot() (lastRun time.Time, reason string, result tilewarm.Stats, lastErr string, totalRuns, totalErrors int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastRunAt, s.lastReason, s.lastResult, s.lastError, s.totalRuns, s.totalErrors
+}
 
 // runTileWarm is the daemon-side glue for the internal/tilewarm
 // package. It owns the goroutine cadence (boot + every 24h),
@@ -19,7 +54,7 @@ import (
 //
 // Cancellation: respects ctx; one in-flight Run completes before
 // returning when ctx is cancelled mid-pass.
-func runTileWarm(ctx context.Context, store tilewarm.Store, cfg tilewarm.Config, ncHolder *netclass.Holder) {
+func runTileWarm(ctx context.Context, store tilewarm.Store, cfg tilewarm.Config, ncHolder *netclass.Holder, stats *tileWarmStats) {
 	if store == nil {
 		return
 	}
@@ -34,6 +69,9 @@ func runTileWarm(ctx context.Context, store tilewarm.Store, cfg tilewarm.Config,
 			reason, class, cfg.CenterLatDeg, cfg.CenterLonDeg, cfg.RadiusKm,
 			cfg.Zooms, cfg.MaxAge, cfg.RatePerSec)
 		st, err := tilewarm.Run(ctx, cfg, store, esriSatelliteFetcher)
+		if stats != nil {
+			stats.record(reason, st, err)
+		}
 		if err != nil {
 			log.Printf("tilewarm: error: %v", err)
 			return

@@ -47,6 +47,14 @@ func newHub() *hub {
 	}
 }
 
+// ClientCount returns the number of currently connected WS clients.
+// Used by the metrics endpoint.
+func (h *hub) ClientCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
+}
+
 // addClient registers a new WS connection with the hub and starts the
 // per-client writer/reader goroutines.
 func (h *hub) addClient(conn *websocket.Conn) {

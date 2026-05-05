@@ -49,7 +49,7 @@ import (
 	"go.bug.st/serial"
 )
 
-const version = "0.31.0-netclass"
+const version = "0.32.0-metrics"
 
 func main() {
 	// SDL2 wants the event pump on the main OS thread. Lock it now so any
@@ -780,9 +780,15 @@ func main() {
 		log.Printf("netclass: %s (file=%s)", netClassHolder.Current(), *netClassFile)
 	}
 
+	// Tile-warm stats holder. Constructed unconditionally so the
+	// metrics endpoint can read it even when tilewarm is disabled
+	// (it will report zero runs). The goroutine that updates it
+	// is started later after the API server is up.
+	tileWarmStatsHolder := &tileWarmStats{}
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -803,7 +809,9 @@ func main() {
 
 	// Tile-warm subsystem: opportunistic re-fetch of recently-used
 	// satellite tiles around the configured site. Skipped if disabled,
-	// no warm dir configured, or no site coordinates set.
+	// no warm dir configured, or no site coordinates set. The stats
+	// holder was constructed earlier so the API metrics endpoint can
+	// always read it.
 	if !*noTileWarm && *warmTilesDir != "" && (*siteLat != 0 || *siteLon != 0) {
 		store, err := tilewarm.NewFSStore(*warmTilesDir, "satellite", "jpg")
 		if err != nil {
@@ -813,7 +821,7 @@ func main() {
 			cfg.RadiusKm = *tileWarmRadiusKm
 			cfg.MaxAge = time.Duration(*tileWarmMaxAgeDays) * 24 * time.Hour
 			cfg.RatePerSec = *tileWarmRate
-			go runTileWarm(ctx, store, cfg, netClassHolder)
+			go runTileWarm(ctx, store, cfg, netClassHolder, tileWarmStatsHolder)
 			log.Printf("tilewarm: scheduled (warm dir=%s)", *warmTilesDir)
 		}
 	}
@@ -1115,6 +1123,7 @@ func buildAPIProviders(
 	weatherSvc *weather.Service,
 	wxAlerts *wxAlertHolder,
 	netClassHolder *netclass.Holder,
+	tileWarmStatsHolder *tileWarmStats,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1314,6 +1323,23 @@ func buildAPIProviders(
 				return netclass.ErrInvalidClass
 			}
 			return netClassHolder.Set(c)
+		},
+		TileWarmStats: func() *api.TileWarmStatsSnapshot {
+			if tileWarmStatsHolder == nil {
+				return nil
+			}
+			lastRun, reason, result, lastErr, totalRuns, totalErrors := tileWarmStatsHolder.snapshot()
+			return &api.TileWarmStatsSnapshot{
+				LastRunAt:      lastRun,
+				LastReason:     reason,
+				LastConsidered: result.Considered,
+				LastSkipped:    result.Skipped,
+				LastFetched:    result.Fetched,
+				LastErrors:     result.Errors,
+				LastError:      lastErr,
+				TotalRuns:      totalRuns,
+				TotalErrors:    totalErrors,
+			}
 		},
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{

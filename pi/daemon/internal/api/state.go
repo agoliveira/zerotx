@@ -398,8 +398,30 @@ type Providers struct {
 	// the class string is invalid. nil disables the endpoint.
 	NetClassSet func(class string) error
 
+	// TileWarmStats returns a snapshot of the most recent tile-warm
+	// run plus lifetime totals. nil = subsystem disabled or no run
+	// has happened yet (the metrics endpoint omits per-run gauges
+	// when LastRunAt is zero).
+	TileWarmStats func() *TileWarmStatsSnapshot
+
 	Version string
 	Uptime  func() time.Duration
+}
+
+// TileWarmStatsSnapshot is the API-facing shape of the daemon's
+// tile-warm stats holder. Defined here (not imported from
+// internal/tilewarm) so the api package stays dependency-free of
+// the warmer; the daemon adapts.
+type TileWarmStatsSnapshot struct {
+	LastRunAt      time.Time
+	LastReason     string
+	LastConsidered int
+	LastSkipped    int
+	LastFetched    int
+	LastErrors     int
+	LastError      string
+	TotalRuns      int64
+	TotalErrors    int64
 }
 
 // WeatherAlert is the API-facing shape of a wxalert.Alert. Defined

@@ -97,6 +97,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/arm/checklist", s.handleArmChecklist)
 	mux.HandleFunc("/api/v1/weather", s.handleWeather)
 	mux.HandleFunc("/api/v1/netclass", s.handleNetClass)
+	mux.HandleFunc("/api/v1/metrics", s.handleMetrics)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 
 	// Map tile serving. /tiles/{tileset}/{z}/{x}/{y}.{ext}
 	mux.HandleFunc("/tiles/", s.handleTile)
