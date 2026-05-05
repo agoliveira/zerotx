@@ -1,6 +1,23 @@
 // Package vfd drives the ZeroTX cool-glow diagnostic display: a
-// 2x20 character VFD (Noritake CU20025ECPB-W1J) on a dedicated
-// Pro Micro 5V/16MHz, reached over USB-CDC.
+// 2x20 character VFD (Noritake CU20025ECPB-W1J) reached over USB-CDC.
+//
+// As of firmware/io v0.3.0+ the VFD is driven by the Mega 2560 IO
+// board (zerotx-io firmware), addressed via the structured protocol:
+//   SET vfd.0 line <row> <text...>
+//   SET vfd.0 clear
+//   SET vfd.0 brightness <n>
+//   SET vfd.0 tick [<n>]
+//   SET vfd.0 arm <0|1>
+//   SET vfd.0 fmmode <text>
+//   SET vfd.0 lq <pct>
+//   SET vfd.0 batt <text>
+//   SET vfd.0 alarm <warn|critical|failsafe>
+//   SET vfd.0 disarmed
+//
+// (Previously the VFD ran on a Pro Micro with a single-letter
+// protocol: L<row><sp>text, C, B<sp>level, E <kind>... The Pro
+// Micro firmware is retired; this package now speaks the Mega's
+// structured protocol exclusively.)
 //
 // The VFD is purely aesthetic: it shows live daemon activity
 // (IPC frames, CRSF telemetry, TTS events, API hits, boot init)
@@ -8,11 +25,11 @@
 // It is NOT a status surface; the HUD covers operational state.
 //
 // The package exposes a small Driver interface (WriteLines, Clear,
-// Brightness) with three implementations:
+// Brightness, Event) with three implementations:
 //
 //   - SerialDriver: real hardware. Opens the configured serial
-//     port and pushes a line-based ASCII protocol the Pro Micro
-//     firmware parses.
+//     port and pushes the structured protocol the Mega firmware
+//     parses.
 //   - LogDriver: writes to the daemon log so the firehose is
 //     observable without hardware. Useful for development.
 //   - NullDriver: no-op. Active when the -vfd-port flag is empty.
@@ -178,19 +195,20 @@ func (d *LogDriver) Event(kind string, args ...string) error {
 
 // === SerialDriver: real hardware ===
 
-// SerialDriver pushes a line-based ASCII protocol over USB-CDC to
-// the Pro Micro running the VFD firmware (firmware/vfd/). Wire
-// protocol matches the firmware's processLine() command set:
+// SerialDriver pushes the structured-protocol line format over USB-
+// CDC to the Mega 2560 running the zerotx-io firmware. Wire format
+// matches the firmware's vfd subsystem command set:
 //
-//	L<row><sp><content>\n   write content (row=0 or 1).
-//	C\n                     clear.
-//	B<sp><level>\n          brightness 0..3 (0 = max).
+//	SET vfd.0 line <row> <content>\n   write content (row=0 or 1).
+//	SET vfd.0 clear\n                  clear.
+//	SET vfd.0 brightness <level>\n     0..3 (0 = max).
+//	SET vfd.0 <param> [args...]\n      semantic events (tick, arm, etc).
 //
 // Connection is opened lazily on first use and re-opened on the
 // next write after any I/O failure. A missing/unplugged display
 // must NOT crash the daemon; the firehose continues to drive a
 // device that simply doesn't exist yet, and recovers when the
-// Pro Micro reappears.
+// Mega reappears.
 type SerialDriver struct {
 	path string
 
@@ -263,16 +281,16 @@ func (d *SerialDriver) WriteLines(row1, row2 string) error {
 	defer d.mu.Unlock()
 	r1 := padOrTruncate(row1)
 	r2 := padOrTruncate(row2)
-	if err := d.writeCmd("L0 " + r1); err != nil {
+	if err := d.writeCmd("SET vfd.0 line 0 " + r1); err != nil {
 		return err
 	}
-	return d.writeCmd("L1 " + r2)
+	return d.writeCmd("SET vfd.0 line 1 " + r2)
 }
 
 func (d *SerialDriver) Clear() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.writeCmd("C")
+	return d.writeCmd("SET vfd.0 clear")
 }
 
 func (d *SerialDriver) Brightness(level int) error {
@@ -284,7 +302,7 @@ func (d *SerialDriver) Brightness(level int) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.writeCmd(fmt.Sprintf("B %d", level))
+	return d.writeCmd(fmt.Sprintf("SET vfd.0 brightness %d", level))
 }
 
 func (d *SerialDriver) Close() error {
@@ -294,13 +312,48 @@ func (d *SerialDriver) Close() error {
 	return nil
 }
 
+// Event translates the legacy semantic-event vocabulary into the
+// Mega firmware's structured commands. The Driver interface still
+// accepts strings for the kind so call sites don't need updating
+// when the wire protocol changes; the translation lives here.
+//
+// Recognized kinds:
+//   tick, arm, fmmode (or "mode" for backward compat), lq, batt
+//   warn, critical, failsafe -> alarm subcommand
+//   disarmed
+//
+// Unknown kinds are dropped silently with a debug log; the firmware
+// would reject them anyway, no need to flood logs in steady state.
 func (d *SerialDriver) Event(kind string, args ...string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(args) == 0 {
-		return d.writeCmd("E " + kind)
+
+	var cmd string
+	switch kind {
+	case "tick", "arm", "lq", "batt":
+		// Direct param mapping: SET vfd.0 <kind> <args...>
+		cmd = "SET vfd.0 " + kind
+		if len(args) > 0 {
+			cmd += " " + strings.Join(args, " ")
+		}
+	case "mode", "fmmode":
+		// Old name was "mode"; firmware exposes "fmmode" since "mode"
+		// is reserved for display-mode SET. Translate.
+		cmd = "SET vfd.0 fmmode"
+		if len(args) > 0 {
+			cmd += " " + strings.Join(args, " ")
+		}
+	case "warn", "critical", "failsafe":
+		// Alarm subcommand on the firmware.
+		cmd = "SET vfd.0 alarm " + kind
+	case "disarmed":
+		cmd = "SET vfd.0 disarmed"
+	default:
+		// Drop unknown silently; firmware would error and we don't
+		// want event drops to flood the daemon log.
+		return nil
 	}
-	return d.writeCmd("E " + kind + " " + strings.Join(args, " "))
+	return d.writeCmd(cmd)
 }
 
 // Sprint formats two rows for diagnostic dumping. Used by tests
