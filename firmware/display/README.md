@@ -1,169 +1,100 @@
-# Display firmware (HUB75)
+# Display firmware (HUB75 on RP2040)
 
-ESP32 firmware driving two chained P2.5 64x32 HUB75 panels for the
-ZeroTX ground station instrument cluster.
+Firmware driving two chained P2.5 64x32 HUB75 panels for the ZeroTX
+ground station instrument cluster. As of v0.19.0 this firmware runs
+on a Waveshare RP2040-Zero (or any RP2040 board); the previous
+ESP32-based version is preserved in git history if you ever need to
+reference it.
+
+## Why RP2040
+
+The earlier ESP32 firmware also hosted the "Spectator" SoftAP for
+field-side onlookers. That feature was decided to not belong on the
+display device, and once removed there was no remaining reason to
+keep the ESP32: WiFi was the only capability the panel work itself
+didn't need. Migrating to RP2040 consolidates the project on a single
+small-MCU platform (the joystick CPPM/CRSF generator is also RP2040)
+and trades I2S DMA for PIO + DMA, which is a clean fit for HUB75
+parallel-bit-banged refresh.
 
 ## Protocol
 
-See [`docs/protocols/display.md`](../../docs/protocols/display.md) for
-the wire protocol the daemon and this firmware speak.
+See [`docs/protocols/display.md`](../../docs/protocols/display.md).
+The wire protocol is unchanged from the ESP32 version; the daemon
+talks to the new firmware exactly as it did before.
 
 ## Project layout
 
 ```
 firmware/display/
-├── platformio.ini       PlatformIO build config
+├── platformio.ini       PlatformIO build config (RP2040 + arduino-pico)
 ├── src/
-│   └── main.cpp         Firmware source (plain C++, not Arduino .ino)
-├── include/             Reserved for future headers
-├── .gitignore           Build artifacts and IDE state
+│   └── main.cpp         Firmware source
 └── README.md            This file
 ```
 
-Standard PlatformIO project layout. VSCode + the PlatformIO extension
-gives you full IntelliSense, navigation, and debugger integration.
-The firmware is plain C++ that uses the Arduino framework's APIs;
-nothing about it is `.ino`-specific.
-
 ## Hardware
 
-- **MCU**: ESP32 classic (DevKit V1 or any 30-pin variant)
-- **Panels**: 2x P2.5 64x32 HUB75, chained
-- **Power**: separate 5V rail, sized for ~6A peak
-- **Connection to daemon**: USB-CDC serial at 115200 8N1
+- **MCU**: Waveshare RP2040-Zero (or any RP2040 board).
+- **Panels**: 2x Waveshare P2.5 64x32 HUB75, chained → 128x32 logical.
+- **Driver library**: Adafruit Protomatter (PIO + DMA on RP2040).
+- **Power**: panels are 5V, ~6A peak combined. Use a separate 5V rail;
+  the RP2040 is powered separately via USB or its own regulator.
 
-## Default pinout
+## Pin map (default)
 
-Standard ESP32-HUB75-MatrixPanel-DMA library pinout. If your wiring
-differs, edit `setup()` in `src/main.cpp` and uncomment the
-`mxconfig.gpio.<pin> = ...` overrides.
+```
+RGB:  R1=GP2  G1=GP4  B1=GP3        # Note G/B swap for Waveshare panels
+      R2=GP5  G2=GP7  B2=GP6
+ADDR: A=GP8  B=GP9  C=GP10  D=GP11   # 1/16 scan = 4 lines, no E
+CTRL: CLK=GP12  LAT=GP13  OE=GP14
+```
 
-| HUB75 pin | ESP32 GPIO | DevKit V1 silkscreen |
-| --------- | ---------- | -------------------- |
-| R1        | 25         | D25                  |
-| G1        | 26         | D26                  |
-| B1        | 27         | D27                  |
-| R2        | 14         | D14                  |
-| G2        | 12         | D12                  |
-| B2        | 13         | D13                  |
-| A         | 23         | D23                  |
-| B         | 19         | D19                  |
-| C         | 5          | D5                   |
-| D         | 17         | D17 / TX2            |
-| E         | 22         | D22                  |
-| LAT       | 4          | D4                   |
-| OE        | 15         | D15                  |
-| CLK       | 16         | D16 / RX2            |
+The Waveshare P2.5 panels swap GREEN and BLUE channels at the wire
+level; the firmware handles this by reordering the entries in
+`rgbPins[]` (G and B positions exchanged) rather than by remapping
+GPIOs. This means the RGB565 colors in the source mean what they
+say.
 
-**GPIO 12 caveat**: this pin has a boot strap function. If the ESP32
-fails to enter download mode while the HUB75 cable is connected,
-unplug the HUB75 ribbon, flash, then reconnect.
+If your wiring differs, edit `rgbPins[]`, `addrPins[]`, `clockPin`,
+`latchPin`, `oePin` near the top of `main.cpp` and rebuild.
 
-## Build
+## Brightness
 
-PlatformIO is the supported path:
+Adafruit Protomatter has no `setBrightness` method - bit depth is
+fixed at construction. To preserve the original protocol's runtime
+brightness control, the firmware applies software dimming: every
+color computation goes through `dim565(r, g, b)`, which scales the
+RGB components by `state.brightness / 100` before encoding to RGB565.
 
-```sh
+`DISP BRIGHTNESS <0..100>` from the daemon updates `state.brightness`
+and the next render picks it up automatically. Costs a few cycles
+per pixel and is well within budget at 30+Hz refresh.
+
+## Bit depth
+
+Currently `MATRIX_BIT_DEPTH = 4` (4 bits per channel = 4096 colors).
+Higher depths cost proportionally more refresh time. 4 is the sweet
+spot for the vintage-VFD aesthetic without flicker on 128x32. Bump
+to 5 or 6 if the colors look banded; expect lower max refresh rate.
+
+## Build and flash
+
+```
 cd firmware/display
 pio run
 pio run -t upload
-pio device monitor -b 115200
+pio device monitor
 ```
 
-VSCode users: install the **PlatformIO IDE** extension. Open the
-`firmware/display/` folder as the project root. PlatformIO will
-auto-detect the project, install dependencies, and generate
-`c_cpp_properties.json` for IntelliSense.
+First flash typically requires putting the board into BOOTSEL mode
+(hold BOOTSEL while plugging USB on Pico, or press the board's
+button on RP2040-Zero). Subsequent flashes use the arduino-pico
+auto-reset.
 
-## Power-on self-test
+## Spectator note
 
-The firmware runs a visible self-test on boot before settling into
-idle mode. Sequence (~5 seconds total):
-
-| Stage | Duration | What you see                         |
-| ----- | -------- | ------------------------------------ |
-| 1     | 0.7s     | Solid red full screen                |
-| 2     | 0.7s     | Solid green full screen              |
-| 3     | 0.7s     | Solid blue full screen               |
-| 4     | 0.9s     | RGBW vertical bars across 128px      |
-| 5     | 0.9s     | Black with white seam, "A"/"B" labels|
-| 6     | 1.2s     | "ZEROTX 0.1.0" big banner            |
-| idle  | -        | Dim "ZEROTX" centered                |
-
-If any stage looks wrong, you immediately know what's broken:
-
-| Symptom                              | Likely cause                       |
-| ------------------------------------ | ---------------------------------- |
-| Nothing at all, no serial            | Boot strap pin issue (GPIO 12)     |
-| Solid red OK, green/blue wrong       | G1/B1 or G2/B2 wire mismatch       |
-| One panel dark                       | Chain ribbon or panel B power      |
-| Right panel shows left content       | Chain plugged into wrong port      |
-| Bars in wrong color order            | R/B pin swap                       |
-| Text upside down or mirrored         | A/B/C/D address pin mismatch       |
-| Half-height stripes                  | `PANELS_NUM` or scan rate wrong    |
-
-## Testing without the daemon
-
-The `disptest` CLI in `pi/daemon/cmd/disptest/` connects to the ESP32
-over USB serial and lets you fire individual protocol messages by
-hand. Use it for firmware iteration before wiring this into the live
-daemon.
-
-```sh
-cd pi/daemon
-go build -o /tmp/disptest ./cmd/disptest
-/tmp/disptest -port /dev/ttyACM1
-```
-
-Then at the prompt:
-
-```
-> mode flight
-> state bat=11.7 batpct=73 alt=124 dist=430
-> alarm critical "BATTERY EMPTY"
-> clear-alarm
-> mode idle
-```
-
-You should see the panels react in real time. Inbound messages from
-the firmware (READY, HEARTBEAT, PONG, ERROR) print with a `<--`
-prefix.
-
-## Modes
-
-The firmware implements all six protocol modes with conservative
-rendering. Iterate as needed:
-
-- **IDLE**: dim "ZEROTX" centered
-- **PREFLIGHT**: status text + GPS info if known
-- **FLIGHT**: 3-tile cluster (BAT / ALT / DIST)
-- **ALARM**: full-width colored banner with alarm text
-- **RTH**: distance to home + arrow (placeholder; no compass yet)
-- **POSTFLIGHT**: flight time + peak altitude
-
-The first round is intentionally minimal. Once it works on hardware,
-iterate on layout, colors, animations, and additional content.
-
-## Power notes
-
-The panels can pull serious current at full brightness:
-
-- 1 panel at full white: ~3-4A
-- 2 panels chained at full white: ~6-8A peak
-
-Recommendations:
-
-- Use a 5V supply rated for at least 6A continuous (8-10A safer)
-- Wire panel power directly from the supply, not through the ESP32
-- Common ground between ESP32 and panel power is mandatory
-- Firmware defaults to 80% brightness which keeps current under
-  control for testing; increase via the `BRIGHTNESS` protocol
-  message once you've verified your supply
-
-## Future
-
-- Faster refresh / double-buffering once a layout is settled
-- Custom fonts (default 5x7 is readable but plain)
-- Smoothed transitions on alarm fire (fade or pulse)
-- Compass arrow for RTH mode (need bearing-to-home from daemon)
-- Ambient idle animation
+The Spectator SoftAP feature was removed during the RP2040 port. The
+RP2040 has no WiFi. If you want to revive that feature in the future,
+do it on the Pi 400 (which already has WiFi and is closer to the
+data) or on a dedicated ESP32 with no panel-driving duties.
