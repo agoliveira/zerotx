@@ -32,8 +32,9 @@
 // - Heartbeat is a fixed 5s interval
 
 #include <Arduino.h>
-#include <Adafruit_Protomatter.h>
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <U8g2_for_Adafruit_GFX.h>
+#include "spectator.h"
 
 // Custom hand-designed pixel font for the big values - 15 tall x
 // 10 wide per glyph, 2-pixel-wide strokes, upright industrial
@@ -422,7 +423,7 @@ constexpr int LOGICAL_HEIGHT = PANEL_HEIGHT;             // 32
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 constexpr unsigned long IDLE_REDRAW_INTERVAL_MS = 1000;  // clock tick
 
-constexpr const char* FW_VERSION = "0.19.0-rp2040";
+constexpr const char* FW_VERSION = "0.18.0";
 
 // ===== VFD/LCD palette =====
 //
@@ -445,79 +446,9 @@ constexpr const char* FW_VERSION = "0.19.0-rp2040";
 #define COLOR_GAUGE_BG    0x18C3  // very dim grey for gauge background
 
 // ===== Library setup =====
-//
-// HUB75 driving moved from ESP32 (I2S DMA) to RP2040 (PIO + DMA via
-// Adafruit Protomatter). Pin assignments below match the RP2040-Zero
-// wiring; adjust if the board variant differs.
-//
-// The Waveshare P2.5 64x32 panels have green and blue swapped at the
-// wire level. With Protomatter, we swap them by reordering the
-// rgbPins[] array (G and B positions exchanged) rather than by
-// runtime pin remap as we did on the ESP32.
 
-// HUB75 pin map for RP2040-Zero. Six RGB pins, four address pins
-// (1/16 scan = 4 lines), and three control pins (CLK/LAT/OE).
-//
-// GP9-GP13 are deliberately AVOIDED here because on the RP2040-Zero
-// they sit on the edge opposite the USB-C connector, which is the
-// physically hardest edge to wire. The address/clock/latch lines
-// move to the left-edge analog pins (GP26-29, which are fully
-// digital-capable in addition to being ADC-capable) and to GP14/GP15
-// on the bottom corners.
-static uint8_t rgbPins[]  = { 2, 4, 3,    // R1, B1, G1   (G/B swap for Waveshare)
-                              5, 7, 6 };  // R2, B2, G2
-static uint8_t addrPins[] = { 8, 15, 26, 27 };  // A, B, C, D (no E for 1/16 scan)
-static const uint8_t clockPin = 28;
-static const uint8_t latchPin = 29;
-static const uint8_t oePin    = 14;
-
-// Bit depth: 4 bits per channel = 4096 colors. Higher depths cost
-// proportionally more refresh time / lower max FPS. 4 is the sweet
-// spot for our color-rich vintage-VFD aesthetic without flicker.
-static constexpr uint8_t MATRIX_BIT_DEPTH = 4;
-
-// Protomatter constructor:
-//   bitWidth = 128 (full chained width, NOT per-panel width)
-//   bitDepth = MATRIX_BIT_DEPTH (4 = 4bpp = 4096 colors)
-//   rgbCount = 1 (one set of R1G1B1+R2G2B2 pins; chained panels share)
-//   addrCount = 4 (1/16 scan -> A,B,C,D, no E)
-//   doubleBuffer = false (we coalesce via a dirty flag in render dispatcher)
-Adafruit_Protomatter matrix(
-    128,                         // bitWidth: total chain width
-    MATRIX_BIT_DEPTH,            // bit depth
-    1, rgbPins,                  // 1 set of RGB pins for the chain
-    4, addrPins,                 // 4 address lines
-    clockPin, latchPin, oePin,
-    false                        // single buffered
-);
-
-// dma_display is retained as a non-owning alias to keep the existing
-// rendering code (originally written against the ESP32 lib's pointer
-// API) working unchanged. All method calls go through Adafruit_GFX
-// which both libraries inherit from. clearScreen() and
-// setBrightness8() are not in Adafruit_GFX so we wrap those - see
-// below.
-static Adafruit_Protomatter* dma_display = &matrix;
+MatrixPanel_I2S_DMA *dma_display = nullptr;
 U8G2_FOR_ADAFRUIT_GFX u8g2;
-
-// dim565 returns a brightness-scaled RGB565 color. Protomatter has
-// no runtime brightness method (its bit-depth model fixes brightness
-// at construction), so we apply a software scale to the RGB
-// components before encoding. state.brightness is 0..100; we scale
-// to 0..255 here.
-//
-// Forward-declared here; the body lives after `State state;` is
-// defined so we can access state.brightness directly.
-static inline uint16_t dim565(uint8_t r, uint8_t g, uint8_t b);
-
-// Compatibility shims for the ESP32 lib's clearScreen / setBrightness8
-// methods which the rendering code calls via dma_display->. Both have
-// no direct Protomatter equivalent so we provide functional
-// wrappers; they're free-standing since C++ doesn't let us extend
-// Protomatter's API non-intrusively.
-static inline void clear_screen() {
-  matrix.fillScreen(0);
-}
 
 // ===== State =====
 
@@ -612,16 +543,6 @@ struct State {
 Mode current_mode = Mode::IDLE;
 State state;
 
-// dim565 body (forward-declared above). Lives here so the State
-// definition is complete and state.brightness is readable.
-static inline uint16_t dim565(uint8_t r, uint8_t g, uint8_t b) {
-  uint16_t br = (uint16_t)state.brightness * 255U / 100U;
-  r = (uint8_t)((uint16_t)r * br >> 8);
-  g = (uint8_t)((uint16_t)g * br >> 8);
-  b = (uint8_t)((uint16_t)b * br >> 8);
-  return matrix.color565(r, g, b);
-}
-
 // Animation frame counter. Incremented every ANIM_FRAME_MS in the
 // main loop and used to compute chevron position. Wraps freely.
 unsigned long anim_frame = 0;
@@ -664,21 +585,41 @@ void setup() {
   Serial.begin(115200);
   // Don't wait for serial; the daemon may connect later.
 
-  // Panel configuration is now defined at the global
-  // Adafruit_Protomatter constructor (see "Library setup" above).
-  // The Waveshare P2.5 64x32 panels are 1/16 scan with the G and B
-  // channels swapped at the wire level; both are handled there.
-  // Panel init via Adafruit Protomatter. Pin map and panel topology
-  // (chain length, bit depth, RGB pin ordering for Waveshare G/B
-  // swap) are configured at the global Adafruit_Protomatter
-  // construction above; here we just call begin() and check status.
-  ProtomatterStatus rc = matrix.begin();
-  if (rc != PROTOMATTER_OK) {
-    Serial.print(F("DISP ERROR \"panel init failed rc="));
-    Serial.print((int)rc);
-    Serial.println(F("\""));
+  // Panel configuration. The Waveshare P2.5 64x32 (and most 64x32
+  // panels) are 1/16 scan, which means they only use 4 address lines
+  // (A, B, C, D). The E pin is for 1/32 scan panels (typical of
+  // 64x64) and isn't present on these panels at all.
+  //
+  // We explicitly mark E as unused so the library doesn't try to
+  // drive a phantom GPIO. -1 (or HUB75_I2S_CFG::DEFAULT_HOST_ID
+  // sentinel) tells the library to skip the pin.
+  HUB75_I2S_CFG mxconfig(
+    PANEL_WIDTH,    // module width
+    PANEL_HEIGHT,   // module height
+    PANELS_NUM      // chain length
+  );
+  mxconfig.gpio.e = -1;  // No E pin on 1/16 scan panels (Waveshare P2.5 64x32)
+
+  // Waveshare P2.5 64x32 panels have GREEN and BLUE channels swapped
+  // relative to the standard HUB75 pinout (documented Adafruit caveat
+  // for 2.5mm pitch panels). Remap G1<->B1 and G2<->B2 so the
+  // RGB565 color values in the firmware mean what they say.
+  mxconfig.gpio.r1 = 25; mxconfig.gpio.g1 = 27; mxconfig.gpio.b1 = 26;
+  mxconfig.gpio.r2 = 14; mxconfig.gpio.g2 = 13; mxconfig.gpio.b2 = 12;
+
+  // Other pin overrides (uncomment if your wiring differs from defaults):
+  // mxconfig.gpio.a = 23;  mxconfig.gpio.b = 19;  mxconfig.gpio.c = 5;
+  // mxconfig.gpio.d = 17;  mxconfig.gpio.lat = 4; mxconfig.gpio.oe = 15;
+  // mxconfig.gpio.clk = 16;
+
+  dma_display = new MatrixPanel_I2S_DMA(mxconfig);
+  if (!dma_display->begin()) {
+    // Init failed. Without panels we can still respond to serial,
+    // so don't halt; just log.
+    Serial.println(F("DISP ERROR \"panel init failed\""));
   }
-  clear_screen();
+  dma_display->setBrightness8(state.brightness * 255 / 100);
+  dma_display->clearScreen();
 
   // Initialize U8g2_for_Adafruit_GFX as the text rendering layer.
   // Direct setFont() on the HUB75 library has known positioning
@@ -696,6 +637,10 @@ void setup() {
   // they're no longer earning their boot-time cost.
   show_boot_banner();
 
+  // Spectator AP starts after the panel is alive so a WiFi failure
+  // can't blackhole the panel. Read-only HUD for onlookers; see
+  // spectator.h for design notes.
+  spectator::begin();
 
   boot_ms = millis();
   send_ready();
@@ -708,21 +653,19 @@ void setup() {
 // first frame will overwrite it.
 void show_boot_banner() {
   if (!dma_display) return;
-  clear_screen();
+  dma_display->clearScreen();
   u8g2.setFont(FONT_TEXT);
-  u8g2.setForegroundColor(dim565(0, 200, 160));
+  u8g2.setForegroundColor(dma_display->color565(0, 200, 160));
   int w_zerotx = u8g2.getUTF8Width("ZEROTX");
   u8g2.setCursor((LOGICAL_WIDTH - w_zerotx) / 2, 18);
   u8g2.print("ZEROTX");
   u8g2.setFont(FONT_SMALL);
-  u8g2.setForegroundColor(dim565(0, 100, 80));
+  u8g2.setForegroundColor(dma_display->color565(0, 100, 80));
   int w_ver = u8g2.getUTF8Width(FW_VERSION);
   u8g2.setCursor((LOGICAL_WIDTH - w_ver) / 2, 30);
   u8g2.print(FW_VERSION);
-  matrix.show();
   delay(800);
-  clear_screen();
-  matrix.show();
+  dma_display->clearScreen();
 }
 
 // ===== Main loop =====
@@ -755,6 +698,32 @@ void loop() {
     last_heartbeat_ms = now;
     send_heartbeat();
   }
+
+  // Spectator AP servicing. push_state happens at telemetry-update
+  // points (see handle_line); this drives the HTTP/WS pumps and
+  // the periodic broadcast.
+  {
+    spectator::Snapshot s;
+    s.armed_known  = state.armed_known;
+    s.armed        = state.armed;
+    s.flight_mode  = state.flight_mode.c_str();
+    s.alt_known    = state.alt_known;
+    s.alt_m        = state.alt_m;
+    s.dist_known   = state.dist_known;
+    s.dist_m       = state.dist_m;
+    s.spd_known    = state.spd_known;
+    s.spd_kmh      = state.spd_kmh;
+    s.link_known   = state.link_known;
+    s.link_pct     = state.link_pct;
+    s.bat_known    = state.bat_known;
+    s.bat_v        = state.bat_v;
+    s.time_known   = state.time_known;
+    s.time_s       = state.time_s;
+    s.alarm_active = state.alarm_active;
+    s.alarm_level  = state.alarm_level.c_str();
+    spectator::push_state(s);
+  }
+  spectator::tick();
 
   // Idle clock redraw.
   if (current_mode == Mode::IDLE && now - last_redraw_ms >= IDLE_REDRAW_INTERVAL_MS) {
@@ -961,8 +930,9 @@ void handle_line(const char* line) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     state.brightness = pct;
-    // Brightness change is picked up automatically on the next
-    // render: dim565 reads state.brightness when computing colors.
+    if (dma_display) {
+      dma_display->setBrightness8(pct * 255 / 100);
+    }
   }
   else if (strcmp(cmd, "THRESHOLDS") == 0) {
     // Reset all domains; missing fields = clear that domain.
@@ -1107,7 +1077,7 @@ void render() {
   // draws fully overwrite their previous output, so clearing is
   // unnecessary and causes flicker.
   if (current_mode != last_rendered_mode) {
-    clear_screen();
+    dma_display->clearScreen();
     last_rendered_mode = current_mode;
   }
 
@@ -1119,11 +1089,6 @@ void render() {
     case Mode::RTH:        render_rth(); break;
     case Mode::POSTFLIGHT: render_postflight(); break;
   }
-
-  // Protomatter requires show() to push the back buffer to the
-  // panel via PIO. The ESP32 lib refreshed continuously via I2S
-  // DMA without an explicit flush; on RP2040 we need this call.
-  matrix.show();
 }
 
 // ===== Tile accent palette =====
@@ -1219,9 +1184,9 @@ static inline void draw_static_bar(int x, int width, int pct, uint16_t color) {
   int fill_w = (width * pct) / 100;
   // Background: very dim version of color (1/8 brightness via shift)
   uint16_t bg = (color & 0x18C3); // shift each channel ~3 bits
-  matrix.fillRect(x, BAR_Y, width, BAR_HEIGHT, bg);
+  dma_display->fillRect(x, BAR_Y, width, BAR_HEIGHT, bg);
   if (fill_w > 0) {
-    matrix.fillRect(x, BAR_Y, fill_w, BAR_HEIGHT, color);
+    dma_display->fillRect(x, BAR_Y, fill_w, BAR_HEIGHT, color);
   }
 }
 
@@ -1230,7 +1195,7 @@ static inline void draw_static_bar(int x, int width, int pct, uint16_t color) {
 // stale: true = no recent updates, animation frozen.
 static inline void draw_trend_bar(int x, int width, uint16_t color, int delta, bool stale) {
   // Solid filled bar
-  matrix.fillRect(x, BAR_Y, width, BAR_HEIGHT, color);
+  dma_display->fillRect(x, BAR_Y, width, BAR_HEIGHT, color);
 
   // No chevron when no trend or stale
   if (delta == 0 || stale) return;
@@ -1274,7 +1239,7 @@ static inline void draw_trend_bar(int x, int width, uint16_t color, int delta, b
         int px = chev_x + col;
         // Clip to bar bounds
         if (px >= x && px < x + width) {
-          matrix.drawPixel(px, BAR_Y + row, COLOR_BG);
+          dma_display->drawPixel(px, BAR_Y + row, COLOR_BG);
         }
       }
     }
@@ -1299,7 +1264,7 @@ static void draw_custom_glyph(int x, int y, int glyph_idx, uint16_t color) {
     uint16_t bits = CUSTOM_GLYPHS[glyph_idx][row];
     for (int col = 0; col < CUSTOM_GLYPH_WIDTH; col++) {
       if (bits & (1 << (11 - col))) {
-        matrix.drawPixel(x + col, y + row, color);
+        dma_display->drawPixel(x + col, y + row, color);
       }
     }
   }
@@ -1396,7 +1361,7 @@ static void draw_custom_decimal_centered(int int_part, int frac_part,
 void render_idle() {
   u8g2.setFont(FONT_TEXT);
   // Dim version of label color so it whispers rather than shouts.
-  u8g2.setForegroundColor(dim565(0, 50, 40));
+  u8g2.setForegroundColor(dma_display->color565(0, 50, 40));
   const char* msg = "ZEROTX";
   int w = u8g2.getUTF8Width(msg);
   u8g2.setCursor((LOGICAL_WIDTH - w) / 2, 22);
@@ -1469,7 +1434,7 @@ void render_flight() {
 
   if (digits_changed) {
     // Clear above-bar area so old digits don't ghost
-    matrix.fillRect(0, 0, LOGICAL_WIDTH, 27, COLOR_BG);
+    dma_display->fillRect(0, 0, LOGICAL_WIDTH, 27, COLOR_BG);
     last_bat_x10 = cur_bat_x10;
     last_alt_m = state.alt_m;
     last_dist_m = state.dist_m;
@@ -1588,16 +1553,16 @@ void render_flight() {
 void render_alarm() {
   uint16_t bg, fg;
   if (state.alarm_level == "critical") {
-    bg = dim565(80, 0, 0);
-    fg = dim565(255, 80, 80);
+    bg = dma_display->color565(80, 0, 0);
+    fg = dma_display->color565(255, 80, 80);
   } else if (state.alarm_level == "warning") {
-    bg = dim565(60, 30, 0);
+    bg = dma_display->color565(60, 30, 0);
     fg = COLOR_CAUTION;
   } else {
     bg = COLOR_BG;
     fg = COLOR_VALUE;
   }
-  matrix.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT, bg);
+  dma_display->fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT, bg);
 
   u8g2.setFont(FONT_SMALL);
   u8g2.setForegroundColor(fg);
