@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "hardware/watchdog.h"
 #include "tusb.h"
 
 #include "protocol.h"
@@ -21,7 +22,15 @@
 
 #define CRSF_BAUD       400000u
 
-#define FW_VERSION_STRING "zerotx-fw m1.7-armkey"
+/* Hardware watchdog timeout. The main loop runs in well under 10ms
+ * on the happy path; CRSF emission cadence is 20ms. 500ms gives
+ * ample headroom for transient stalls (USB enumeration glitches,
+ * occasional getchar bursts) while still catching real hangs in a
+ * timely fashion. pause_on_debug=true so attaching a debugger
+ * doesn't trigger a reset mid-step. */
+#define WATCHDOG_TIMEOUT_MS  500u
+
+#define FW_VERSION_STRING "zerotx-fw m1.8-wdt"
 
 static uint8_t s_tx_hb_seq = 0;
 static uint8_t s_tx_seq = 0;
@@ -124,11 +133,24 @@ int main(void) {
     stdio_init_all();          /* enables USB CDC if pico_enable_stdio_usb=1 */
     setvbuf(stdout, NULL, _IONBF, 0);
 
+    /* Note watchdog reset cause BEFORE arming a fresh watchdog.
+     * watchdog_caused_reboot() is sticky across the reset so we can
+     * log "watchdog reset" the first time the firmware comes up
+     * after a hang. Subsequent boots from a clean power cycle
+     * report cleanly. We defer logging until USB is up (announce
+     * block below) since ipc_log() needs the CDC to be ready. */
+    bool wdt_caused_reboot = watchdog_caused_reboot();
+
     crsf_init(CRSF_BAUD);
     status_led_init();
     ipc_init(usb_write_byte);
     state_init();
     input_arm_init();
+
+    /* Arm the hardware watchdog. Must be kicked at least every
+     * WATCHDOG_TIMEOUT_MS or the chip resets. The main loop
+     * kicks unconditionally on every iteration. */
+    watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
 
     uint64_t last_crsf_us = 0;
     uint64_t last_tx_hb_us = 0;
@@ -136,6 +158,11 @@ int main(void) {
     bool announced = false;
 
     while (true) {
+        /* Kick the watchdog at the top of every iteration. If
+         * anything below this hangs for longer than the timeout,
+         * the chip resets and CRSF stops, FC fails safe. */
+        watchdog_update();
+
         uint64_t now = time_us_64();
 
         /* USB enumeration -> exit BOOT -> PENDING. */
@@ -143,6 +170,11 @@ int main(void) {
             state_note_usb_ready(now);
             if (!announced) {
                 ipc_log("%s ready, crsf %lu baud", FW_VERSION_STRING, (unsigned long)CRSF_BAUD);
+                if (wdt_caused_reboot) {
+                    ipc_log("boot cause: watchdog reset (recovered from hang)");
+                } else {
+                    ipc_log("boot cause: power-on or manual reset");
+                }
                 announced = true;
             }
         }

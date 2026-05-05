@@ -27,6 +27,7 @@ target_link_libraries(zerotx-fw
     pico_stdlib
     hardware_uart
     hardware_pio
+    hardware_watchdog
 )
 
 # USB CDC carries the IPC protocol; UART stdio off (UART0 is for CRSF).
