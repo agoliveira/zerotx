@@ -27,9 +27,9 @@
 // The package exposes a small Driver interface (WriteLines, Clear,
 // Brightness, Event) with three implementations:
 //
-//   - SerialDriver: real hardware. Opens the configured serial
-//     port and pushes the structured protocol the Mega firmware
-//     parses.
+//   - HubDriver: real hardware. Sends VFD-specific command lines via
+//     a shared iohub.Client (see internal/iohub) so the same Mega
+//     connection can serve other subsystems too.
 //   - LogDriver: writes to the daemon log so the firehose is
 //     observable without hardware. Useful for development.
 //   - NullDriver: no-op. Active when the -vfd-port flag is empty.
@@ -43,12 +43,11 @@ package vfd
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"strings"
 	"sync"
 
-	"go.bug.st/serial"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 )
 
 // Width is the VFD's character columns.
@@ -95,12 +94,20 @@ type Driver interface {
 
 // New returns a Driver for the given address. Special values:
 //
-//	""    -> NullDriver (VFD disabled, no-op)
-//	"log" -> LogDriver (writes to the daemon log)
+//   - "" (empty)  -> NullDriver: every call is a no-op. Use when the
+//     -vfd-port flag is empty (no display attached).
+//   - "log"       -> LogDriver: writes to the daemon log so the
+//     firehose can be observed without hardware.
 //
 // Anything else is treated as a serial device path (e.g.
 // /dev/ttyACM2). The serial connection is opened lazily on first
 // use; New itself never blocks.
+//
+// New constructs a private iohub.Client owned by the returned
+// driver. The daemon's main wiring should use NewWithHub instead so
+// the Mega connection is shared with other subsystems (trackball
+// LED, indicator LEDs, etc.). Close on a New-constructed driver
+// also closes its private hub.
 func New(addr string) Driver {
 	switch addr {
 	case "":
@@ -108,7 +115,8 @@ func New(addr string) Driver {
 	case "log":
 		return &LogDriver{logf: log.Printf}
 	default:
-		return &SerialDriver{path: addr}
+		hub := iohub.New(addr)
+		return &HubDriver{hub: hub, ownsHub: true}
 	}
 }
 
@@ -193,122 +201,61 @@ func (d *LogDriver) Event(kind string, args ...string) error {
 	return nil
 }
 
-// === SerialDriver: real hardware ===
+// === HubDriver: real hardware via iohub.Client ===
 
-// SerialDriver pushes the structured-protocol line format over USB-
-// CDC to the Mega 2560 running the zerotx-io firmware. Wire format
-// matches the firmware's vfd subsystem command set:
+// HubDriver speaks the structured VFD protocol via a shared
+// iohub.Client. The client owns the serial port; this driver just
+// formats VFD-specific command lines and passes them to Send.
 //
-//	SET vfd.0 line <row> <content>\n   write content (row=0 or 1).
-//	SET vfd.0 clear\n                  clear.
-//	SET vfd.0 brightness <level>\n     0..3 (0 = max).
-//	SET vfd.0 <param> [args...]\n      semantic events (tick, arm, etc).
-//
-// Connection is opened lazily on first use and re-opened on the
-// next write after any I/O failure. A missing/unplugged display
-// must NOT crash the daemon; the firehose continues to drive a
-// device that simply doesn't exist yet, and recovers when the
-// Mega reappears.
-type SerialDriver struct {
-	path string
+// Two ways to construct: New(addr) creates a private iohub.Client
+// for backward compatibility (callers that don't know about iohub
+// can keep using the old API). NewWithHub(client) takes a shared
+// client so the same Mega connection can be used for VFD and other
+// subsystems (trackball LED, indicator LEDs, etc).
+type HubDriver struct {
+	hub iohub.Client
 
-	mu     sync.Mutex
-	port   io.WriteCloser
-	logged bool // suppress repeated open-error logs
+	// ownsHub is true when this driver constructed its own hub (via
+	// New). Close on such drivers also closes the hub. When the hub
+	// is shared (via NewWithHub), Close is a no-op so the shared
+	// hub stays alive for other consumers.
+	ownsHub bool
 }
 
-// open opens the serial port at d.path with reasonable USB-CDC
-// defaults (115200 8N1, no flow control). Caller must hold d.mu.
-// Returns nil on success; any error leaves d.port == nil so the
-// next call retries.
-func (d *SerialDriver) open() error {
-	if d.port != nil {
-		return nil
-	}
-	mode := &serial.Mode{
-		BaudRate: 115200,
-		DataBits: 8,
-		Parity:   serial.NoParity,
-		StopBits: serial.OneStopBit,
-	}
-	p, err := serial.Open(d.path, mode)
-	if err != nil {
-		if !d.logged {
-			log.Printf("vfd: open %s: %v (will retry on next write)", d.path, err)
-			d.logged = true
-		}
-		return err
-	}
-	log.Printf("vfd: %s open at 115200", d.path)
-	d.port = p
-	d.logged = false
-	return nil
+// NewWithHub returns a Driver that sends VFD commands to the given
+// iohub.Client. The client lifecycle is managed by the caller; the
+// returned driver's Close is a no-op.
+func NewWithHub(hub iohub.Client) Driver {
+	return &HubDriver{hub: hub, ownsHub: false}
 }
 
-// close drops the serial handle. Caller must hold d.mu.
-func (d *SerialDriver) closeLocked() {
-	if d.port != nil {
-		_ = d.port.Close()
-		d.port = nil
-	}
-}
-
-// writeCmd writes one newline-terminated command line. Re-opens
-// the port once on transient failure; the second failure surfaces
-// as the returned error and the caller treats it as "device not
-// available right now" without escalating.
-func (d *SerialDriver) writeCmd(line string) error {
-	if err := d.open(); err != nil {
-		return err
-	}
-	if _, err := d.port.Write([]byte(line + "\n")); err != nil {
-		d.closeLocked()
-		// One retry: the most common failure is the Pro Micro
-		// having been replugged since the last open.
-		if openErr := d.open(); openErr != nil {
-			return openErr
-		}
-		if _, retryErr := d.port.Write([]byte(line + "\n")); retryErr != nil {
-			d.closeLocked()
-			return retryErr
-		}
-	}
-	return nil
-}
-
-func (d *SerialDriver) WriteLines(row1, row2 string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (d *HubDriver) WriteLines(row1, row2 string) error {
 	r1 := padOrTruncate(row1)
 	r2 := padOrTruncate(row2)
-	if err := d.writeCmd("SET vfd.0 line 0 " + r1); err != nil {
+	if err := d.hub.Send("SET vfd.0 line 0 " + r1); err != nil {
 		return err
 	}
-	return d.writeCmd("SET vfd.0 line 1 " + r2)
+	return d.hub.Send("SET vfd.0 line 1 " + r2)
 }
 
-func (d *SerialDriver) Clear() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.writeCmd("SET vfd.0 clear")
+func (d *HubDriver) Clear() error {
+	return d.hub.Send("SET vfd.0 clear")
 }
 
-func (d *SerialDriver) Brightness(level int) error {
+func (d *HubDriver) Brightness(level int) error {
 	if level < 0 {
 		level = 0
 	}
 	if level > 3 {
 		level = 3
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.writeCmd(fmt.Sprintf("SET vfd.0 brightness %d", level))
+	return d.hub.Send(fmt.Sprintf("SET vfd.0 brightness %d", level))
 }
 
-func (d *SerialDriver) Close() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.closeLocked()
+func (d *HubDriver) Close() error {
+	if d.ownsHub && d.hub != nil {
+		return d.hub.Close()
+	}
 	return nil
 }
 
@@ -324,10 +271,7 @@ func (d *SerialDriver) Close() error {
 //
 // Unknown kinds are dropped silently with a debug log; the firmware
 // would reject them anyway, no need to flood logs in steady state.
-func (d *SerialDriver) Event(kind string, args ...string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
+func (d *HubDriver) Event(kind string, args ...string) error {
 	var cmd string
 	switch kind {
 	case "tick", "arm", "lq", "batt":
@@ -353,7 +297,7 @@ func (d *SerialDriver) Event(kind string, args ...string) error {
 		// want event drops to flood the daemon log.
 		return nil
 	}
-	return d.writeCmd(cmd)
+	return d.hub.Send(cmd)
 }
 
 // Sprint formats two rows for diagnostic dumping. Used by tests

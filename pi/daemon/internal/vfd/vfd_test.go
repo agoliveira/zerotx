@@ -191,8 +191,8 @@ func TestNew_DispatchesByAddr(t *testing.T) {
 	if _, ok := New("log").(*LogDriver); !ok {
 		t.Errorf("\"log\" addr should give LogDriver")
 	}
-	if _, ok := New("/dev/ttyACM2").(*SerialDriver); !ok {
-		t.Errorf("path addr should give SerialDriver")
+	if _, ok := New("/dev/ttyACM2").(*HubDriver); !ok {
+		t.Errorf("path addr should give HubDriver")
 	}
 }
 
