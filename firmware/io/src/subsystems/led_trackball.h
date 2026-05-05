@@ -59,9 +59,20 @@ private:
   static const char* stateName(State s);
 
   // Pin numbers resolved from HAL at begin() time. Stored locally so
-  // tick() doesn't keep going through the HAL accessor.
-  uint8_t green_pin_ = 0xFF;
-  uint8_t red_pin_   = 0xFF;
+  // tick() doesn't keep going through the HAL accessor. Per-pin
+  // ACTIVE_LOW flags also captured at begin() so render() picks the
+  // correct GPIO levels.
+  uint8_t green_pin_         = 0xFF;
+  uint8_t red_pin_           = 0xFF;
+  bool    green_active_low_  = false;
+  bool    red_active_low_    = false;
+
+  // Helpers for picking levels based on per-pin polarity.
+  uint8_t greenOnLevel()  const { return green_active_low_ ? LOW  : HIGH; }
+  uint8_t greenOffLevel() const { return green_active_low_ ? HIGH : LOW;  }
+  uint8_t redOnLevel()    const { return red_active_low_   ? LOW  : HIGH; }
+  uint8_t redOffLevel()   const { return red_active_low_   ? HIGH : LOW;  }
+
   State   state_ = State::Off;
 };
 

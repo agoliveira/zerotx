@@ -8,22 +8,20 @@
 
 namespace zerotx {
 
-// Active-LOW outputs: NPN transistor sinks LED-cathode line to GND
-// when the GPIO is HIGH, lighting the LED. Default state at boot is
-// transistors OFF -> GPIO LOW -> LEDs dark.
-//
-// (If the wiring ends up active-HIGH instead, flip ON_LEVEL and
-// OFF_LEVEL. Single point of change.)
-static constexpr uint8_t ON_LEVEL  = HIGH;
-static constexpr uint8_t OFF_LEVEL = LOW;
+// Default polarity: HIGH = LED lit. The HAL ACTIVE_LOW flag flips
+// this per-pin for boards wired through an inverting transistor
+// stage (NPN switching the LED cathode to GND, etc.). The level
+// helpers in led_trackball.h consult the captured per-pin polarity.
 
 void LedTrackball::begin(Stream& out) {
-  green_pin_ = hal::pin(hal::HAL_LED_TRACKBALL_GREEN);
-  red_pin_   = hal::pin(hal::HAL_LED_TRACKBALL_RED);
+  green_pin_        = hal::pin(hal::HAL_LED_TRACKBALL_GREEN);
+  red_pin_          = hal::pin(hal::HAL_LED_TRACKBALL_RED);
+  green_active_low_ = hal::activeLow(hal::HAL_LED_TRACKBALL_GREEN);
+  red_active_low_   = hal::activeLow(hal::HAL_LED_TRACKBALL_RED);
   pinMode(green_pin_, OUTPUT);
   pinMode(red_pin_, OUTPUT);
-  digitalWrite(green_pin_, OFF_LEVEL);
-  digitalWrite(red_pin_, OFF_LEVEL);
+  digitalWrite(green_pin_, greenOffLevel());
+  digitalWrite(red_pin_, redOffLevel());
   state_ = State::Off;
   proto::writeEvent(out, "led.trackball", "ready");
 }
@@ -36,13 +34,13 @@ void LedTrackball::tick(uint32_t now_ms, Stream& out) {
 void LedTrackball::render(uint32_t now_ms) {
   switch (state_) {
     case State::Off:
-      digitalWrite(green_pin_, OFF_LEVEL);
-      digitalWrite(red_pin_, OFF_LEVEL);
+      digitalWrite(green_pin_, greenOffLevel());
+      digitalWrite(red_pin_,   redOffLevel());
       break;
 
     case State::GreenSolid:
-      digitalWrite(green_pin_, ON_LEVEL);
-      digitalWrite(red_pin_, OFF_LEVEL);
+      digitalWrite(green_pin_, greenOnLevel());
+      digitalWrite(red_pin_,   redOffLevel());
       break;
 
     case State::GreenPulse: {
@@ -58,21 +56,21 @@ void LedTrackball::render(uint32_t now_ms) {
         : (uint8_t)((2000 - phase) * 255UL / 1000);
       uint16_t cycle = now_ms % 20;  // 50Hz at 20ms period
       bool on = (cycle * 255 / 20) < duty;
-      digitalWrite(green_pin_, on ? ON_LEVEL : OFF_LEVEL);
-      digitalWrite(red_pin_, OFF_LEVEL);
+      digitalWrite(green_pin_, on ? greenOnLevel() : greenOffLevel());
+      digitalWrite(red_pin_,   redOffLevel());
       break;
     }
 
     case State::RedSolid:
-      digitalWrite(green_pin_, OFF_LEVEL);
-      digitalWrite(red_pin_, ON_LEVEL);
+      digitalWrite(green_pin_, greenOffLevel());
+      digitalWrite(red_pin_,   redOnLevel());
       break;
 
     case State::RedBlink: {
       // ~3Hz blink, 50% duty.
       bool on = (now_ms / 150) % 2 == 0;
-      digitalWrite(green_pin_, OFF_LEVEL);
-      digitalWrite(red_pin_, on ? ON_LEVEL : OFF_LEVEL);
+      digitalWrite(green_pin_, greenOffLevel());
+      digitalWrite(red_pin_,   on ? redOnLevel() : redOffLevel());
       break;
     }
   }

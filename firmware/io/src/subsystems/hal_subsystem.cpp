@@ -51,12 +51,16 @@ void HalSubsystem::emitMap(Stream& out) {
            (unsigned)hal::HAL_PIN_COUNT);
   proto::writeResponse(out, body);
 
-  // One line per pin. Format: "hal pin <id-num> <name> <pin-num>"
+  // One line per pin. Format: "hal pin <id-num> <name> <pin-num> <flags>"
+  // flags is hex-formatted so bit composition is easy to read at a
+  // glance (0x01 = ACTIVE_LOW).
   for (uint8_t i = 0; i < hal::HAL_PIN_COUNT; ++i) {
     hal::HalPinId id = static_cast<hal::HalPinId>(i);
     const char* nm = hal::pinName(id);
-    snprintf(body, sizeof(body), "hal pin %u %s %u",
-             (unsigned)i, nm ? nm : "?", (unsigned)hal::pin(id));
+    snprintf(body, sizeof(body), "hal pin %u %s %u 0x%02x",
+             (unsigned)i, nm ? nm : "?",
+             (unsigned)hal::pin(id),
+             (unsigned)hal::flags(id));
     proto::writeResponse(out, body);
   }
 }
@@ -95,8 +99,50 @@ void HalSubsystem::handleSet(const proto::Command& cmd, Stream& out) {
       return;
     }
     char body[64];
-    snprintf(body, sizeof(body), "hal staged %s %ld (reboot to apply)",
+    snprintf(body, sizeof(body), "hal staged pin %s %ld (reboot to apply)",
              nameStr, n);
+    proto::writeResponse(out, body);
+    return;
+  }
+
+  if (strcmp(p, "flag") == 0) {
+    // SET hal flag <name> <bitmask>
+    // bitmask accepts decimal, hex (0x...), or binary (0b...).
+    const char* nameStr = cmd.arg(0);
+    const char* maskStr = cmd.arg(1);
+    if (!nameStr || !maskStr) {
+      proto::writeError(out, "hal", "usage:set hal flag <name> <bitmask>");
+      return;
+    }
+    hal::HalPinId id;
+    if (!hal::pinIdByName(nameStr, id)) {
+      proto::writeError(out, "hal", "unknown-pin-name");
+      return;
+    }
+    char* end;
+    long m;
+    if (maskStr[0] == '0' && (maskStr[1] == 'x' || maskStr[1] == 'X')) {
+      m = strtol(maskStr + 2, &end, 16);
+    } else if (maskStr[0] == '0' && (maskStr[1] == 'b' || maskStr[1] == 'B')) {
+      m = strtol(maskStr + 2, &end, 2);
+    } else {
+      m = strtol(maskStr, &end, 10);
+    }
+    if (*end != '\0') {
+      proto::writeError(out, "hal", "invalid-bitmask");
+      return;
+    }
+    if (m < 0 || m > 255) {
+      proto::writeError(out, "hal", "bitmask-out-of-range");
+      return;
+    }
+    if (!hal::stageFlags(id, static_cast<uint8_t>(m))) {
+      proto::writeError(out, "hal", "stage-failed");
+      return;
+    }
+    char body[64];
+    snprintf(body, sizeof(body), "hal staged flag %s 0x%02lx (reboot to apply)",
+             nameStr, m & 0xFFL);
     proto::writeResponse(out, body);
     return;
   }

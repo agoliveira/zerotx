@@ -27,7 +27,7 @@ namespace hal {
 
 // Stable pin identifiers. Order is part of the EEPROM layout - new
 // entries go at the END to keep older EEPROM contents valid. If you
-// reorder these, bump HAL_VERSION in hal.cpp.
+// reorder these, bump HAL_EEPROM_VERSION in hal.cpp.
 enum HalPinId : uint8_t {
   HAL_LED_TRACKBALL_GREEN = 0,
   HAL_LED_TRACKBALL_RED   = 1,
@@ -52,8 +52,21 @@ enum HalPinId : uint8_t {
   HAL_LED_3 = 16,
   // WS2813 strip data line.
   HAL_WS_DATA = 17,
+  // 4 relays. Active-high default like all other outputs; per-pin
+  // ACTIVE_LOW flag flips polarity for boards that need it.
+  HAL_RELAY_0 = 18,
+  HAL_RELAY_1 = 19,
+  HAL_RELAY_2 = 20,
+  HAL_RELAY_3 = 21,
   HAL_PIN_COUNT  // sentinel; must be last
 };
+
+// Per-pin flag bits. Bit 0 (ACTIVE_LOW) inverts the active level for
+// output subsystems: HIGH becomes idle, LOW becomes asserted. The
+// firmware default for ALL outputs is active-high (HIGH = active);
+// setting this flag is for boards that wire their input through a
+// transistor stage that inverts the polarity.
+constexpr uint8_t HAL_FLAG_ACTIVE_LOW = 0x01;
 
 // Source of the currently-active pin map. Reported via GET hal map
 // so the daemon can tell whether the Mega is on operator-config or
@@ -74,6 +87,16 @@ void begin();
 // after begin() ran. Defined for all valid HalPinId values.
 uint8_t pin(HalPinId id);
 
+// Current flag bitmask for the given id. Bit definitions are the
+// HAL_FLAG_* constants. Returns 0 for invalid ids.
+uint8_t flags(HalPinId id);
+
+// Convenience: true if the ACTIVE_LOW flag is set on the pin.
+// Output subsystems use this to choose their idle/asserted GPIO
+// levels. The default at firmware level is active-high (LOW = idle,
+// HIGH = active); the flag inverts.
+bool activeLow(HalPinId id);
+
 // Human-readable name for an id. Used by the protocol commands.
 // Returns nullptr for invalid ids. The strings are stable identifiers
 // (snake_case, fixed) - they're part of the protocol surface.
@@ -90,6 +113,12 @@ HalSource source();
 // in-memory pin() value - takes effect on next boot. Returns true
 // on success, false on bad id or out-of-range pin number.
 bool stagePin(HalPinId id, uint8_t pinNumber);
+
+// Stage a flag override. Same staging semantics as stagePin: writes
+// to EEPROM, takes effect on next boot. Replaces the entire flag
+// byte with the given value (use bit operations on the daemon side
+// to compose specific flag bits).
+bool stageFlags(HalPinId id, uint8_t flags);
 
 // Wipe EEPROM, restoring compiled defaults. Same staging semantics:
 // next boot reads the defaults and rewrites them as EEPROM.

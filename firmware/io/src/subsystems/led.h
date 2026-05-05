@@ -1,9 +1,12 @@
 // led.h - generic indicator-LED subsystem.
 //
-// Four panel LEDs wired active-LOW to ground via NPN switches (GPIO
-// HIGH lights the LED). No animation: pure on/off output. The
-// trackball LEDs have their own subsystem because they have multi-
-// state animation; these are dumber.
+// Four panel LEDs as pure on/off outputs. The trackball LEDs have
+// their own subsystem because they have multi-state animation;
+// these are dumber.
+//
+// Default polarity is active-HIGH (HIGH = LED lit). Per-pin
+// ACTIVE_LOW flag in HAL flips this for boards wired through an
+// inverting transistor stage.
 //
 // Protocol:
 //   SET led.<n> <on|off|0|1>      -> set state
@@ -29,8 +32,12 @@ public:
   bool handle(uint8_t instance, const proto::Command& cmd, Stream& out) override;
 
 private:
-  uint8_t pins_[kCount] = {0xFF, 0xFF, 0xFF, 0xFF};
-  bool    on_[kCount]   = {false, false, false, false};
+  uint8_t onLevel(uint8_t instance) const;
+  uint8_t offLevel(uint8_t instance) const;
+
+  uint8_t pins_[kCount]      = {0xFF, 0xFF, 0xFF, 0xFF};
+  bool    activeLow_[kCount] = {false, false, false, false};
+  bool    on_[kCount]        = {false, false, false, false};
 };
 
 }  // namespace zerotx
