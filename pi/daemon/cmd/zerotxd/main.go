@@ -27,6 +27,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/crsftee"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/sitl"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/joystick"
@@ -39,6 +40,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/trackballled"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/netclass"
@@ -681,11 +683,28 @@ func main() {
 	//      (arm transitions, mode changes, telemetry tick rate, LQ,
 	//      battery, alarm flashes).
 	//
-	// With -vfd-port empty the driver is a no-op; with -vfd-port=log
-	// both feeds echo to the daemon log so the formatting can be
+	// Mega IO board connection. One iohub.Client serves multiple
+	// subsystems on the device: VFD, trackball LEDs, indicator LEDs,
+	// buttons, WS2813 strip, future LDR/buzzer. The vfd-port flag
+	// historically targeted just the VFD-bearing Pro Micro; now it
+	// names the Mega's USB-CDC device.
+	//
+	// With -vfd-port empty the client is a no-op; with -vfd-port=log
+	// commands echo to the daemon log so the wire format can be
 	// validated without hardware. Anything else is treated as a
 	// serial device path.
-	vfdDriver := vfd.New(*vfdPort)
+	hub := iohub.New(*vfdPort)
+	defer hub.Close()
+	go func() {
+		if err := hub.Run(ctx); err != nil {
+			log.Printf("iohub: run: %v", err)
+		}
+	}()
+
+	// VFD driver shares the hub instead of owning a private serial
+	// port. Close on a hub-shared driver is a no-op so other
+	// subsystems on the same hub keep working at shutdown.
+	vfdDriver := vfd.NewWithHub(hub)
 	defer vfdDriver.Close()
 	if *vfdPort != "" {
 		log.Printf("vfd: firehose enabled (driver=%s)", *vfdPort)
@@ -764,6 +783,18 @@ func main() {
 		log.Printf("wxalert: started (gust>%.0f wind>%.0f precip>%.0f%% sunset<%dm shear>%.0f° ratio>%.1fx)",
 			*wxMaxGustKmh, *wxMaxWindKmh, *wxPrecipProbPct,
 			*wxNearSunsetMin, *wxShearDirDeg, *wxShearSpeedRatio)
+	}
+
+	// Trackball status LED. Pure operator-feedback indicator: green
+	// when system is healthy, red when an alert needs attention. The
+	// driver shares the Mega iohub.Client; if -vfd-port is empty/log
+	// the LED simply doesn't drive a real device but the goroutine
+	// runs harmlessly.
+	{
+		alertProvider := wxAlertProviderAdapter{wxAlerts}
+		tbDrv := trackballled.New(hub, armMachine, alertProvider)
+		go tbDrv.Run(ctx)
+		log.Printf("trackballled: started")
 	}
 
 	// Construct the netclass holder. Operator-declared network class

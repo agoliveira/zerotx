@@ -295,3 +295,18 @@ var alertClearedLabel = map[string]string{
 	"near_sunset":        "sunset window passed",
 	"golden_hour_active": "sun no longer in critical band",
 }
+
+// wxAlertProviderAdapter exposes wxAlertHolder via the
+// trackballled.AlertProvider interface (which requires Snapshot()
+// uppercase rather than the holder's lowercase snapshot()). Pure
+// adapter; no state.
+type wxAlertProviderAdapter struct {
+	h *wxAlertHolder
+}
+
+func (a wxAlertProviderAdapter) Snapshot() []wxalert.Alert {
+	if a.h == nil {
+		return nil
+	}
+	return a.h.snapshot()
+}
