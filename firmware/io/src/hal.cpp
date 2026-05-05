@@ -41,15 +41,32 @@ static constexpr uint8_t HAL_PIN_MAX = 69;
 // ----- Compiled defaults ------------------------------------------------
 //
 // Indexed by HalPinId. New entries match the order in the enum.
+//
+// VFD defaults (pins 30-35) chosen as a contiguous block on the
+// Mega's secondary header, away from special-purpose pins (PWM,
+// external interrupts, hardware UARTs/SPI/I2C). Easy to relocate via
+// SET hal pin if the case wiring needs different pins.
 static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
   /* HAL_LED_TRACKBALL_GREEN */ 8,
   /* HAL_LED_TRACKBALL_RED   */ 9,
+  /* HAL_VFD0_RS             */ 30,
+  /* HAL_VFD0_EN             */ 31,
+  /* HAL_VFD0_D4             */ 32,
+  /* HAL_VFD0_D5             */ 33,
+  /* HAL_VFD0_D6             */ 34,
+  /* HAL_VFD0_D7             */ 35,
 };
 
 // Stable string names for the protocol surface. Indexed by HalPinId.
 static const char* const kHalPinNames[HAL_PIN_COUNT] = {
   /* HAL_LED_TRACKBALL_GREEN */ "led_trackball_green",
   /* HAL_LED_TRACKBALL_RED   */ "led_trackball_red",
+  /* HAL_VFD0_RS             */ "vfd0_rs",
+  /* HAL_VFD0_EN             */ "vfd0_en",
+  /* HAL_VFD0_D4             */ "vfd0_d4",
+  /* HAL_VFD0_D5             */ "vfd0_d5",
+  /* HAL_VFD0_D6             */ "vfd0_d6",
+  /* HAL_VFD0_D7             */ "vfd0_d7",
 };
 
 // ----- Module state -----------------------------------------------------

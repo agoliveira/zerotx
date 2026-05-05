@@ -31,7 +31,14 @@ namespace hal {
 enum HalPinId : uint8_t {
   HAL_LED_TRACKBALL_GREEN = 0,
   HAL_LED_TRACKBALL_RED   = 1,
-  // VFD pins land here when the VFD subsystem ships.
+  // VFD instance 0 (Noritake CU20025ECPB-W1J in 4-bit HD44780 mode).
+  // 6 pins: RS, EN, then four data lines D4..D7.
+  HAL_VFD0_RS = 2,
+  HAL_VFD0_EN = 3,
+  HAL_VFD0_D4 = 4,
+  HAL_VFD0_D5 = 5,
+  HAL_VFD0_D6 = 6,
+  HAL_VFD0_D7 = 7,
   HAL_PIN_COUNT  // sentinel; must be last
 };
 

@@ -26,13 +26,14 @@
 
 #include "subsystems/hal_subsystem.h"
 #include "subsystems/led_trackball.h"
+#include "subsystems/vfd.h"
 // New subsystem headers go here as they land.
 
 namespace {
 
 // Firmware identity. Bumped on protocol-affecting changes.
 constexpr const char* kFirmwareName    = "zerotx-io";
-constexpr const char* kFirmwareVersion = "0.2.0-hal";
+constexpr const char* kFirmwareVersion = "0.3.0-vfd";
 
 // Watchdog timeout. Long enough for any tick to complete (no
 // subsystem should take more than a few ms), short enough for a real
@@ -52,10 +53,12 @@ constexpr uint8_t kWatchdogTimeout = WDTO_500MS;
 // ---------------------------------------------------------------------
 zerotx::HalSubsystem g_hal_subsys;
 zerotx::LedTrackball g_led_trackball;
+zerotx::Vfd          g_vfd;
 
 zerotx::Subsystem* const kSubsystems[] = {
   &g_hal_subsys,
   &g_led_trackball,
+  &g_vfd,
   // Add more here.
 };
 constexpr size_t kSubsystemCount = sizeof(kSubsystems) / sizeof(kSubsystems[0]);
