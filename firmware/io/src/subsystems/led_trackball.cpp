@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+#include "../hal.h"
+
 namespace zerotx {
 
 // Active-LOW outputs: NPN transistor sinks LED-cathode line to GND
@@ -16,6 +18,8 @@ static constexpr uint8_t ON_LEVEL  = HIGH;
 static constexpr uint8_t OFF_LEVEL = LOW;
 
 void LedTrackball::begin(Stream& out) {
+  green_pin_ = hal::pin(hal::HAL_LED_TRACKBALL_GREEN);
+  red_pin_   = hal::pin(hal::HAL_LED_TRACKBALL_RED);
   pinMode(green_pin_, OUTPUT);
   pinMode(red_pin_, OUTPUT);
   digitalWrite(green_pin_, OFF_LEVEL);

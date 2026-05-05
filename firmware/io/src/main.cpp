@@ -2,24 +2,29 @@
 //
 // Responsibilities:
 //   1. Initialize Serial0 (USB-CDC to the daemon).
-//   2. Construct the subsystem registry.
-//   3. Dispatch incoming protocol commands to the right subsystem.
-//   4. Tick each subsystem cooperatively every loop iteration.
-//   5. Handle universal commands (GET version, GET caps).
-//   6. Maintain the hardware watchdog.
+//   2. Initialize HAL (load pin map from EEPROM or fall back).
+//   3. Construct the subsystem registry.
+//   4. Dispatch incoming protocol commands to the right subsystem.
+//   5. Tick each subsystem cooperatively every loop iteration.
+//   6. Handle universal commands (GET version, GET caps).
+//   7. Maintain the hardware watchdog.
 //
 // Adding a new subsystem to the build: include its header and add an
 // instance to the kSubsystems array below. That's it.
+//
+// Adding a new pin: add an entry to HalPinId in hal.h, add the
+// default + name in hal.cpp. Subsystems read pin numbers via hal::pin().
 
 #include <Arduino.h>
 #include <avr/wdt.h>
 #include <string.h>
 #include <stdlib.h>
 
-#include "pinmap.h"
+#include "hal.h"
 #include "protocol.h"
 #include "subsystem.h"
 
+#include "subsystems/hal_subsystem.h"
 #include "subsystems/led_trackball.h"
 // New subsystem headers go here as they land.
 
@@ -27,7 +32,7 @@ namespace {
 
 // Firmware identity. Bumped on protocol-affecting changes.
 constexpr const char* kFirmwareName    = "zerotx-io";
-constexpr const char* kFirmwareVersion = "0.1.0";
+constexpr const char* kFirmwareVersion = "0.2.0-hal";
 
 // Watchdog timeout. Long enough for any tick to complete (no
 // subsystem should take more than a few ms), short enough for a real
@@ -41,11 +46,15 @@ constexpr uint8_t kWatchdogTimeout = WDTO_500MS;
 // Static instances. Order is irrelevant beyond the GET caps output,
 // which presents subsystems in this order. Add new entries at the
 // bottom for stable ordering.
+//
+// Subsystems take no constructor pin args; they fetch their pins from
+// the HAL during begin().
 // ---------------------------------------------------------------------
-zerotx::LedTrackball g_led_trackball{
-    pinmap::LED_TRACKBALL_GREEN, pinmap::LED_TRACKBALL_RED};
+zerotx::HalSubsystem g_hal_subsys;
+zerotx::LedTrackball g_led_trackball;
 
 zerotx::Subsystem* const kSubsystems[] = {
+  &g_hal_subsys,
   &g_led_trackball,
   // Add more here.
 };
@@ -164,6 +173,12 @@ void setup() {
 
   proto::writeEvent(Serial, "boot",
       (mcusr & (1 << WDRF)) ? "watchdog-reset" : "power-on");
+
+  // HAL must be initialized BEFORE subsystem begin() since they read
+  // their pin assignments from it.
+  hal::begin();
+  proto::writeEvent(Serial, "hal",
+      hal::source() == hal::HAL_SOURCE_EEPROM ? "loaded-eeprom" : "loaded-defaults");
 
   for (size_t i = 0; i < kSubsystemCount; ++i) {
     kSubsystems[i]->begin(Serial);

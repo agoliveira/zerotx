@@ -1,0 +1,84 @@
+// hal.h - hardware abstraction for pin assignments.
+//
+// All pins used by subsystems are listed in HalPinId. The actual
+// pin numbers come from the runtime pin map, which is loaded from
+// EEPROM at boot (or falls back to compiled defaults if EEPROM is
+// blank/corrupt). This means re-pinning the case wiring does NOT
+// require a firmware reflash: the daemon writes new values via the
+// "hal" subsystem protocol commands and reboots the Mega.
+//
+// Adding a new pin:
+//   1. Add an entry to HalPinId, before HAL_PIN_COUNT.
+//   2. Add an entry to kHalPinNames[] in hal.cpp (string for protocol).
+//   3. Add a default in kHalPinDefaults[] in hal.cpp.
+//   4. Subsystem reads the pin number via hal::pin(HAL_xxx).
+//
+// Hardcoded pins (NOT in the HAL):
+//   - Pin 0/1: USB Serial0 (the protocol channel itself). If these
+//     could be remapped, the daemon couldn't recover from a bricked
+//     config. They stay fixed.
+
+#ifndef ZEROTX_IO_HAL_H
+#define ZEROTX_IO_HAL_H
+
+#include <Arduino.h>
+
+namespace hal {
+
+// Stable pin identifiers. Order is part of the EEPROM layout - new
+// entries go at the END to keep older EEPROM contents valid. If you
+// reorder these, bump HAL_VERSION in hal.cpp.
+enum HalPinId : uint8_t {
+  HAL_LED_TRACKBALL_GREEN = 0,
+  HAL_LED_TRACKBALL_RED   = 1,
+  // VFD pins land here when the VFD subsystem ships.
+  HAL_PIN_COUNT  // sentinel; must be last
+};
+
+// Source of the currently-active pin map. Reported via GET hal map
+// so the daemon can tell whether the Mega is on operator-config or
+// fallback values.
+enum HalSource : uint8_t {
+  HAL_SOURCE_DEFAULTS = 0,
+  HAL_SOURCE_EEPROM   = 1,
+};
+
+// Initialize the pin map. Must be called before any subsystem
+// begin(). Reads EEPROM; if the magic/version/CRC is bad or the
+// stored count differs from compile-time HAL_PIN_COUNT, falls back
+// to compiled defaults AND writes defaults back to EEPROM so the
+// next boot is clean.
+void begin();
+
+// Current pin number for the given id. Returns the resolved value
+// after begin() ran. Defined for all valid HalPinId values.
+uint8_t pin(HalPinId id);
+
+// Human-readable name for an id. Used by the protocol commands.
+// Returns nullptr for invalid ids. The strings are stable identifiers
+// (snake_case, fixed) - they're part of the protocol surface.
+const char* pinName(HalPinId id);
+
+// Reverse lookup: name -> id. Returns true on match. Used by
+// "SET hal pin <name> <number>".
+bool pinIdByName(const char* name, HalPinId& out);
+
+// Where the current map came from (EEPROM or compiled defaults).
+HalSource source();
+
+// Stage a pin override. Writes to EEPROM but does NOT change the
+// in-memory pin() value - takes effect on next boot. Returns true
+// on success, false on bad id or out-of-range pin number.
+bool stagePin(HalPinId id, uint8_t pinNumber);
+
+// Wipe EEPROM, restoring compiled defaults. Same staging semantics:
+// next boot reads the defaults and rewrites them as EEPROM.
+void resetDefaults();
+
+// Soft reboot via the watchdog. Used by SET hal reboot. This
+// function does not return (the WDT triggers a reset).
+void reboot() __attribute__((noreturn));
+
+}  // namespace hal
+
+#endif  // ZEROTX_IO_HAL_H

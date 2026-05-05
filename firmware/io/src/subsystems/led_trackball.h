@@ -5,6 +5,10 @@
 // a small set of named states; the firmware renders the visual
 // (solid, slow pulse, blink) without daemon-side tick-by-tick driving.
 //
+// Pin assignments come from the HAL (hal::HAL_LED_TRACKBALL_GREEN,
+// hal::HAL_LED_TRACKBALL_RED). begin() resolves them; subsequent
+// reassignment requires a reboot since pinMode() runs once.
+//
 // States (canonical, do not extend without explicit need):
 //   off          - both LEDs off
 //   green-solid  - green on continuously
@@ -27,8 +31,7 @@ namespace zerotx {
 
 class LedTrackball : public Subsystem {
 public:
-  LedTrackball(uint8_t green_pin, uint8_t red_pin)
-    : green_pin_(green_pin), red_pin_(red_pin) {}
+  LedTrackball() {}
 
   const char* name() const override { return "led.trackball"; }
 
@@ -55,8 +58,10 @@ private:
   // Reverse - human-readable name for the state, used by GET.
   static const char* stateName(State s);
 
-  uint8_t green_pin_;
-  uint8_t red_pin_;
+  // Pin numbers resolved from HAL at begin() time. Stored locally so
+  // tick() doesn't keep going through the HAL accessor.
+  uint8_t green_pin_ = 0xFF;
+  uint8_t red_pin_   = 0xFF;
   State   state_ = State::Off;
 };
 
