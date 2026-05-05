@@ -39,6 +39,19 @@ enum HalPinId : uint8_t {
   HAL_VFD0_D5 = 5,
   HAL_VFD0_D6 = 6,
   HAL_VFD0_D7 = 7,
+  // 5 panel buttons. Active-low to GND with internal pull-up.
+  HAL_BUTTON_0 = 8,
+  HAL_BUTTON_1 = 9,
+  HAL_BUTTON_2 = 10,
+  HAL_BUTTON_3 = 11,
+  HAL_BUTTON_4 = 12,
+  // 4 generic indicator LEDs. Pure on/off, daemon controls.
+  HAL_LED_0 = 13,
+  HAL_LED_1 = 14,
+  HAL_LED_2 = 15,
+  HAL_LED_3 = 16,
+  // WS2813 strip data line.
+  HAL_WS_DATA = 17,
   HAL_PIN_COUNT  // sentinel; must be last
 };
 

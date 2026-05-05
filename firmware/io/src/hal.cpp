@@ -46,6 +46,10 @@ static constexpr uint8_t HAL_PIN_MAX = 69;
 // Mega's secondary header, away from special-purpose pins (PWM,
 // external interrupts, hardware UARTs/SPI/I2C). Easy to relocate via
 // SET hal pin if the case wiring needs different pins.
+//
+// Buttons (38-42), LEDs (44-47), WS2813 data (49) are also in the
+// secondary header zone. None of these need PWM or interrupt
+// capability so any digital pin works.
 static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
   /* HAL_LED_TRACKBALL_GREEN */ 8,
   /* HAL_LED_TRACKBALL_RED   */ 9,
@@ -55,6 +59,16 @@ static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
   /* HAL_VFD0_D5             */ 33,
   /* HAL_VFD0_D6             */ 34,
   /* HAL_VFD0_D7             */ 35,
+  /* HAL_BUTTON_0            */ 38,
+  /* HAL_BUTTON_1            */ 39,
+  /* HAL_BUTTON_2            */ 40,
+  /* HAL_BUTTON_3            */ 41,
+  /* HAL_BUTTON_4            */ 42,
+  /* HAL_LED_0               */ 44,
+  /* HAL_LED_1               */ 45,
+  /* HAL_LED_2               */ 46,
+  /* HAL_LED_3               */ 47,
+  /* HAL_WS_DATA             */ 49,
 };
 
 // Stable string names for the protocol surface. Indexed by HalPinId.
@@ -67,6 +81,16 @@ static const char* const kHalPinNames[HAL_PIN_COUNT] = {
   /* HAL_VFD0_D5             */ "vfd0_d5",
   /* HAL_VFD0_D6             */ "vfd0_d6",
   /* HAL_VFD0_D7             */ "vfd0_d7",
+  /* HAL_BUTTON_0            */ "button_0",
+  /* HAL_BUTTON_1            */ "button_1",
+  /* HAL_BUTTON_2            */ "button_2",
+  /* HAL_BUTTON_3            */ "button_3",
+  /* HAL_BUTTON_4            */ "button_4",
+  /* HAL_LED_0               */ "led_0",
+  /* HAL_LED_1               */ "led_1",
+  /* HAL_LED_2               */ "led_2",
+  /* HAL_LED_3               */ "led_3",
+  /* HAL_WS_DATA             */ "ws_data",
 };
 
 // ----- Module state -----------------------------------------------------
