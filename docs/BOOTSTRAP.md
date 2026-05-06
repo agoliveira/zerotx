@@ -1,0 +1,451 @@
+# ZeroTX Bootstrap
+
+## Purpose and scope
+
+First-time provisioning of the Raspberry Pi 400 from a brick. Bare-metal: OS image to USB SSD, base packages, Go toolchain, Piper TTS, udev rules, audio, browser kiosk, daemon systemd unit, Pi-side optimizations. Audience is me reflashing the system (lost SSD, fresh start, second unit).
+
+For day-to-day operations after the system is up see `docs/OPERATIONS.md`. For physical wiring see `docs/CONNECTIONS.md`. For the architectural picture see `docs/ARCHITECTURE.md`.
+
+## Hardware prerequisites
+
+For first-boot provisioning:
+
+- Pi 400 with built-in keyboard
+- USB SSD (the boot drive; capacity TODO finalize after assembly, 256GB+ recommended)
+- Monitor (HDMI; can be one of the LCDs once they're connected)
+- Mouse (optional; keyboard works for setup)
+- Wired Ethernet or known Wi-Fi credentials
+- Another machine running `rpi-imager`
+
+The MCU satellites (Mega, ESP32, RP2040), ELRS modules, joystick, trackball, and HUB75 panel are not required for bootstrap. Connect them after the Pi is online.
+
+## OS image to SSD
+
+ZeroTX boots from a USB SSD, not an SD card.
+
+1. On the provisioning machine, install `rpi-imager`.
+2. Connect the SSD via USB.
+3. Launch `rpi-imager`. Choose:
+   - Device: Raspberry Pi 400
+   - OS: Raspberry Pi OS (64-bit), Bookworm or current stable
+   - Storage: the USB SSD
+4. Open advanced options (gear icon). Set:
+   - Hostname: `zerotx`
+   - SSH: enabled, public key auth
+   - Username and password
+   - Wi-Fi credentials (for first boot connectivity)
+   - Locale, keyboard layout, timezone
+5. Write the image. Eject when done.
+
+## Pi 400 boot order
+
+The Pi 400 default `BOOT_ORDER=0xf41` (SD, then USB, then loop) already falls through to USB when no SD card is inserted; ZeroTX boots from the SSD without any EEPROM change.
+
+To skip the SD probe and shave a couple of seconds off cold boot:
+
+```
+sudo rpi-eeprom-config --edit
+```
+
+Set:
+
+```
+BOOT_ORDER=0xf14
+```
+
+Read right-to-left: 4 = USB, 1 = SD, f = restart loop. Save and reboot.
+
+Verify:
+
+```
+vcgencmd bootloader_config | grep BOOT_ORDER
+```
+
+## First boot setup
+
+```
+sudo apt update
+sudo apt -y full-upgrade
+sudo reboot
+```
+
+After reboot:
+
+```
+sudo timedatectl set-timezone America/Sao_Paulo
+sudo hostnamectl set-hostname zerotx
+```
+
+Confirm SSD is the root filesystem and that swap is sane:
+
+```
+df -h /
+free -h
+```
+
+If swap is missing or undersized:
+
+```
+sudo dphys-swapfile swapoff
+sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+sudo dphys-swapfile setup
+sudo dphys-swapfile swapon
+```
+
+## Base packages
+
+```
+sudo apt -y install \
+  build-essential \
+  git \
+  curl \
+  wget \
+  ca-certificates \
+  pkg-config \
+  libusb-1.0-0-dev \
+  libudev-dev \
+  alsa-utils \
+  libasound2 \
+  pulseaudio \
+  pulseaudio-utils \
+  chromium-browser \
+  unclutter \
+  xdotool \
+  jq
+```
+
+PlatformIO (for ESP32 and Mega flashing from the Pi, optional but useful for field updates):
+
+```
+pip install --user --break-system-packages platformio
+```
+
+## Go toolchain
+
+Use upstream Go, not the apt version (apt is typically a major release behind).
+
+```
+GO_VERSION=1.22.0
+cd /tmp
+curl -L -O https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-arm64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh
+sudo chmod +x /etc/profile.d/go.sh
+source /etc/profile.d/go.sh
+go version
+```
+
+**TODO**: track current Go stable version. Pin via `GO_VERSION` above.
+
+## Piper TTS
+
+```
+mkdir -p ~/zerotx/bin/piper
+cd ~/zerotx/bin/piper
+```
+
+Fetch the Piper release for arm64. Filename and version vary by release; check `https://github.com/rhasspy/piper/releases` and adjust:
+
+```
+PIPER_VERSION=2023.11.14-2
+PIPER_TARBALL=piper_linux_aarch64.tar.gz
+curl -L -O https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/${PIPER_TARBALL}
+tar xzf ${PIPER_TARBALL}
+rm ${PIPER_TARBALL}
+```
+
+Voice model (en_US-amy-medium):
+
+```
+curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
+curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
+```
+
+Smoke test:
+
+```
+echo "ZeroTX online" | ~/zerotx/bin/piper/piper \
+  --model ~/zerotx/bin/piper/en_US-amy-medium.onnx \
+  --output_file /tmp/test.wav
+aplay /tmp/test.wav
+```
+
+**TODO**: confirm Piper version and tarball name on next refresh.
+
+## udev rules
+
+The daemon launches against `/dev/serial/by-id/` paths, which are vendor-stable on their own. udev SYMLINKs are optional but ergonomic.
+
+`/etc/udev/rules.d/99-zerotx.rules`:
+
+```
+# RP2040 CRSF generator
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", \
+  ATTRS{serial}=="E66138935F3C4824", SYMLINK+="zerotx-rp2040"
+
+# Mega 2560 IO board
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0042", \
+  SYMLINK+="zerotx-mega"
+
+# ESP32 panel driver (TODO: confirm idVendor and idProduct of the specific ESP32 board)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="<TODO>", ATTRS{idProduct}=="<TODO>", \
+  SYMLINK+="zerotx-esp32"
+```
+
+Reload:
+
+```
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+After replug or reboot, verify:
+
+```
+ls -l /dev/zerotx-*
+```
+
+## Audio configuration
+
+List available cards:
+
+```
+aplay -l
+```
+
+Pick the device (typically `card 0` for Pi 400 audio). Set ALSA default in `~/.asoundrc`:
+
+```
+pcm.!default { type hw card 0 device 0 }
+ctl.!default { type hw card 0 }
+```
+
+**TODO**: confirm card index on the final hardware. If using a USB DAC or HDMI audio, adjust accordingly.
+
+Or via PulseAudio:
+
+```
+pactl list short sinks
+pactl set-default-sink <sink_name>
+```
+
+System volume:
+
+```
+amixer -c 0 set PCM 80%
+sudo alsactl store
+```
+
+## Display arrangement
+
+Confirm both LCDs are detected:
+
+```
+xrandr
+```
+
+Set arrangement (example, adjust output names and resolutions for actual hardware per `docs/CONNECTIONS.md`):
+
+```
+xrandr --output HDMI-1 --mode 1920x1080 --pos 0x0 \
+       --output HDMI-2 --mode 1920x1080 --pos 1920x0
+```
+
+**TODO**: confirm which Pi micro-HDMI port maps to HUD vs Map. Persist the final command via the autostart mechanism chosen below.
+
+## Browser kiosk autostart
+
+Two Chromium kiosks: HUD on one display, Map on the other.
+
+Example systemd user unit `~/.config/systemd/user/zerotx-hud-kiosk.service`:
+
+```
+[Unit]
+Description=ZeroTX HUD kiosk
+After=graphical-session.target zerotxd.service
+
+[Service]
+Environment=DISPLAY=:0
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-translate \
+  --no-first-run \
+  --window-position=0,0 \
+  --window-size=1920,1080 \
+  http://127.0.0.1:8080/hud
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+Same template for the Map kiosk, with `--window-position=1920,0` and the `/map` URL.
+
+Enable:
+
+```
+systemctl --user daemon-reload
+systemctl --user enable zerotx-hud-kiosk.service
+systemctl --user enable zerotx-map-kiosk.service
+loginctl enable-linger $USER
+```
+
+Hide cursor:
+
+```
+unclutter -idle 1 &
+```
+
+Disable screen blanking and DPMS:
+
+```
+xset s off
+xset -dpms
+xset s noblank
+```
+
+**TODO**: confirm HUD and Map URL paths served by the daemon. Pick whether kiosks live in systemd user units, LXDE autostart, or another session manager. Document the final choice.
+
+## Daemon systemd unit
+
+`/etc/systemd/system/zerotxd.service`:
+
+```
+[Unit]
+Description=ZeroTX daemon
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=adilson
+WorkingDirectory=/home/adilson/zerotx/pi/daemon
+ExecStart=/home/adilson/zerotx/pi/daemon/bin/zerotxd \
+  -api 127.0.0.1:8080 \
+  -model configs/big_talon_zerotx.yml \
+  -joystick-name Thrustmaster \
+  -piper-binary /home/adilson/zerotx/bin/piper/piper \
+  -web-dir web \
+  -port /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66138935F3C4824-if00 \
+  -vfd-port /dev/serial/by-id/<MEGA> \
+  -site-lat -22.91 -site-lon -47.06 \
+  -tilewarm-rate 5 \
+  -v
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable zerotxd.service
+sudo systemctl start zerotxd.service
+sudo systemctl status zerotxd.service
+journalctl -u zerotxd.service -f
+```
+
+**TODO**: replace `<MEGA>` with the actual `/dev/serial/by-id/` name once the Mega is connected.
+
+## Pi 400 optimizations for ZeroTX
+
+Goal: reduce CPU load. Currently 70-80% with two browsers running. Pinned for further profiling in `docs/ROADMAP.md`.
+
+### GPU memory split
+
+`/boot/firmware/config.txt`:
+
+```
+gpu_mem=128
+```
+
+### Disable unused services
+
+```
+sudo systemctl disable bluetooth.service
+sudo systemctl disable hciuart.service
+sudo systemctl disable cups.service
+sudo systemctl disable cups-browsed.service
+sudo systemctl disable triggerhappy.service
+```
+
+(Skip the Bluetooth disables if you actually use Bluetooth on this Pi.)
+
+### CPU governor
+
+For consistent performance:
+
+```
+echo 'performance' | sudo tee /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+```
+
+Persist via `cpufrequtils` (apt) or a small `/etc/systemd/system/cpu-governor.service` unit.
+
+### Browser flags for low CPU
+
+In addition to the kiosk flags above:
+
+```
+--disable-features=TranslateUI
+--disable-component-extensions-with-background-pages
+--disable-background-networking
+--disable-renderer-backgrounding
+--disable-extensions
+--disk-cache-size=33554432
+```
+
+**TODO**: profile actual CPU reduction after each flag. Roadmap item.
+
+### tmpfs for noisy directories
+
+`/etc/fstab`:
+
+```
+tmpfs /tmp                tmpfs defaults,noatime,size=512M       0 0
+tmpfs /var/log            tmpfs defaults,noatime,size=64M        0 0
+```
+
+Trade-off: log loss on power cut. Acceptable for ZeroTX since journalctl persistence rarely matters.
+
+## Verification checklist
+
+After provisioning:
+
+1. SSD boot: `cat /proc/cmdline | grep -o 'root=[^ ]*'` shows the SSD UUID, not an SD card.
+2. Network: `ping -c 1 1.1.1.1` succeeds.
+3. Go toolchain: `go version` reports the expected version.
+4. Piper: smoke test from the Piper section produces audible output.
+5. udev: each MCU enumerates with the expected SYMLINK in `/dev/`.
+6. Daemon: `sudo systemctl status zerotxd.service` is `active (running)`.
+7. API: `curl http://127.0.0.1:8080/api/logs` returns JSON.
+8. Audio: `aplay /usr/share/sounds/alsa/Front_Center.wav` plays via the configured sink.
+9. Both LCDs show their respective kiosks at boot.
+10. Both LCDs survive a reboot without manual intervention.
+
+## SSD backup
+
+Once the system is fully provisioned, image the SSD on another machine:
+
+```
+sudo dd if=/dev/<ssd_device> of=zerotx-bootstrap-$(date +%Y%m%d).img bs=4M status=progress
+```
+
+Compress and store off-Pi.
+
+This is the canonical baseline for cloning to a fresh SSD. Re-image after any major Pi-side change (kernel update, daemon dependency change, audio reconfig, etc.).
+
+## See also
+
+- `docs/ARCHITECTURE.md`: system overview
+- `docs/CONNECTIONS.md`: USB topology, including SSD as boot drive
+- `docs/OPERATIONS.md`: daemon launch flags, recovery procedures
+- `docs/DECISIONS.md`: locked decisions
+- `docs/ROADMAP.md`: pinned items including Pi 400 CPU optimization
+- `firmware/display/README.md`, `firmware/io/README.md`, `rp2040/README.md`: firmware build and flash procedures
