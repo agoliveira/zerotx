@@ -35,8 +35,8 @@ configuration changes.
 
 | Phase | Scope                                                    | Status |
 |-------|----------------------------------------------------------|--------|
-| 0     | Pure byte-pump. Inline CRSF passthrough + watchdog.      | this firmware |
-| 1     | CRSF telemetry sniffer on core 0 (parses GPS frames).    | pending |
+| 0     | Pure byte-pump. Inline CRSF passthrough + watchdog.      | done |
+| 1     | CRSF telemetry sniffer on core 0 (parses GPS frames).    | this firmware |
 | 2     | Az/el math from aircraft GPS + station GPS.              | pending |
 | 3     | LEDC PWM driving 2 servos with slew-rate limiting.       | pending |
 | 4     | Glue az/el outputs to servo angles. Failsafe behaviors.  | pending |
@@ -99,17 +99,19 @@ the native-USB cable shows firmware logs without an external bridge.
    cable for monitor). USB-CDC should print roughly:
 
    ```
-   === zerotx-tracker fw 0.1.0-bytepump ===
-   Phase 0: pure CRSF byte-pump (no tracking logic)
+   === zerotx-tracker fw 0.2.0-parser ===
+   Phase 1: byte pump + CRSF telemetry sniffer
 
    UART1 (cable): RX=GP17 TX=GP18 @ 420000 baud
    UART2 (ELRS):  RX=GP4 TX=GP5 @ 420000 baud
    watchdog: 1s, panic-on-timeout
+   telem_buffer: 4096 bytes
    byte_pump task running on core 1
+   crsf_parser task running on core 0
    ready
 
-   heartbeat uptime=5s
-   heartbeat uptime=10s
+   heartbeat uptime=5s frames=0 gps=0 bad_crc=0 dropped=0
+   heartbeat uptime=10s frames=0 gps=0 bad_crc=0 dropped=0
    ...
    ```
 
