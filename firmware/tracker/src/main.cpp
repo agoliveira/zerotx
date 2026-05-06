@@ -1,57 +1,57 @@
 // ZeroTX antenna tracker firmware.
 //
-// Phase 4: Phase 3 + the actual tracking glue.
+// Phase 5: runtime configuration via USB-CDC console + NVS persistence.
 //
-// The CRSF parser, az/el math, and servo subsystem from earlier
-// phases are now connected: every successfully decoded GPS frame
-// drives the servos via:
+// All site-specific and gimbal-specific values that previously lived
+// as compile-time constants are now in a Config struct loaded from
+// NVS at boot, with compile-time defaults as fallback. A simple
+// terse-AT-style command parser running on core 0 lets you change
+// values, save them, and manually drive the servos for installation
+// alignment.
 //
-//   GPS frame -> az/el math -> EMA smoothing -> aim_at() -> slew loop
-//                                                            |
-//                                                            v
-//                                                         LEDC PWM
+// Commands:
+//   help                                - list all commands
+//   cfg show                            - print current config
+//   cfg save                            - persist current config to NVS
+//   cfg station <lat> <lon> <alt_m>     - set station coordinates
+//   cfg pan_ref <az_deg>                - pan-center pulse az reference
+//   cfg pan_range <deg>                 - pan servo travel (180/270/360)
+//   cfg pan_pulse <min> <center> <max>  - pan pulse widths in us
+//   cfg pan_invert <on|off>             - reverse pan direction
+//   cfg pan_flip <on|off>               - enable 180-deg flip technique
+//   cfg tilt_range <deg>                - tilt servo travel
+//   cfg tilt_pulse <min> <center> <max> - tilt pulse widths in us
+//   cfg tilt_invert <on|off>            - reverse tilt direction
+//   aim <az> <el>                       - manually aim servos
+//   pos                                 - show current servo positions
+//   stats                               - show parser/telemetry stats
+//   defaults                            - reset to compile-time defaults
+//   reboot                              - software reset
 //
-// aim_at() handles the 180-degree-pan-servo case using the standard
-// flip technique: when the aircraft moves to the rear hemisphere,
-// pan snaps 180 degrees and tilt continues sweeping past zenith to
-// the rear. Hysteresis (5 degrees) prevents flip oscillation when
-// the aircraft sits near the boundary.
-//
-// Input EMA filter (alpha=0.3) on az/el smooths GPS noise without
-// adding meaningful tracking lag. The slew limiter from Phase 3
-// (now SERVO_SLEW_STEP_US=30us/tick = 3000us/s, conservative for
-// any standard hobby servo) bounds physical movement speed.
-//
-// Failsafe on telemetry loss is "hold last position": if no GPS
-// frames arrive, no new servo commands are issued, and the slew
-// loop simply maintains the last commanded position. The heartbeat
-// reports tracking state (tracking / hold / never-seen-telemetry)
-// and the age of the most recent GPS frame.
-//
-// Architecture (full plan):
+// Architecture (full plan, all phases now implemented):
 //   Phase 0: byte pump on core 1, hardware watchdog, USB-CDC log.
 //   Phase 1: tee + CRSF parser + GPS extraction.
 //   Phase 2: az/el math.
 //   Phase 3: LEDC PWM servo driver + slew + self-test.
-//   Phase 4 (this firmware): tracking glue (EMA + flip + failsafe).
-//   Phase 5: USB-CDC calibration interface, NVS-stored station
-//            coords + per-axis servo offsets, polarity, and travel
-//            range. Until Phase 5 lands, the firmware assumes
-//            standard 180-degree hobby servos with default mounting.
+//   Phase 4: tracking glue (EMA + flip + failsafe).
+//   Phase 5 (this firmware): runtime config + USB-CDC commands + NVS.
 //
 // The byte pump is the safety floor. It runs at the highest possible
 // priority on core 1 and is never blocked by code added in any
-// later phase. Tracking logic lives entirely in the parser task on
-// core 0; a hung parser cannot affect the wire forwarding.
+// later phase. Tracking and command logic live entirely on core 0;
+// neither can affect the wire forwarding.
 //
 // Hardware: ESP32-S3 (QFN56), 16MB QIO flash + 8MB QSPI PSRAM.
 
 #include <Arduino.h>
 #include <math.h>
+#include <string.h>
+#include <stdlib.h>
+#include <Preferences.h>
 #include <esp_task_wdt.h>
 #include <freertos/stream_buffer.h>
 
-constexpr const char* FW_VERSION = "0.5.0-tracking";
+constexpr const char* FW_VERSION = "0.6.0-cfg";
 
 // =====================================================================
 // Pin map
@@ -184,20 +184,134 @@ static bool parse_gps_payload(const uint8_t* payload, size_t len, GpsFrame& out)
 }
 
 // =====================================================================
-// Station coordinates
+// Runtime configuration
 // =====================================================================
 //
-// PLACEHOLDER: edit these to match the actual installation site
-// before field use. Phase 5 will move them to NVS flash with a
-// USB-CDC calibration command, so they survive across firmware
-// updates without source edits. For now: hardcoded.
+// All site- and gimbal-specific values live in a Config struct
+// loaded from NVS at boot. Compile-time DEFAULT_CONFIG provides
+// fallback values for first boot or after `defaults` command.
 //
-// Defaults are roughly Campinas, useful for sanity-checking the
-// math but NOT correct for the rural flying field where the tracker
-// will deploy.
-constexpr double STATION_LAT   = -22.9123;   // degrees
-constexpr double STATION_LON   = -47.0610;   // degrees
-constexpr double STATION_ALT_M =   685.0;    // meters above sea level
+// Persistent via the Preferences library (NVS namespace "zerotx").
+// Each field stored under a short key for forward-compatibility:
+// missing keys fall back to defaults, so adding new config fields
+// in future firmware versions doesn't invalidate existing NVS data.
+//
+// Persisted values:
+//   Station:    lat, lon, alt_m
+//   Pan axis:   ref_az_deg, range_deg, min_us, center_us, max_us,
+//               invert, flip_enabled
+//   Tilt axis:  range_deg, min_us, center_us, max_us, invert
+//
+// NOT persisted (compile-time tuning constants, see below):
+//   EMA_ALPHA, FLIP_HYSTERESIS_DEG, FAILSAFE_HOLD_MS,
+//   SERVO_SLEW_STEP_US, SERVO_SLEW_HZ, watchdog timeout, baud rates,
+//   pin assignments, LEDC channel assignments.
+
+struct Config {
+  // Station coordinates
+  double  station_lat;        // degrees, -90..+90
+  double  station_lon;        // degrees, -180..+180
+  double  station_alt_m;      // meters above sea level
+
+  // Pan axis
+  float   pan_ref_az_deg;     // azimuth at which pan-center pulse points
+  float   pan_range_deg;      // mechanical travel for full pulse range
+  int     pan_min_us;         // minimum pulse width
+  int     pan_center_us;      // center pulse width
+  int     pan_max_us;         // maximum pulse width
+  bool    pan_invert;         // reverse pan direction
+  bool    pan_flip_enabled;   // use 180-deg flip technique (180-deg servos)
+
+  // Tilt axis
+  float   tilt_range_deg;
+  int     tilt_min_us;
+  int     tilt_center_us;
+  int     tilt_max_us;
+  bool    tilt_invert;
+};
+
+// Compile-time defaults. Adjust to match a typical install; the user
+// runs `defaults` then `cfg save` to reset NVS to these values.
+//
+// Station defaults are roughly Campinas - useful for sanity-checking
+// the math but NOT correct for a real installation. The first thing
+// any operator does is `cfg station <real_lat> <real_lon> <real_alt>`
+// followed by `cfg save`.
+constexpr Config DEFAULT_CONFIG = {
+  // station
+  -22.9123, -47.0610, 685.0,
+  // pan: north reference, 180-deg servo, 1000..2000us, no invert, flip on
+  0.0f, 180.0f, 1000, 1500, 2000, false, true,
+  // tilt: 180-deg servo, 1000..2000us, no invert
+  180.0f, 1000, 1500, 2000, false
+};
+
+static Config cfg = DEFAULT_CONFIG;
+static Preferences prefs;
+
+static void config_load() {
+  prefs.begin("zerotx", true);  // read-only
+
+  cfg.station_lat       = prefs.getDouble("st_lat",   DEFAULT_CONFIG.station_lat);
+  cfg.station_lon       = prefs.getDouble("st_lon",   DEFAULT_CONFIG.station_lon);
+  cfg.station_alt_m     = prefs.getDouble("st_alt",   DEFAULT_CONFIG.station_alt_m);
+
+  cfg.pan_ref_az_deg    = prefs.getFloat ("pn_ref",   DEFAULT_CONFIG.pan_ref_az_deg);
+  cfg.pan_range_deg     = prefs.getFloat ("pn_rng",   DEFAULT_CONFIG.pan_range_deg);
+  cfg.pan_min_us        = prefs.getInt   ("pn_min",   DEFAULT_CONFIG.pan_min_us);
+  cfg.pan_center_us     = prefs.getInt   ("pn_ctr",   DEFAULT_CONFIG.pan_center_us);
+  cfg.pan_max_us        = prefs.getInt   ("pn_max",   DEFAULT_CONFIG.pan_max_us);
+  cfg.pan_invert        = prefs.getBool  ("pn_inv",   DEFAULT_CONFIG.pan_invert);
+  cfg.pan_flip_enabled  = prefs.getBool  ("pn_flip",  DEFAULT_CONFIG.pan_flip_enabled);
+
+  cfg.tilt_range_deg    = prefs.getFloat ("tl_rng",   DEFAULT_CONFIG.tilt_range_deg);
+  cfg.tilt_min_us       = prefs.getInt   ("tl_min",   DEFAULT_CONFIG.tilt_min_us);
+  cfg.tilt_center_us    = prefs.getInt   ("tl_ctr",   DEFAULT_CONFIG.tilt_center_us);
+  cfg.tilt_max_us       = prefs.getInt   ("tl_max",   DEFAULT_CONFIG.tilt_max_us);
+  cfg.tilt_invert       = prefs.getBool  ("tl_inv",   DEFAULT_CONFIG.tilt_invert);
+
+  prefs.end();
+}
+
+static void config_save() {
+  prefs.begin("zerotx", false);  // read-write
+
+  prefs.putDouble("st_lat",   cfg.station_lat);
+  prefs.putDouble("st_lon",   cfg.station_lon);
+  prefs.putDouble("st_alt",   cfg.station_alt_m);
+
+  prefs.putFloat ("pn_ref",   cfg.pan_ref_az_deg);
+  prefs.putFloat ("pn_rng",   cfg.pan_range_deg);
+  prefs.putInt   ("pn_min",   cfg.pan_min_us);
+  prefs.putInt   ("pn_ctr",   cfg.pan_center_us);
+  prefs.putInt   ("pn_max",   cfg.pan_max_us);
+  prefs.putBool  ("pn_inv",   cfg.pan_invert);
+  prefs.putBool  ("pn_flip",  cfg.pan_flip_enabled);
+
+  prefs.putFloat ("tl_rng",   cfg.tilt_range_deg);
+  prefs.putInt   ("tl_min",   cfg.tilt_min_us);
+  prefs.putInt   ("tl_ctr",   cfg.tilt_center_us);
+  prefs.putInt   ("tl_max",   cfg.tilt_max_us);
+  prefs.putBool  ("tl_inv",   cfg.tilt_invert);
+
+  prefs.end();
+}
+
+static void config_print() {
+  Serial.println("--- config ---");
+  Serial.printf("station   lat=%.7f lon=%.7f alt=%.1fm\n",
+                cfg.station_lat, cfg.station_lon, cfg.station_alt_m);
+  Serial.printf("pan       ref_az=%.2fdeg range=%.1fdeg pulse=%d/%d/%d invert=%s flip=%s\n",
+                cfg.pan_ref_az_deg, cfg.pan_range_deg,
+                cfg.pan_min_us, cfg.pan_center_us, cfg.pan_max_us,
+                cfg.pan_invert      ? "on" : "off",
+                cfg.pan_flip_enabled? "on" : "off");
+  Serial.printf("tilt      range=%.1fdeg pulse=%d/%d/%d invert=%s\n",
+                cfg.tilt_range_deg,
+                cfg.tilt_min_us, cfg.tilt_center_us, cfg.tilt_max_us,
+                cfg.tilt_invert ? "on" : "off");
+  Serial.println("--------------");
+}
 
 // =====================================================================
 // Az/el computation
@@ -259,16 +373,12 @@ static AzEl compute_az_el(double lat_a, double lon_a, double alt_a,
 // (finer than any hobby servo can resolve mechanically; rounding in
 // the slew loop is fine).
 //
-// Pulse widths:
-//   default range  1000..2000us, center 1500us
-//   self-test      1100..1900us (small margin from limits)
-//
-// 1000..2000us is the universal hobby PWM range supported by
-// virtually all digital and analog hobby servos. Some servos accept
-// wider ranges (500..2500us is also common), giving more mechanical
-// travel; widen the constants below once you know the specific
-// servo's safe range. Phase 5 will move per-axis pulse limits to
-// NVS flash via USB-CDC calibration.
+// Pulse widths are now per-axis cfg.{pan,tilt}_{min,center,max}_us.
+// Defaults (1000..2000us) match the universal hobby PWM range
+// supported by virtually all servos. Configure via:
+//   cfg pan_pulse  <min> <center> <max>
+//   cfg tilt_pulse <min> <center> <max>
+// followed by `cfg save`.
 //
 // Slew limiter:
 //   100Hz update task on core 0 ramps current_us toward target_us
@@ -277,8 +387,7 @@ static AzEl compute_az_el(double lat_a, double lon_a, double alt_a,
 //   standard hobby servo can mechanically do (slow analog ~1500us/s,
 //   midrange digital ~5000us/s, top-tier digital 8000+us/s). The
 //   limit primarily protects against software-bug-class jumps and
-//   smooths current draw; it should rarely be the binding constraint
-//   on real tracking movement. Tunable up if you want faster slewing.
+//   smooths current draw. Tunable via the constant below.
 
 constexpr int SERVO_PAN_PIN  = 6;
 constexpr int SERVO_TILT_PIN = 7;
@@ -289,13 +398,6 @@ constexpr int SERVO_FREQ_HZ          = 50;
 constexpr int SERVO_RESOLUTION_BITS  = 12;
 constexpr int SERVO_PERIOD_US        = 20000;  // 1/50Hz
 constexpr int SERVO_DUTY_FULL_SCALE  = 1 << SERVO_RESOLUTION_BITS;  // 4096
-
-constexpr int SERVO_MIN_US     = 1000;
-constexpr int SERVO_MAX_US     = 2000;
-constexpr int SERVO_CENTER_US  = 1500;
-
-constexpr int SELFTEST_LOW_US  = 1100;
-constexpr int SELFTEST_HIGH_US = 1900;
 
 constexpr int SERVO_SLEW_HZ       = 100;
 constexpr int SERVO_SLEW_STEP_US  = 30;
@@ -310,11 +412,11 @@ struct ServoState {
 
 static ServoState pan_servo  = {
   SERVO_PAN_CHANNEL,  SERVO_PAN_PIN,
-  SERVO_CENTER_US, SERVO_CENTER_US, "pan"
+  1500, 1500, "pan"   // current_us / target_us seeded; updated at servo_init
 };
 static ServoState tilt_servo = {
   SERVO_TILT_CHANNEL, SERVO_TILT_PIN,
-  SERVO_CENTER_US, SERVO_CENTER_US, "tilt"
+  1500, 1500, "tilt"
 };
 
 // Convert microseconds (within the 20ms period) to LEDC duty value.
@@ -325,40 +427,48 @@ static inline uint32_t us_to_duty(int us) {
 }
 
 // Internal: write a raw pulse width to the LEDC peripheral.
-// Caller must already have clamped to [SERVO_MIN_US, SERVO_MAX_US].
+// Caller must already have clamped to per-axis bounds.
 static void servo_write_us(const ServoState& s, int us) {
   ledcWrite(s.channel, us_to_duty(us));
 }
 
 // Public API: set target pulse width. The slew task will ramp toward
-// it. Out-of-range values are clamped silently to the safe bounds.
+// it. Out-of-range values are clamped silently to the per-axis
+// configured bounds.
 void servo_set_pan_us(int us) {
-  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
-  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  if (us < cfg.pan_min_us) us = cfg.pan_min_us;
+  if (us > cfg.pan_max_us) us = cfg.pan_max_us;
   pan_servo.target_us = us;
 }
 void servo_set_tilt_us(int us) {
-  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
-  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  if (us < cfg.tilt_min_us) us = cfg.tilt_min_us;
+  if (us > cfg.tilt_max_us) us = cfg.tilt_max_us;
   tilt_servo.target_us = us;
 }
 
-// Initialize LEDC channels and write the center pulse to both axes.
-// Called from setup() before any task starts.
+// Initialize LEDC channels and write the configured center pulse to
+// both axes. Called from setup() AFTER config_load() so cfg has
+// valid values.
 static void servo_init() {
   ledcSetup(pan_servo.channel,  SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS);
   ledcAttachPin(pan_servo.pin,  pan_servo.channel);
   ledcSetup(tilt_servo.channel, SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS);
   ledcAttachPin(tilt_servo.pin, tilt_servo.channel);
 
-  servo_write_us(pan_servo,  SERVO_CENTER_US);
-  servo_write_us(tilt_servo, SERVO_CENTER_US);
+  pan_servo.current_us  = cfg.pan_center_us;
+  pan_servo.target_us   = cfg.pan_center_us;
+  tilt_servo.current_us = cfg.tilt_center_us;
+  tilt_servo.target_us  = cfg.tilt_center_us;
 
-  Serial.printf("servos: pan GP%d ch%d, tilt GP%d ch%d, %dHz, %d-bit, %d..%dus\n",
+  servo_write_us(pan_servo,  cfg.pan_center_us);
+  servo_write_us(tilt_servo, cfg.tilt_center_us);
+
+  Serial.printf("servos: pan GP%d ch%d (%d/%d/%d us), tilt GP%d ch%d (%d/%d/%d us), %dHz, %d-bit\n",
                 pan_servo.pin,  pan_servo.channel,
+                cfg.pan_min_us, cfg.pan_center_us, cfg.pan_max_us,
                 tilt_servo.pin, tilt_servo.channel,
-                SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS,
-                SERVO_MIN_US, SERVO_MAX_US);
+                cfg.tilt_min_us, cfg.tilt_center_us, cfg.tilt_max_us,
+                SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS);
 }
 
 // Slew loop: ramps current_us toward target_us by at most
@@ -386,28 +496,37 @@ void servo_task(void* pvParameters) {
 
 // Boot self-test: sweep each axis low->high->center to confirm the
 // LEDC channels are wired correctly and the servos move as expected.
-// Blocks the calling context (Arduino main task) for ~3.6s. Safe to
-// run alongside the byte pump (different core).
+// Sweep range is the configured pulse range with 10% margin from
+// each end (avoids slamming against unknown mechanical stops).
+// Blocks the calling context for ~3.6s. Safe to run alongside the
+// byte pump (different core).
 static void servo_self_test() {
   Serial.println("servo self-test: starting sweep");
 
-  servo_set_pan_us(SERVO_CENTER_US);
-  servo_set_tilt_us(SERVO_CENTER_US);
+  int pan_span    = cfg.pan_max_us  - cfg.pan_min_us;
+  int tilt_span   = cfg.tilt_max_us - cfg.tilt_min_us;
+  int pan_low     = cfg.pan_min_us  + pan_span  / 10;
+  int pan_high    = cfg.pan_max_us  - pan_span  / 10;
+  int tilt_low    = cfg.tilt_min_us + tilt_span / 10;
+  int tilt_high   = cfg.tilt_max_us - tilt_span / 10;
+
+  servo_set_pan_us(cfg.pan_center_us);
+  servo_set_tilt_us(cfg.tilt_center_us);
   delay(800);
 
   Serial.println("  pan: low");
-  servo_set_pan_us(SELFTEST_LOW_US);  delay(700);
+  servo_set_pan_us(pan_low);             delay(700);
   Serial.println("  pan: high");
-  servo_set_pan_us(SELFTEST_HIGH_US); delay(700);
+  servo_set_pan_us(pan_high);            delay(700);
   Serial.println("  pan: center");
-  servo_set_pan_us(SERVO_CENTER_US);  delay(500);
+  servo_set_pan_us(cfg.pan_center_us);   delay(500);
 
   Serial.println("  tilt: low");
-  servo_set_tilt_us(SELFTEST_LOW_US);  delay(700);
+  servo_set_tilt_us(tilt_low);           delay(700);
   Serial.println("  tilt: high");
-  servo_set_tilt_us(SELFTEST_HIGH_US); delay(700);
+  servo_set_tilt_us(tilt_high);          delay(700);
   Serial.println("  tilt: center");
-  servo_set_tilt_us(SERVO_CENTER_US);  delay(500);
+  servo_set_tilt_us(cfg.tilt_center_us); delay(500);
 
   Serial.println("servo self-test: complete");
 }
@@ -426,38 +545,14 @@ static void servo_self_test() {
 //      arrive, no calls to servo_set_*_us happen and the slew loop
 //      simply maintains the last commanded position.
 //
-// Configuration constants. Phase 5 will move these to NVS flash:
+// Per-axis configuration (cfg.pan_*, cfg.tilt_*) determines:
+//   - Pulse mapping (min/center/max us, range_deg)
+//   - Direction inversion (cfg.*_invert)
+//   - Flip technique enable (cfg.pan_flip_enabled - turn off for
+//     270- or 360-deg pan servos)
 //
-//   PAN_REF_AZ_DEG    Azimuth (0..360) at which pan-center pulse
-//                     points. Default 0.0 = pan center pulse points
-//                     North. Edit before field use to match how the
-//                     gimbal is mounted on the pole.
-//
-//   SERVO_RANGE_DEG   Mechanical travel of the servo over the
-//                     1000..2000us pulse range. Default 180.0 covers
-//                     standard hobby servos. Phase 5 makes this
-//                     per-axis configurable for 270deg or 360deg
-//                     servo variants.
-//
-//   EMA_ALPHA         New-vs-old blend factor on az/el. 0.3 means
-//                     30% new + 70% old per update. At ~5-10Hz GPS
-//                     update rate that's roughly a 200-300ms time
-//                     constant: smooths visible jitter without
-//                     making tracking feel sluggish.
-//
-//   FLIP_HYSTERESIS_DEG  Hysteresis band around the front/rear flip
-//                        decision boundary (|az_rel|=90deg). Inside
-//                        the band the existing pose is held. 5deg
-//                        is plenty for typical GPS jitter.
-//
-//   FAILSAFE_HOLD_MS  After this many ms with no GPS frame, the
-//                     heartbeat reports "hold" instead of "tracking".
-//                     The mechanical behavior is the same either way
-//                     (last commanded position holds); this is just
-//                     a status indicator.
+// Compile-time tuning (NOT in cfg):
 
-constexpr float    PAN_REF_AZ_DEG       = 0.0f;
-constexpr float    SERVO_RANGE_DEG      = 180.0f;
 constexpr float    EMA_ALPHA            = 0.3f;
 constexpr float    FLIP_HYSTERESIS_DEG  = 5.0f;
 constexpr uint32_t FAILSAFE_HOLD_MS     = 1500;
@@ -493,65 +588,381 @@ static void apply_ema(float az_in, float el_in) {
   if (az_filtered_deg >= 360.0f) az_filtered_deg -= 360.0f;
 }
 
-// Convert pan angle in degrees (-90..+90, 0=center pulse) to pulse width.
+// Convert pan angle in degrees (-pan_range_deg/2 .. +pan_range_deg/2,
+// 0 = center pulse) to pulse width. Honors cfg.pan_invert.
 static int pan_angle_to_us(float pan_deg) {
-  float us_per_deg = (float)(SERVO_MAX_US - SERVO_MIN_US) / SERVO_RANGE_DEG;
-  int us = SERVO_CENTER_US + (int)(pan_deg * us_per_deg);
-  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
-  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  if (cfg.pan_invert) pan_deg = -pan_deg;
+  float us_per_deg = (float)(cfg.pan_max_us - cfg.pan_min_us) / cfg.pan_range_deg;
+  int us = cfg.pan_center_us + (int)(pan_deg * us_per_deg);
+  if (us < cfg.pan_min_us) us = cfg.pan_min_us;
+  if (us > cfg.pan_max_us) us = cfg.pan_max_us;
   return us;
 }
 
-// Convert tilt angle in degrees (0..180, 0=horizon-front, 90=zenith,
-// 180=horizon-rear) to pulse width. Linear over the full range so the
-// flip technique stays continuous through zenith.
+// Convert tilt angle in degrees (0 = horizon-front, 90 = zenith,
+// up to 180 = horizon-rear when flip is engaged) to pulse width.
+// Honors cfg.tilt_invert.
+//
+// Mapping: tilt_deg=0 -> tilt_min_us, full sweep proportional to
+// cfg.tilt_range_deg. With cfg.tilt_range_deg=180 and full pulse
+// range, the entire 0..180-deg arc maps linearly through the pulse
+// span; useful for the flip technique where the servo sweeps past
+// zenith into the rear hemisphere.
 static int tilt_angle_to_us(float tilt_deg) {
   if (tilt_deg <    0.0f) tilt_deg =   0.0f;
   if (tilt_deg >  180.0f) tilt_deg = 180.0f;
-  float us_per_deg = (float)(SERVO_MAX_US - SERVO_MIN_US) / SERVO_RANGE_DEG;
-  int us = SERVO_MIN_US + (int)(tilt_deg * us_per_deg);
-  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
-  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  if (cfg.tilt_invert) tilt_deg = cfg.tilt_range_deg - tilt_deg;
+  float us_per_deg = (float)(cfg.tilt_max_us - cfg.tilt_min_us) / cfg.tilt_range_deg;
+  int us = cfg.tilt_min_us + (int)(tilt_deg * us_per_deg);
+  if (us < cfg.tilt_min_us) us = cfg.tilt_min_us;
+  if (us > cfg.tilt_max_us) us = cfg.tilt_max_us;
   return us;
 }
 
 // Aim antennas at the given azimuth and elevation. Implements the
-// front/rear flip with hysteresis for 180-degree pan servos:
-//   - Front pose: pan_deg = az_rel, tilt_deg = el
+// front/rear flip with hysteresis for 180-degree pan servos when
+// cfg.pan_flip_enabled is true:
+//   - Front pose: pan_deg = az_rel,        tilt_deg = el
 //   - Rear  pose: pan_deg = az_rel +/- 180, tilt_deg = 180 - el
+// With cfg.pan_flip_enabled false (270/360-deg servos), pan_deg is
+// always az_rel and the pan_angle_to_us mapping handles the larger
+// range. Note: 360-deg servos with this firmware do NOT track
+// continuously across the wraparound (179deg -> -179deg takes the
+// long way); the firmware doesn't yet maintain an unwrap variable.
 //
-// az_deg in 0..360, el_deg typically 0..90 (negative el clamps the
-// tilt servo to horizon). The az_deg input is expected to already
-// be EMA-smoothed.
+// az_deg in 0..360, el_deg typically 0..90. The az_deg input is
+// expected to already be EMA-smoothed.
 static void aim_at(float az_deg, float el_deg) {
   // Normalize azimuth relative to pan reference, into -180..+180
-  float az_rel = az_deg - PAN_REF_AZ_DEG;
+  float az_rel = az_deg - cfg.pan_ref_az_deg;
   while (az_rel >  180.0f) az_rel -= 360.0f;
   while (az_rel < -180.0f) az_rel += 360.0f;
 
-  float abs_az_rel = fabsf(az_rel);
-
-  // Flip decision with hysteresis. 5deg dead zone around |az_rel|=90
-  // prevents rapid flip oscillation when the aircraft sits near the
-  // boundary and az jitters by a degree or two.
-  if (flip_active) {
-    flip_active = (abs_az_rel > (90.0f - FLIP_HYSTERESIS_DEG));
-  } else {
-    flip_active = (abs_az_rel > (90.0f + FLIP_HYSTERESIS_DEG));
-  }
-
   float pan_deg, tilt_deg;
-  if (!flip_active) {
-    pan_deg  = az_rel;        // -90..+90
-    tilt_deg = el_deg;        // 0..90 (above horizon, front)
+
+  if (!cfg.pan_flip_enabled) {
+    // No flip: just map azimuth straight through. Suitable for
+    // 270- or 360-deg pan servos where there's enough mechanical
+    // travel to cover the rear hemisphere directly.
+    pan_deg  = az_rel;
+    tilt_deg = el_deg;
+    flip_active = false;
   } else {
-    // Mirror pan to the other side and continue tilt past zenith.
-    pan_deg  = (az_rel > 0.0f) ? (az_rel - 180.0f) : (az_rel + 180.0f);
-    tilt_deg = 180.0f - el_deg;  // 90..180 (above horizon, rear)
+    // 180-deg pan servo with flip technique.
+    float abs_az_rel = fabsf(az_rel);
+
+    // Hysteresis around |az_rel|=90 prevents oscillation.
+    if (flip_active) {
+      flip_active = (abs_az_rel > (90.0f - FLIP_HYSTERESIS_DEG));
+    } else {
+      flip_active = (abs_az_rel > (90.0f + FLIP_HYSTERESIS_DEG));
+    }
+
+    if (!flip_active) {
+      pan_deg  = az_rel;        // -90..+90
+      tilt_deg = el_deg;        // 0..90 (above horizon, front)
+    } else {
+      pan_deg  = (az_rel > 0.0f) ? (az_rel - 180.0f) : (az_rel + 180.0f);
+      tilt_deg = 180.0f - el_deg;  // 90..180 (above horizon, rear)
+    }
   }
 
   servo_set_pan_us( pan_angle_to_us(pan_deg)  );
   servo_set_tilt_us(tilt_angle_to_us(tilt_deg));
+}
+
+// =====================================================================
+// USB-CDC command parser
+// =====================================================================
+//
+// Terse line-oriented command interface running on core 0. Reads
+// from Serial one character at a time, accumulates into a line
+// buffer, and dispatches on newline. Echo on, basic backspace
+// handling, and a "> " prompt after each line. Designed to be
+// driven from `pio device monitor` or any plain serial terminal.
+//
+// All commands are non-blocking with respect to the byte pump; the
+// parser task runs at normal priority on core 0 and never touches
+// the byte pump's data path.
+
+static const int CMD_LINE_MAX = 128;
+static const int CMD_MAX_ARGS = 8;
+
+// Forward decl, defined below
+static void cmd_dispatch(int argc, char** argv);
+
+// Forward decl for stats counters (defined further down). Declaring
+// here lets cmd_stats reference them.
+extern volatile uint32_t g_frames_seen;
+extern volatile uint32_t g_frames_bad_crc;
+extern volatile uint32_t g_frames_gps;
+extern volatile uint32_t g_bytes_dropped;
+
+// Tokenize an in-place line buffer into argv[]. Returns argc.
+// Modifies the buffer (writes nulls between tokens).
+static int tokenize(char* line, char** argv, int max_args) {
+  int argc = 0;
+  char* p = line;
+  while (argc < max_args) {
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == 0) break;
+    argv[argc++] = p;
+    while (*p != 0 && *p != ' ' && *p != '\t') p++;
+    if (*p != 0) {
+      *p++ = 0;
+    }
+  }
+  return argc;
+}
+
+// Parse "on" / "off" / "1" / "0" / "true" / "false". Returns true if
+// recognized (and writes result to *out); false otherwise.
+static bool parse_bool(const char* s, bool* out) {
+  if (!strcmp(s, "on")  || !strcmp(s, "1") || !strcmp(s, "true")) {
+    *out = true;  return true;
+  }
+  if (!strcmp(s, "off") || !strcmp(s, "0") || !strcmp(s, "false")) {
+    *out = false; return true;
+  }
+  return false;
+}
+
+// --- Top-level command handlers ---
+
+static void cmd_help() {
+  Serial.println();
+  Serial.println("commands:");
+  Serial.println("  help                                    list commands");
+  Serial.println("  cfg show                                show current config");
+  Serial.println("  cfg save                                persist config to NVS");
+  Serial.println("  cfg station <lat> <lon> <alt_m>         set station coords");
+  Serial.println("  cfg pan_ref <az_deg>                    pan-center pulse az");
+  Serial.println("  cfg pan_range <deg>                     pan travel (180/270/360)");
+  Serial.println("  cfg pan_pulse <min> <ctr> <max>         pan pulse widths in us");
+  Serial.println("  cfg pan_invert <on|off>                 reverse pan direction");
+  Serial.println("  cfg pan_flip <on|off>                   enable 180-deg flip");
+  Serial.println("  cfg tilt_range <deg>                    tilt travel");
+  Serial.println("  cfg tilt_pulse <min> <ctr> <max>        tilt pulse widths in us");
+  Serial.println("  cfg tilt_invert <on|off>                reverse tilt direction");
+  Serial.println("  aim <az> <el>                           manually drive servos");
+  Serial.println("  pos                                     show servo positions");
+  Serial.println("  stats                                   show parser stats");
+  Serial.println("  defaults                                reset cfg to compile defaults");
+  Serial.println("  reboot                                  software reset");
+  Serial.println();
+}
+
+static void cmd_aim(int argc, char** argv) {
+  if (argc < 3) {
+    Serial.println("usage: aim <az_deg> <el_deg>");
+    return;
+  }
+  float az = strtof(argv[1], nullptr);
+  float el = strtof(argv[2], nullptr);
+  // Bypass EMA - this is direct manual aim. The tracker still uses
+  // the global flip_active state for hysteresis continuity.
+  aim_at(az, el);
+  Serial.printf("aiming az=%.2f el=%.2f -> pan=%dus tilt=%dus flip=%s\n",
+                az, el, pan_servo.target_us, tilt_servo.target_us,
+                flip_active ? "on" : "off");
+}
+
+static void cmd_pos() {
+  Serial.printf("pan:  current=%dus target=%dus\n",
+                pan_servo.current_us, pan_servo.target_us);
+  Serial.printf("tilt: current=%dus target=%dus\n",
+                tilt_servo.current_us, tilt_servo.target_us);
+  Serial.printf("flip: %s\n", flip_active ? "active" : "inactive");
+  if (ema_initialized) {
+    Serial.printf("ema:  az=%.2f el=%.2f\n", az_filtered_deg, el_filtered_deg);
+  } else {
+    Serial.println("ema:  uninitialized (no GPS frame yet)");
+  }
+}
+
+static void cmd_stats() {
+  Serial.printf("uptime: %lus\n", (unsigned long)(millis() / 1000));
+  Serial.printf("frames=%u gps=%u bad_crc=%u dropped=%u\n",
+                (unsigned)g_frames_seen, (unsigned)g_frames_gps,
+                (unsigned)g_frames_bad_crc, (unsigned)g_bytes_dropped);
+  uint32_t last_gps = g_last_gps_ms;
+  if (last_gps == 0) {
+    Serial.println("telemetry: never seen");
+  } else {
+    Serial.printf("telemetry age: %lums\n",
+                  (unsigned long)(millis() - last_gps));
+  }
+}
+
+static void cmd_defaults() {
+  cfg = DEFAULT_CONFIG;
+  Serial.println("config reset to compile-time defaults (in RAM only)");
+  Serial.println("run `cfg save` to persist to NVS");
+}
+
+// --- cfg subcommand dispatch ---
+
+static void cmd_cfg(int argc, char** argv) {
+  if (argc == 1 || !strcmp(argv[1], "show")) {
+    config_print();
+    return;
+  }
+
+  if (!strcmp(argv[1], "save")) {
+    config_save();
+    Serial.println("config saved to NVS");
+    return;
+  }
+
+  if (!strcmp(argv[1], "station")) {
+    if (argc < 5) {
+      Serial.println("usage: cfg station <lat> <lon> <alt_m>");
+      return;
+    }
+    cfg.station_lat   = strtod(argv[2], nullptr);
+    cfg.station_lon   = strtod(argv[3], nullptr);
+    cfg.station_alt_m = strtod(argv[4], nullptr);
+    Serial.printf("station = %.7f %.7f %.1fm\n",
+                  cfg.station_lat, cfg.station_lon, cfg.station_alt_m);
+    return;
+  }
+
+  if (!strcmp(argv[1], "pan_ref")) {
+    if (argc < 3) { Serial.println("usage: cfg pan_ref <az_deg>"); return; }
+    cfg.pan_ref_az_deg = strtof(argv[2], nullptr);
+    Serial.printf("pan_ref = %.2f deg\n", cfg.pan_ref_az_deg);
+    return;
+  }
+
+  if (!strcmp(argv[1], "pan_range")) {
+    if (argc < 3) { Serial.println("usage: cfg pan_range <deg>"); return; }
+    cfg.pan_range_deg = strtof(argv[2], nullptr);
+    Serial.printf("pan_range = %.1f deg\n", cfg.pan_range_deg);
+    return;
+  }
+
+  if (!strcmp(argv[1], "pan_pulse")) {
+    if (argc < 5) {
+      Serial.println("usage: cfg pan_pulse <min> <center> <max>");
+      return;
+    }
+    cfg.pan_min_us    = atoi(argv[2]);
+    cfg.pan_center_us = atoi(argv[3]);
+    cfg.pan_max_us    = atoi(argv[4]);
+    Serial.printf("pan_pulse = %d / %d / %d us\n",
+                  cfg.pan_min_us, cfg.pan_center_us, cfg.pan_max_us);
+    return;
+  }
+
+  if (!strcmp(argv[1], "pan_invert")) {
+    bool v;
+    if (argc < 3 || !parse_bool(argv[2], &v)) {
+      Serial.println("usage: cfg pan_invert <on|off>"); return;
+    }
+    cfg.pan_invert = v;
+    Serial.printf("pan_invert = %s\n", v ? "on" : "off");
+    return;
+  }
+
+  if (!strcmp(argv[1], "pan_flip")) {
+    bool v;
+    if (argc < 3 || !parse_bool(argv[2], &v)) {
+      Serial.println("usage: cfg pan_flip <on|off>"); return;
+    }
+    cfg.pan_flip_enabled = v;
+    Serial.printf("pan_flip = %s\n", v ? "on" : "off");
+    return;
+  }
+
+  if (!strcmp(argv[1], "tilt_range")) {
+    if (argc < 3) { Serial.println("usage: cfg tilt_range <deg>"); return; }
+    cfg.tilt_range_deg = strtof(argv[2], nullptr);
+    Serial.printf("tilt_range = %.1f deg\n", cfg.tilt_range_deg);
+    return;
+  }
+
+  if (!strcmp(argv[1], "tilt_pulse")) {
+    if (argc < 5) {
+      Serial.println("usage: cfg tilt_pulse <min> <center> <max>");
+      return;
+    }
+    cfg.tilt_min_us    = atoi(argv[2]);
+    cfg.tilt_center_us = atoi(argv[3]);
+    cfg.tilt_max_us    = atoi(argv[4]);
+    Serial.printf("tilt_pulse = %d / %d / %d us\n",
+                  cfg.tilt_min_us, cfg.tilt_center_us, cfg.tilt_max_us);
+    return;
+  }
+
+  if (!strcmp(argv[1], "tilt_invert")) {
+    bool v;
+    if (argc < 3 || !parse_bool(argv[2], &v)) {
+      Serial.println("usage: cfg tilt_invert <on|off>"); return;
+    }
+    cfg.tilt_invert = v;
+    Serial.printf("tilt_invert = %s\n", v ? "on" : "off");
+    return;
+  }
+
+  Serial.printf("unknown cfg subcommand: %s (try 'help')\n", argv[1]);
+}
+
+// --- Top-level dispatch ---
+
+static void cmd_dispatch(int argc, char** argv) {
+  if (argc == 0) return;
+
+  if (!strcmp(argv[0], "help"))     { cmd_help();           return; }
+  if (!strcmp(argv[0], "cfg"))      { cmd_cfg(argc, argv);  return; }
+  if (!strcmp(argv[0], "aim"))      { cmd_aim(argc, argv);  return; }
+  if (!strcmp(argv[0], "pos"))      { cmd_pos();            return; }
+  if (!strcmp(argv[0], "stats"))    { cmd_stats();          return; }
+  if (!strcmp(argv[0], "defaults")) { cmd_defaults();       return; }
+
+  if (!strcmp(argv[0], "reboot")) {
+    Serial.println("rebooting...");
+    delay(100);
+    ESP.restart();
+    return;
+  }
+
+  Serial.printf("unknown command: %s (try 'help')\n", argv[0]);
+}
+
+// --- Command task: line reader + dispatcher ---
+
+void cmd_task(void* pvParameters) {
+  char line[CMD_LINE_MAX];
+  size_t n = 0;
+  Serial.print("> ");
+  for (;;) {
+    while (Serial.available() > 0) {
+      int c = Serial.read();
+      if (c < 0) break;
+
+      if (c == '\r') continue;       // ignore CR (CRLF)
+      if (c == '\n') {
+        Serial.println();
+        line[n] = 0;
+        if (n > 0) {
+          char* argv[CMD_MAX_ARGS];
+          int argc = tokenize(line, argv, CMD_MAX_ARGS);
+          cmd_dispatch(argc, argv);
+        }
+        n = 0;
+        Serial.print("> ");
+      } else if (c == 0x7f || c == 0x08) {  // backspace / delete
+        if (n > 0) {
+          n--;
+          Serial.print("\b \b");
+        }
+      } else if (n < CMD_LINE_MAX - 1 && c >= 0x20 && c < 0x7f) {
+        line[n++] = (char)c;
+        Serial.write((uint8_t)c);   // echo
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
 }
 
 // =====================================================================
@@ -579,6 +990,7 @@ HardwareSerial uartElrs(2);   // UART2 (ELRS module side)
 void byte_pump_task(void* pvParameters);
 void parser_task(void* pvParameters);
 void servo_task(void* pvParameters);
+void cmd_task(void* pvParameters);
 
 // =====================================================================
 // setup()
@@ -589,7 +1001,7 @@ void setup() {
 
   Serial.println();
   Serial.printf("=== zerotx-tracker fw %s ===\n", FW_VERSION);
-  Serial.println("Phase 4: full tracking glue (EMA + flip + failsafe)");
+  Serial.println("Phase 5: tracking + USB-CDC config + NVS persistence");
   Serial.println();
 
   uartCable.begin(CRSF_BAUD, SERIAL_8N1, UART1_RX, UART1_TX);
@@ -607,6 +1019,12 @@ void setup() {
 
   esp_task_wdt_init(WDT_TIMEOUT_S, true);
   Serial.printf("watchdog: %ds, panic-on-timeout\n", WDT_TIMEOUT_S);
+
+  // Load persisted configuration. Falls back to compile-time defaults
+  // for any keys not present in NVS, so first-boot or after-flash-erase
+  // produces sensible values without needing a special path.
+  config_load();
+  config_print();
 
   // Allocate the parser tee. Single-byte trigger level (the parser
   // wakes as soon as ANY byte arrives; it batches in its own buffer).
@@ -638,8 +1056,9 @@ void setup() {
     Serial.println("crsf_parser task running on core 0");
   }
 
-  // Servo subsystem. Initialize LEDC channels (writes center pulse
-  // to both axes) before starting the slew task.
+  // Servo subsystem. Initialize LEDC channels (writes configured
+  // center pulse to both axes) before starting the slew task.
+  // config_load() must already have run.
   servo_init();
 
   // Slew loop on core 0 at SERVO_SLEW_HZ (100Hz). Same priority as
@@ -655,12 +1074,24 @@ void setup() {
     Serial.println("servo_slew task running on core 0");
   }
 
+  // USB-CDC command parser on core 0. Reads one line at a time from
+  // the serial console, dispatches commands. Used for runtime config
+  // and manual servo aim during installation alignment.
+  rc = xTaskCreatePinnedToCore(
+      cmd_task, "cmd_parser", 4096, nullptr,
+      1, nullptr, 0);
+  if (rc != pdPASS) {
+    Serial.println("FATAL: failed to start cmd task");
+  } else {
+    Serial.println("cmd_parser task running on core 0");
+  }
+
   // Boot self-test sweep. Blocks ~3.6s. Skip by commenting out if
   // the tracker is already on the pole with antennas attached and
   // you don't want them moving on every boot.
   servo_self_test();
 
-  Serial.println("ready");
+  Serial.println("ready (type 'help' for commands)");
   Serial.println();
 }
 
@@ -795,8 +1226,8 @@ void parser_task(void* pvParameters) {
                     gps.speed_kmh, gps.heading_deg, gps.sats);
 
                   // Compute pointing direction from station to aircraft.
-                  AzEl ae = compute_az_el(STATION_LAT, STATION_LON,
-                                          STATION_ALT_M,
+                  AzEl ae = compute_az_el(cfg.station_lat, cfg.station_lon,
+                                          cfg.station_alt_m,
                                           gps.lat_deg, gps.lon_deg,
                                           (double)gps.altitude_m);
                   Serial.printf("TRK az=%.2f el=%.2f dist=%.0fm\n",

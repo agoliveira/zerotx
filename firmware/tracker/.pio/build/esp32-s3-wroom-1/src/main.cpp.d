@@ -179,5 +179,6 @@
  /home/adilson/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_hw_support/include/soc/esp32/spiram.h \
  /home/adilson/.platformio/packages/framework-arduinoespressif32/cores/esp32/io_pin_remap.h \
  /home/adilson/.platformio/packages/framework-arduinoespressif32/cores/esp32/Arduino.h \
+ /home/adilson/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src/Preferences.h \
  /home/adilson/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/esp_system/include/esp_task_wdt.h \
  /home/adilson/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/freertos/include/freertos/stream_buffer.h

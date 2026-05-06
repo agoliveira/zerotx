@@ -39,8 +39,8 @@ configuration changes.
 | 1     | CRSF telemetry sniffer on core 0 (parses GPS frames).    | done |
 | 2     | Az/el math from aircraft GPS + station GPS.              | done |
 | 3     | LEDC PWM driving 2 servos with slew-rate limiting.       | done |
-| 4     | Glue az/el outputs to servo angles. Failsafe behaviors.  | this firmware |
-| 5     | USB-CDC calibration interface, NVS-stored station coords.| pending |
+| 4     | Glue az/el outputs to servo angles. Failsafe behaviors.  | done |
+| 5     | USB-CDC calibration interface, NVS-stored station coords.| this firmware |
 
 Phase 0 is the safety floor. The byte pump runs on core 1 at the
 highest priority; nothing added in later phases is allowed to block
@@ -102,26 +102,58 @@ the native-USB cable shows firmware logs without an external bridge.
    cable for monitor). USB-CDC should print roughly:
 
    ```
-   === zerotx-tracker fw 0.5.0-tracking ===
-   Phase 4: full tracking glue (EMA + flip + failsafe)
+   === zerotx-tracker fw 0.6.0-cfg ===
+   Phase 5: tracking + USB-CDC config + NVS persistence
 
    UART1 (cable): RX=GP17 TX=GP18 @ 420000 baud
    UART2 (ELRS):  RX=GP4 TX=GP5 @ 420000 baud
    watchdog: 1s, panic-on-timeout
+   --- config ---
+   station   lat=-22.9123000 lon=-47.0610000 alt=685.0m
+   pan       ref_az=0.00deg range=180.0deg pulse=1000/1500/2000 invert=off flip=on
+   tilt      range=180.0deg pulse=1000/1500/2000 invert=off
+   --------------
    telem_buffer: 4096 bytes
    byte_pump task running on core 1
    crsf_parser task running on core 0
-   servos: pan GP6 ch0, tilt GP7 ch1, 50Hz, 12-bit, 1000..2000us
+   servos: pan GP6 ch0 (1000/1500/2000 us), tilt GP7 ch1 (1000/1500/2000 us), 50Hz, 12-bit
    servo_slew task running on core 0
+   cmd_parser task running on core 0
    servo self-test: starting sweep
      pan: low / pan: high / pan: center
      tilt: low / tilt: high / tilt: center
    servo self-test: complete
-   ready
+   ready (type 'help' for commands)
 
+   >
    heartbeat uptime=5s frames=0 gps=0 bad_crc=0 dropped=0 no-telem
-   heartbeat uptime=10s frames=0 gps=0 bad_crc=0 dropped=0 no-telem
-   ...
+   ```
+
+   The `>` prompt means the command parser is ready. Type `help`
+   for the full list of commands.
+
+3. **Initial calibration** (one-time, per installation):
+
+   ```
+   > cfg station -22.4591 -45.4502 1234
+   station = -22.4591000 -45.4502000 1234.0m
+   > cfg pan_ref 270
+   pan_ref = 270.00 deg
+   > cfg save
+   config saved to NVS
+   ```
+
+   Values persist across reboots. Use `cfg show` to inspect at any
+   time. `defaults` resets RAM config to compile-time values without
+   touching NVS; follow with `cfg save` to actually persist.
+
+4. **Manual aim** for installation alignment (without telemetry):
+
+   ```
+   > aim 0 0
+   aiming az=0.00 el=0.00 -> pan=1500us tilt=1000us flip=off
+   > aim 90 30
+   aiming az=90.00 el=30.00 -> pan=2000us tilt=1167us flip=off
    ```
 
    With telemetry flowing, each successful GPS decode produces a
@@ -133,14 +165,7 @@ the native-USB cable shows firmware logs without an external bridge.
    ```
 
    The heartbeat status field becomes `tracking` when telemetry is
-   fresh (< 1500ms old) and `hold` when stale. Mechanical behavior
-   is the same in both: hold-last-position. Status is just for the
-   operator.
-
-   ```
-   heartbeat uptime=125s frames=873 gps=421 bad_crc=0 dropped=0 tracking age=98ms
-   heartbeat uptime=130s frames=988 gps=478 bad_crc=0 dropped=0 hold age=4218ms
-   ```
+   fresh (< 1500ms old) and `hold` when stale.
 
 3. **Connect inline** between the case-side MAX490 and the ELRS TX
    module. Power up the tracker, then power up the daemon and the ELRS
