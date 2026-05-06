@@ -1,24 +1,19 @@
 // ZeroTX antenna tracker firmware.
 //
-// Phase 1: byte pump + CRSF telemetry sniffer + GPS frame logging.
+// Phase 2: Phase 1 + az/el math.
 //
-// The byte pump on core 1 still has the same single responsibility as
-// in Phase 0: forward bytes between the cable side (UART1, MAX490
-// RS-422) and the ELRS module (UART2). On the upstream direction
-// (ELRS -> cable), bytes are also tee'd into a non-blocking stream
-// buffer for the parser to consume. The tee NEVER blocks the byte
-// pump: if the buffer is full, bytes are silently dropped on the
-// parser side and we miss a frame. The wire is preserved.
+// Builds on Phase 1's CRSF parser: every successfully decoded GPS
+// frame now also gets pointed-at math run on it. Station coordinates
+// are hardcoded constants (Phase 5 will move them to NVS flash with
+// a USB-CDC calibration command); the math is spherical-earth
+// haversine for great-circle distance and atan2 for elevation. No
+// servos yet; this phase just logs az/el alongside the raw GPS so
+// the math can be sanity-checked on the bench.
 //
-// The parser task on core 0 reads bytes from the stream buffer,
-// runs a CRSF frame state machine, validates CRC, and on every
-// GPS frame (type 0x02) extracts and logs the aircraft position to
-// USB-CDC. No math, no servos yet.
-//
-// Architecture (full plan, Phases 0 and 1 implemented):
+// Architecture (full plan):
 //   Phase 0: byte pump on core 1, hardware watchdog, USB-CDC log.
-//   Phase 1 (this firmware): tee + CRSF parser + GPS extraction.
-//   Phase 2: az/el math (haversine + atan2) using station GPS.
+//   Phase 1: tee + CRSF parser + GPS extraction.
+//   Phase 2 (this firmware): az/el math added.
 //   Phase 3: LEDC PWM driving 2 servos.
 //   Phase 4: glue az/el outputs to servo angles. Failsafe behavior.
 //   Phase 5: USB-CDC calibration interface, NVS-stored station coords.
@@ -30,10 +25,11 @@
 // Hardware: ESP32-S3 (QFN56), 16MB QIO flash + 8MB QSPI PSRAM.
 
 #include <Arduino.h>
+#include <math.h>
 #include <esp_task_wdt.h>
 #include <freertos/stream_buffer.h>
 
-constexpr const char* FW_VERSION = "0.2.0-parser";
+constexpr const char* FW_VERSION = "0.3.0-azel";
 
 // =====================================================================
 // Pin map
@@ -166,6 +162,72 @@ static bool parse_gps_payload(const uint8_t* payload, size_t len, GpsFrame& out)
 }
 
 // =====================================================================
+// Station coordinates
+// =====================================================================
+//
+// PLACEHOLDER: edit these to match the actual installation site
+// before field use. Phase 5 will move them to NVS flash with a
+// USB-CDC calibration command, so they survive across firmware
+// updates without source edits. For now: hardcoded.
+//
+// Defaults are roughly Campinas, useful for sanity-checking the
+// math but NOT correct for the rural flying field where the tracker
+// will deploy.
+constexpr double STATION_LAT   = -22.9123;   // degrees
+constexpr double STATION_LON   = -47.0610;   // degrees
+constexpr double STATION_ALT_M =   685.0;    // meters above sea level
+
+// =====================================================================
+// Az/el computation
+// =====================================================================
+//
+// Spherical earth model, radius 6371 km. Accurate to within ~0.5%
+// over expected FPV ranges (< 10 km); ellipsoid corrections aren't
+// worth the complexity at these scales.
+
+constexpr double EARTH_RADIUS_M = 6371000.0;
+
+struct AzEl {
+  double az_deg;     // 0..360, 0 = N, 90 = E
+  double el_deg;     // -90..90, 0 = horizon, +90 = zenith
+  double dist_m;     // great-circle ground distance, meters
+};
+
+// Compute azimuth and elevation FROM (lat_a, lon_a, alt_a) TO
+// (lat_b, lon_b, alt_b). Coordinates in degrees, altitudes in meters.
+static AzEl compute_az_el(double lat_a, double lon_a, double alt_a,
+                          double lat_b, double lon_b, double alt_b) {
+  double phi_a = lat_a * M_PI / 180.0;
+  double phi_b = lat_b * M_PI / 180.0;
+  double d_lon = (lon_b - lon_a) * M_PI / 180.0;
+
+  // Great-circle initial bearing from a to b
+  double y = sin(d_lon) * cos(phi_b);
+  double x = cos(phi_a) * sin(phi_b) - sin(phi_a) * cos(phi_b) * cos(d_lon);
+  double az_rad = atan2(y, x);
+  double az_deg = az_rad * 180.0 / M_PI;
+  if (az_deg < 0.0) az_deg += 360.0;
+
+  // Haversine for great-circle ground distance
+  double d_phi = phi_b - phi_a;
+  double sin_dphi_2 = sin(d_phi / 2.0);
+  double sin_dlon_2 = sin(d_lon / 2.0);
+  double a = sin_dphi_2 * sin_dphi_2 +
+             cos(phi_a) * cos(phi_b) * sin_dlon_2 * sin_dlon_2;
+  double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+  double dist = EARTH_RADIUS_M * c;
+
+  // Elevation: atan2 of altitude difference vs ground distance.
+  // dist_m near zero (aircraft directly above station) is rare in
+  // practice but well-handled by atan2 anyway: el approaches +/- 90.
+  double alt_diff = alt_b - alt_a;
+  double el_rad = atan2(alt_diff, dist);
+  double el_deg = el_rad * 180.0 / M_PI;
+
+  return AzEl{az_deg, el_deg, dist};
+}
+
+// =====================================================================
 // Diagnostic counters (parser updates, loop() samples)
 // =====================================================================
 //
@@ -199,7 +261,7 @@ void setup() {
 
   Serial.println();
   Serial.printf("=== zerotx-tracker fw %s ===\n", FW_VERSION);
-  Serial.println("Phase 1: byte pump + CRSF telemetry sniffer");
+  Serial.println("Phase 2: byte pump + parser + az/el math");
   Serial.println();
 
   uartCable.begin(CRSF_BAUD, SERIAL_8N1, UART1_RX, UART1_TX);
@@ -381,6 +443,14 @@ void parser_task(void* pvParameters) {
                     "GPS lat=%.7f lon=%.7f alt=%dm spd=%.1fkm/h hdg=%.2f sats=%u\n",
                     gps.lat_deg, gps.lon_deg, gps.altitude_m,
                     gps.speed_kmh, gps.heading_deg, gps.sats);
+
+                  // Compute pointing direction from station to aircraft.
+                  AzEl ae = compute_az_el(STATION_LAT, STATION_LON,
+                                          STATION_ALT_M,
+                                          gps.lat_deg, gps.lon_deg,
+                                          (double)gps.altitude_m);
+                  Serial.printf("TRK az=%.2f el=%.2f dist=%.0fm\n",
+                                ae.az_deg, ae.el_deg, ae.dist_m);
                 }
               }
               // Other types ignored. We could log BATTERY voltage,

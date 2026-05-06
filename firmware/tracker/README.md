@@ -36,8 +36,8 @@ configuration changes.
 | Phase | Scope                                                    | Status |
 |-------|----------------------------------------------------------|--------|
 | 0     | Pure byte-pump. Inline CRSF passthrough + watchdog.      | done |
-| 1     | CRSF telemetry sniffer on core 0 (parses GPS frames).    | this firmware |
-| 2     | Az/el math from aircraft GPS + station GPS.              | pending |
+| 1     | CRSF telemetry sniffer on core 0 (parses GPS frames).    | done |
+| 2     | Az/el math from aircraft GPS + station GPS.              | this firmware |
 | 3     | LEDC PWM driving 2 servos with slew-rate limiting.       | pending |
 | 4     | Glue az/el outputs to servo angles. Failsafe behaviors.  | pending |
 | 5     | USB-CDC calibration interface, NVS-stored station coords.| pending |
@@ -99,8 +99,8 @@ the native-USB cable shows firmware logs without an external bridge.
    cable for monitor). USB-CDC should print roughly:
 
    ```
-   === zerotx-tracker fw 0.2.0-parser ===
-   Phase 1: byte pump + CRSF telemetry sniffer
+   === zerotx-tracker fw 0.3.0-azel ===
+   Phase 2: byte pump + parser + az/el math
 
    UART1 (cable): RX=GP17 TX=GP18 @ 420000 baud
    UART2 (ELRS):  RX=GP4 TX=GP5 @ 420000 baud
@@ -113,6 +113,14 @@ the native-USB cable shows firmware logs without an external bridge.
    heartbeat uptime=5s frames=0 gps=0 bad_crc=0 dropped=0
    heartbeat uptime=10s frames=0 gps=0 bad_crc=0 dropped=0
    ...
+   ```
+
+   With telemetry flowing, each successful GPS decode appears as
+   a pair of lines, GPS first then TRK:
+
+   ```
+   GPS lat=-22.9101234 lon=-47.0612345 alt=712m spd=14.2km/h hdg=183.45 sats=15
+   TRK az=178.32 el=12.45 dist=842m
    ```
 
 3. **Connect inline** between the case-side MAX490 and the ELRS TX
