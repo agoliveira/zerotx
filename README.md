@@ -103,4 +103,4 @@ GPLv3. See [`LICENSE`](LICENSE).
 
 ## Acknowledgements
 
-EdgeTX (model YAML format), ExpressLRS (RC link), INAV (flight controllers used for testing), SDL2 (joystick input), Piper TTS (audio narration), mwp (telemetry tee target), the ESP32-HUB75-MatrixPanel-DMA and U8g2 libraries (panel rendering), the PMTiles project (offline map tiles), and the broader FPV and RC community whose work this builds on.
+EdgeTX (model YAML format), ExpressLRS (RC link), INAV (flight controllers used for testing), SDL2 (joystick input), Piper TTS (audio narration), the ESP32-HUB75-MatrixPanel-DMA and U8g2 libraries (panel rendering), the PMTiles project (offline map tiles), and the broader FPV and RC community whose work this builds on.
