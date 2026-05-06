@@ -20,7 +20,8 @@ TODO: confirm regulator topology, then redraw
 13.8V CCTV PSU ----+---- buck to 5V ---- USB hub, Pi 400, MCUs, HUB75 panels,
                    |                     VFD, WS2813, lid LED panels, SSD
                    |
-                   +---- 12V direct  ---- LCDs (TODO confirm voltage per panel)
+                   +---- 12V direct  ---- LCDs (TODO confirm voltage per panel),
+                   |                      pole-end project box via cable
                    |
                    +---- TODO: any 3.3V direct loads
 
@@ -41,6 +42,7 @@ Initial estimates. Refine with bench measurements once the regulator topology is
 | Mega 2560 | 5V | ~0.2A | via USB |
 | ESP32 (panel driver) | 5V | ~0.3A | via USB |
 | RP2040 (CRSF) | 5V | ~0.1A | via USB |
+| Pole-end project box | 12V via cable | TODO | tracker + ELRS + 2x servos under bucks; servos dominate |
 | VFD (CU20025ECPB-W1J) | 5V | TODO | confirm against datasheet |
 | Trackball ring LEDs | 5V | small | sourced from Mega |
 | WS2813 strip (16 px) | 5V | 0.96A worst case | full white |
@@ -57,9 +59,9 @@ Field: 12V/AC dual-rail input on the rear bulkhead, feeding the same internal re
 
 ## USB topology
 
-The Pi 400 has 3x external USB-A ports (2x USB 3.0, 1x USB 2.0) plus its internal keyboard. Three things hang directly off the Pi: the boot SSD, the RP2040 CRSF generator, and a powered USB hub. Everything else lives behind the hub.
+The Pi 400 has 3x external USB-A ports (2x USB 3.0, 1x USB 2.0) plus its internal keyboard. Three things hang directly off the Pi: the boot SSD, the RP2040 CRSF endpoint, and a powered USB hub. Everything else lives behind the hub.
 
-The RP2040 gets a dedicated Pi port (not behind the hub) for jitter and reliability isolation. CPPM/CRSF generation is the most safety-critical USB path in the system; putting it behind a hub introduces failure modes (hub power glitch, bandwidth contention with HID, enumeration races on cold boot) that don't exist on a direct connection.
+The RP2040 gets a dedicated Pi port (not behind the hub) for jitter and reliability isolation. CRSF I/O is the most safety-critical USB path in the system; putting it behind a hub introduces failure modes (hub power glitch, bandwidth contention with HID, enumeration races on cold boot) that don't exist on a direct connection.
 
 ```
 TODO: confirm which physical Pi port each device sits on after final assembly
@@ -68,13 +70,12 @@ Pi 400 USB port A (USB 3.0)
   +-- Boot SSD                  (root filesystem; system boots from this)
 
 Pi 400 USB port B (USB 3.0)
-  +-- RP2040 CRSF generator     (id: usb-Raspberry_Pi_Pico_E66138935F3C4824)
+  +-- RP2040 CRSF endpoint      (id: usb-Raspberry_Pi_Pico_E66138935F3C4824)
 
 Pi 400 USB port C (USB 2.0)
   +-- Powered USB hub (model: TODO)
         +-- Mega 2560 IO board       (id: usb-Arduino_LLC_Mega_2560_R3_<serial>)
         +-- ESP32 panel driver       (id: usb-<vendor>_<chip>_<serial>)
-        +-- ELRS TX backpack         (id: usb-<vendor>_<model>_<serial>)
         +-- USB joystick             (Thrustmaster <model>)
         +-- Trackball + 2 buttons    (USB HID composite)
         +-- Front-panel USB-A x N    (ad-hoc, charging, dev access)
@@ -131,26 +132,74 @@ Project-wide convention: active-HIGH default, per-pin HAL flag opts into active-
 | Connection | From | To | Notes |
 |---|---|---|---|
 | USB-CDC + 5V | Pi USB port B (direct, not hub) | RP2040 USB port | data and power; isolated from hub |
-| CPPM or CRSF out | RP2040 GPIO **TODO** | Radio TX trainer port | confirm pin and electrical level (3.3V tolerance of target radio) |
-| GND | shared | shared | common ground with radio |
+| CRSF UART | RP2040 GPIO **TODO** | Case-end MAX490 RS-422 transceiver | bidirectional (channel intents out, telemetry in) |
+| GND | shared | shared with MAX490 and onward to pole | common ground reference |
 
-**TODO**: document the specific output GPIO pin and any inline level shifter or buffer. Cross-check against `rp2040/` source. Confirm radio TX trainer port pinout and protocol selection (CPPM vs CRSF).
+**TODO**: document the specific RP2040 GPIO pins for TX/RX. Cross-check against `rp2040/` source.
 
-## ELRS TX backpack connection
+## Case-to-pole cable
 
-ELRS modules (HappyModel ES900TX, RadioMaster Ranger 2.4GHz) live externally on poles. The case has no internal antennas, no SMA bulkhead passthroughs, no RF shielding (locked decision: see `docs/DECISIONS.md`).
+A single multi-conductor cable connects the case to the pole-end project box. It carries:
+
+- 12V power for the pole-end electronics (tracker, ELRS module, servos via downstream bucks)
+- RS-422 differential pair (DI/RO/DE/RE on the MAX490 sense; A/B on the wire)
+- GND
+- Optional spare conductor reserved for future use
+
+CRSF frames travel as RS-422 between the case-end MAX490 and the pole-end MAX490 in both directions. RS-422 was chosen over native UART for cable noise immunity and length tolerance.
 
 ```
-External pole
-  |
-  +-- ELRS TX module
-        |
-        +-- USB cable (data + power) ----- bulkhead USB pass-through ----- internal powered USB hub
-        |
-        +-- antenna stays on pole
+Case end                                     Pole end (project box)
++----------+                                 +----------+
+| RP2040   |  CRSF UART (TTL)                |  MAX490  |
+|  (CRSF)  |---->----+                       |          |
+|          |<----+   |    +-------------+    |          |    +------------+
++----------+     |   v    | RS-422 pair |    |          |    | ESP32-S3   |
+                 |  +-------------------+--->|          |--->|  Tracker   |
+                 +--| Case-end MAX490   |    |          |    |            |
+                    +-------------------+<---|          |<---|            |
+                                             +----------+    +-----+------+
+                                                                   |
+                                                                   v
+                                                           +-------+--------+
+                                                           |  ELRS TX module |
+                                                           |  (CRSF UART)    |
+                                                           +-----------------+
+                                                                   |
+                                                                   v
+                                                          (RF out via pole antenna)
 ```
 
-The daemon's `source` subsystem ingests CRSF/MAVLink telemetry directly from the module's USB serial.
+## Pole-end project box
+
+External to the case, mounted on the pole. Houses the antenna tracker, the ELRS TX module, and local power conditioning. Receives 12V from the case via the multi-conductor cable.
+
+| Component | Role | Notes |
+|---|---|---|
+| ESP32-S3 (QFN56) | Antenna tracker | 16MB QIO flash + 8MB QSPI PSRAM (3.3V, NOT octal); see `firmware/tracker/README.md` |
+| MAX490 (or MAX3490) | RS-422 transceiver | terminates the cable's RS-422 pair, presents UART to the tracker's UART1 |
+| 6V buck | Servo rail | feeds pan and tilt servos |
+| 5V buck | Logic rail | feeds the ESP32-S3 |
+| 2-DOF PTZ gimbal | Pan/tilt mount | Ø82mm pan bearing carries the load; 25kg/270° pan servo and 20kg/180° tilt servo (TODO confirm final part numbers after order) |
+| ELRS TX module | RF link | RadioMaster Nomad / Ranger / HappyModel ES900TX, depending on band |
+| Pole antenna | RF emitter | mounted external to the project box |
+
+ESP32-S3 pin map (from `firmware/tracker/`):
+
+| Function | GPIO |
+|---|---|
+| UART1 RX (cable / MAX490) | GP17 |
+| UART1 TX (cable / MAX490) | GP18 |
+| UART2 RX (ELRS module) | GP4 |
+| UART2 TX (ELRS module) | GP5 |
+| Pan PWM (LEDC ch 0) | GP6 |
+| Tilt PWM (LEDC ch 1) | GP7 |
+| I2C SDA (reserved, future magnetometer) | GP8 |
+| I2C SCL (reserved, future magnetometer) | GP9 |
+
+The tracker is the only component on the pole that needs USB-CDC access, and only for calibration. In normal operation the cable is the only connection between case and pole.
+
+**TODO**: hardware bypass jumper for field recovery if the tracker firmware fails (route the cable's RS-422 pair around the tracker, directly to the ELRS module). Planned for the project box layout.
 
 ## External bulkhead inventory
 
@@ -160,10 +209,8 @@ Case-side connectors. **TODO**: confirm final list and locations after assembly.
 |---|---|---|
 | Lab power input | IEC C14 (front) | mains to internal 13.8V CCTV PSU |
 | Field power input | TODO (XT60? Anderson Powerpole?) | 12V/AC dual-rail field input |
-| ELRS pole 1 | USB pass-through | ES900TX or Ranger module |
-| ELRS pole 2 | USB pass-through | second ELRS module (if both fitted) |
+| Pole connector | Multi-conductor (12V + RS-422 pair + GND + spare) | feeds pole-end project box (tracker, ELRS, servos) |
 | Front-panel USB | USB-A x N | ad-hoc devices, charging, dev access |
-| Radio link out | TODO | CPPM/CRSF out from RP2040 to external radio |
 
 ## See also
 
@@ -174,5 +221,6 @@ Case-side connectors. **TODO**: confirm final list and locations after assembly.
 - `docs/protocols/display.md`: HUB75 wire protocol
 - `firmware/display/README.md`: ESP32 panel driver, GPIO pinout, panel chain detail
 - `firmware/io/README.md`: Mega IO firmware, canonical pin table, HAL flags
-- `rp2040/README.md`: CRSF generator firmware
+- `firmware/tracker/README.md`: ESP32-S3 antenna tracker firmware
+- `rp2040/README.md`: CRSF endpoint firmware
 - `tools/zerotx-iohal-config/`: HAL configuration CLI for Mega pin mapping

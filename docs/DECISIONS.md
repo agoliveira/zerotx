@@ -23,6 +23,14 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 - Case is wired-only inside: no internal antennas, no SMA bulkhead passthroughs, no RF shielding concerns for the case itself.
 - Case mechanicals settled: sun hoods for LCDs, cable bulkhead connectors, dual-rail (13.8V CCTV plus 12V/AC field) power input, front-panel USB layout, ventilation and cooling, power switch, interior status indication via lid LED panels.
 
+## Antenna tracker
+
+- Antenna tracker is pole-end and inline on the wired CRSF path (not daemon-side): keeps tracking autonomous across Pi reboots, requires no second comms link, and is invisible to the daemon. Adding or removing the tracker requires zero daemon-side code changes.
+- Tracker byte_pump_task on Core 1 with top priority is the safety floor: it is the only task registered with the hardware watchdog. Tracker logic stalls on Core 0 (parser, math, servo loop, console) cannot panic the wire forwarder.
+- Custom tracker over U360GTS or other OSS trackers: ZeroTX's inline-on-wired-CRSF deployment is unusual; existing tracker projects target different topologies (parallel WiFi telemetry, daemon-side commanded tracking, etc.).
+- CRSF between case and pole runs over RS-422 (MAX490 pair on each end): differential pairs handle long cable runs cleanly where a native UART would suffer noise and length limits. Also gives the tracker a clean inline insertion point.
+- Tracker failsafe is hold-last-position by construction, not a programmed timeout: if no GPS frames arrive, the slew loop simply has no new target, so the gimbal sits where it was. No park-to-home pose.
+
 ## Power
 
 - 13.8V CCTV PSU is the primary internal rail: feeds all internal nodes via downstream regulation.

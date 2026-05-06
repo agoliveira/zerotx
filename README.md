@@ -23,7 +23,7 @@ Current capability:
 - Offline satellite map tiles (pmtiles) for in-the-field operation without internet
 - Pre-flight model and joystick selection via REST API
 - IDLE/READY state machine: daemon refuses to emit channel intents until a model is explicitly loaded
-- Automatic antenna tracker (AAT) support: position data is broadcast to the tracker over the ELRS backpack's ESP-NOW link
+- Automatic antenna tracker (AAT) integrated inline at the pole. An ESP32-S3 sits on the wired CRSF path between the case and the ELRS TX module, byte-pumps frames transparently in both directions, sniffs GPS telemetry, and drives a 2-DOF pan/tilt gimbal autonomously. Daemon-unaware; the case-side stack does not know the tracker exists.
 
 ## Layout
 
@@ -32,7 +32,8 @@ zerotx/
 ├── pi/daemon/    Go daemon and embedded web GUI
 ├── firmware/
 │   ├── display/  ESP32 HUB75 panel driver
-│   └── io/       Mega 2560 IO board
+│   ├── io/       Mega 2560 IO board
+│   └── tracker/  ESP32-S3 inline antenna tracker (pole-end)
 ├── rp2040/       Pico SDK C++ firmware (CRSF generator)
 ├── web/          HUD and Map browser UIs
 ├── tools/        Tile builders, replay tool, HAL configurator

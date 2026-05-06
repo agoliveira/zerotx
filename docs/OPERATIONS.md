@@ -80,6 +80,45 @@ Mostly hands-off after launch. The system narrates mode transitions, alarms, and
 
 Mode changes are made via radio, not via GCS.
 
+## Antenna tracker
+
+The pole-end ESP32-S3 antenna tracker is autonomous. Once configured for the site, it tracks the aircraft based on CRSF GPS frames it sees passing through on the wired link. The daemon is not involved; tracker behavior survives Pi reboots and daemon restarts.
+
+### First-time site setup
+
+Connect the tracker to a host machine via USB-CDC. Open a serial console at 115200:
+
+```
+screen /dev/ttyACM0 115200
+```
+
+Configure station coordinates (lat, lon, alt in meters), pan reference azimuth (a known-direction landmark used to align pan-center), pan range (180, 270, or 360 degrees depending on servo), pan pulse calibration (min, center, max in microseconds), and the same for tilt. Persist to NVS:
+
+```
+cfg station <lat> <lon> <alt_m>
+cfg pan_ref <azimuth_deg>
+cfg pan_range <180|270|360>
+cfg pan_pulse <min_us> <center_us> <max_us>
+cfg pan_invert <on|off>
+cfg pan_flip <on|off>
+cfg tilt_range <deg>
+cfg tilt_pulse <min_us> <center_us> <max_us>
+cfg tilt_invert <on|off>
+cfg save
+```
+
+`cfg show` displays the active config. `aim <az_deg> <el_deg>` manually drives the gimbal for alignment work. `pos` shows current servo positions and EMA state. `stats` shows parser counters and telemetry age.
+
+See `firmware/tracker/README.md` for the full console reference.
+
+### In-flight behavior
+
+The tracker reports `tracking` when receiving fresh GPS frames, `hold` when it has lost telemetry but is holding the last commanded pose, and `no-telem` if it has never seen telemetry since boot. Failsafe is hold-last-position by construction; no GPS frames means no servo commands.
+
+### Hardware bypass
+
+**TODO**: a hardware bypass jumper that routes the cable's RS-422 pair directly to the ELRS module, skipping the tracker, is planned for the project box layout. Until that lands, a tracker firmware failure requires removing the tracker from the line and joining the cable to the ELRS UART manually.
+
 ## Post-flight
 
 1. Land. Disarm.
@@ -163,13 +202,32 @@ Diagnose: `aplay /usr/share/sounds/alsa/Front_Center.wav` produces sound? `journ
 
 Fix: confirm ALSA default sink with `pactl list short sinks`. Re-set with `pactl set-default-sink`. Confirm Piper binary path matches the `-piper-binary` flag and is executable.
 
+### Tracker not tracking (gimbal not moving)
+
+Symptom: aircraft is in the air with GPS lock, but the pole-end gimbal does not move.
+
+Diagnose: connect to the tracker via USB-CDC and run `stats` to check parser counters and telemetry age. If telemetry age is high or no GPS frames have been parsed, the wired CRSF path is at fault, not the tracker. If parser counters are healthy but the gimbal is still, check `pos` for clamped servo positions and `cfg show` for misconfigured pan_ref or station coordinates.
+
+Fix:
+- High telemetry age: check the case-to-pole cable, MAX490 transceivers on both ends, and the RP2040 link.
+- Healthy parser, no movement: re-run station and pan_ref calibration; verify servo wiring and 6V buck output.
+- Aircraft stationary on the ground at short range: tracker may be holding center because angles are below tilt range; not a fault.
+
+### Tracker firmware failure (need bypass)
+
+Symptom: tracker is enumerated but byte-pumping is broken; channel intents do not reach ELRS, or telemetry does not return to the case.
+
+Diagnose: this would manifest case-side as failsafe on the airframe and absent telemetry on the HUD. Confirm by power-cycling the pole-end project box.
+
+Fix: with the planned hardware bypass jumper (TODO, not yet implemented), route the cable's RS-422 pair past the tracker directly to the ELRS UART. Without the jumper, manual bypass requires opening the project box and physically rewiring.
+
 ### Telemetry stalled mid-flight
 
 Symptom: HUD values frozen; panel does not reflect aircraft state.
 
-Diagnose: ELRS TX backpack still enumerated? `source` subsystem in daemon log?
+Diagnose: the telemetry path is ELRS module to tracker to RS-422 cable to RP2040 to daemon. Walk it end to end. RP2040 still enumerated on the Pi side? `source` subsystem in daemon log? Tracker `stats` show parser still receiving frames?
 
-Fix: replug ELRS TX backpack at the hub. If recurrent, suspect cable to external pole, hub stability, or ELRS firmware on the module.
+Fix: replug RP2040 USB if its enumeration dropped. If RP2040 is fine but no telemetry is parsing, the issue is upstream of the case (cable, MAX490s, tracker, ELRS module). Power-cycle the pole-end project box. If recurrent, suspect cable connection at the bulkhead or ELRS module firmware.
 
 ### Web UI won't load or WebSocket dropping
 
@@ -233,6 +291,16 @@ See `firmware/io/README.md`. Same `pio run -t upload` pattern in `firmware/io/`.
 
 See `rp2040/README.md`. Build the .uf2 with Pico SDK and CMake, then put the RP2040 into BOOTSEL mode and copy the file.
 
+### Tracker firmware (ESP32-S3, pole-end)
+
+See `firmware/tracker/README.md`. Built with PlatformIO. Connect the tracker via USB-CDC (typically `/dev/ttyACM0` through the CH343 bridge during dev), then:
+
+```
+cd ~/zerotx/firmware/tracker
+pio run -t upload
+pio device monitor -b 115200
+```
+
 ## Tile data refresh
 
 When `stan` finishes a tile build:
@@ -252,4 +320,4 @@ Verify in Map browser: zoom to a known coordinate, confirm imagery loads.
 - `docs/protocols/display.md`: HUB75 panel command grammar
 - `docs/DECISIONS.md`: locked decisions
 - `docs/ROADMAP.md`: pinned and backlog items
-- `firmware/display/README.md`, `firmware/io/README.md`, `rp2040/README.md`: firmware-specific procedures
+- `firmware/display/README.md`, `firmware/io/README.md`, `firmware/tracker/README.md`, `rp2040/README.md`: firmware-specific procedures
