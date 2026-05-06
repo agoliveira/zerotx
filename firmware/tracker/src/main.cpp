@@ -1,26 +1,38 @@
 // ZeroTX antenna tracker firmware.
 //
-// Phase 2: Phase 1 + az/el math.
+// Phase 3: Phase 2 + LEDC PWM servo driver with slew-rate limiting.
 //
-// Builds on Phase 1's CRSF parser: every successfully decoded GPS
-// frame now also gets pointed-at math run on it. Station coordinates
-// are hardcoded constants (Phase 5 will move them to NVS flash with
-// a USB-CDC calibration command); the math is spherical-earth
-// haversine for great-circle distance and atan2 for elevation. No
-// servos yet; this phase just logs az/el alongside the raw GPS so
-// the math can be sanity-checked on the bench.
+// Adds a 2-axis servo subsystem on core 0: hardware LEDC at 50Hz,
+// 12-bit duty resolution, with a 100Hz slew loop ramping the current
+// pulse width toward the target by at most SERVO_SLEW_STEP_US per
+// tick. This protects the gear train from full-range slams and
+// keeps current draw smooth.
+//
+// API:
+//   servo_set_pan_us(us)   - set target pan pulse width
+//   servo_set_tilt_us(us)  - set target tilt pulse width
+// The slew task does the actual writes to LEDC.
+//
+// On boot a self-test sweeps both axes to verify wiring before the
+// tracker has any reason to move them. If the servos don't respond
+// or move the wrong way, you find out immediately.
+//
+// NOT yet wired to az/el. The math from Phase 2 still just logs
+// TRK lines; the servos sit at center until commanded by the
+// USB-CDC test interface (or, in Phase 4, by the az/el output).
 //
 // Architecture (full plan):
 //   Phase 0: byte pump on core 1, hardware watchdog, USB-CDC log.
 //   Phase 1: tee + CRSF parser + GPS extraction.
-//   Phase 2 (this firmware): az/el math added.
-//   Phase 3: LEDC PWM driving 2 servos.
+//   Phase 2: az/el math.
+//   Phase 3 (this firmware): LEDC PWM servo driver + slew + self-test.
 //   Phase 4: glue az/el outputs to servo angles. Failsafe behavior.
-//   Phase 5: USB-CDC calibration interface, NVS-stored station coords.
+//   Phase 5: USB-CDC calibration interface, NVS-stored station coords
+//            and servo offsets/limits.
 //
 // The byte pump is the safety floor. It runs at the highest possible
 // priority on core 1 and is never blocked by code added in any later
-// phase. Every Phase 1+ feature lives on core 0.
+// phase. The servo task is on core 0 and never touches the byte pump.
 //
 // Hardware: ESP32-S3 (QFN56), 16MB QIO flash + 8MB QSPI PSRAM.
 
@@ -29,7 +41,7 @@
 #include <esp_task_wdt.h>
 #include <freertos/stream_buffer.h>
 
-constexpr const char* FW_VERSION = "0.3.0-azel";
+constexpr const char* FW_VERSION = "0.4.0-servos";
 
 // =====================================================================
 // Pin map
@@ -228,6 +240,163 @@ static AzEl compute_az_el(double lat_a, double lon_a, double alt_a,
 }
 
 // =====================================================================
+// Servo subsystem
+// =====================================================================
+//
+// Two hobby servos via the ESP32 LEDC peripheral, hardware PWM on
+// dedicated GPIOs (no CPU jitter). 50Hz frame rate, 12-bit duty
+// resolution gives ~4.88us/step which is finer than any servo can
+// resolve mechanically; rounding within the slew loop is fine.
+//
+// Pulse widths:
+//   default range  1000..2000us, center 1500us (typical hobby)
+//   self-test      1100..1900us (small margin from limits)
+//
+// KS-3620 spec accepts 500..2000us with 0.16s/60deg at 6.6V.
+// Conservative defaults here; widen by editing the constants below
+// once the mechanical kit's actual range is known. Phase 5 will move
+// per-axis limits to NVS flash via USB-CDC calibration.
+//
+// Slew limiter:
+//   100Hz update task on core 0 ramps current_us toward target_us
+//   by at most SERVO_SLEW_STEP_US per tick. With step=60us and 100Hz,
+//   that caps the slew at 6000us/s, well under what KS-3620 can do
+//   mechanically (~6500us/s on full-range commands at 6.6V), so the
+//   limit only kicks in for software-bug-class jumps. Tunable.
+
+constexpr int SERVO_PAN_PIN  = 6;
+constexpr int SERVO_TILT_PIN = 7;
+constexpr int SERVO_PAN_CHANNEL  = 0;
+constexpr int SERVO_TILT_CHANNEL = 1;
+
+constexpr int SERVO_FREQ_HZ          = 50;
+constexpr int SERVO_RESOLUTION_BITS  = 12;
+constexpr int SERVO_PERIOD_US        = 20000;  // 1/50Hz
+constexpr int SERVO_DUTY_FULL_SCALE  = 1 << SERVO_RESOLUTION_BITS;  // 4096
+
+constexpr int SERVO_MIN_US     = 1000;
+constexpr int SERVO_MAX_US     = 2000;
+constexpr int SERVO_CENTER_US  = 1500;
+
+constexpr int SELFTEST_LOW_US  = 1100;
+constexpr int SELFTEST_HIGH_US = 1900;
+
+constexpr int SERVO_SLEW_HZ       = 100;
+constexpr int SERVO_SLEW_STEP_US  = 60;
+
+struct ServoState {
+  int          channel;
+  int          pin;
+  int          current_us;
+  volatile int target_us;     // written from any task; read by slew loop
+  const char*  name;
+};
+
+static ServoState pan_servo  = {
+  SERVO_PAN_CHANNEL,  SERVO_PAN_PIN,
+  SERVO_CENTER_US, SERVO_CENTER_US, "pan"
+};
+static ServoState tilt_servo = {
+  SERVO_TILT_CHANNEL, SERVO_TILT_PIN,
+  SERVO_CENTER_US, SERVO_CENTER_US, "tilt"
+};
+
+// Convert microseconds (within the 20ms period) to LEDC duty value.
+// us=1000 -> duty = 1000 * 4096 / 20000 = 204.8, rounded.
+static inline uint32_t us_to_duty(int us) {
+  // Cast through float to keep the integer rounding sane.
+  return (uint32_t)((float)us * (float)SERVO_DUTY_FULL_SCALE / (float)SERVO_PERIOD_US + 0.5f);
+}
+
+// Internal: write a raw pulse width to the LEDC peripheral.
+// Caller must already have clamped to [SERVO_MIN_US, SERVO_MAX_US].
+static void servo_write_us(const ServoState& s, int us) {
+  ledcWrite(s.channel, us_to_duty(us));
+}
+
+// Public API: set target pulse width. The slew task will ramp toward
+// it. Out-of-range values are clamped silently to the safe bounds.
+void servo_set_pan_us(int us) {
+  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
+  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  pan_servo.target_us = us;
+}
+void servo_set_tilt_us(int us) {
+  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
+  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  tilt_servo.target_us = us;
+}
+
+// Initialize LEDC channels and write the center pulse to both axes.
+// Called from setup() before any task starts.
+static void servo_init() {
+  ledcSetup(pan_servo.channel,  SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS);
+  ledcAttachPin(pan_servo.pin,  pan_servo.channel);
+  ledcSetup(tilt_servo.channel, SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS);
+  ledcAttachPin(tilt_servo.pin, tilt_servo.channel);
+
+  servo_write_us(pan_servo,  SERVO_CENTER_US);
+  servo_write_us(tilt_servo, SERVO_CENTER_US);
+
+  Serial.printf("servos: pan GP%d ch%d, tilt GP%d ch%d, %dHz, %d-bit, %d..%dus\n",
+                pan_servo.pin,  pan_servo.channel,
+                tilt_servo.pin, tilt_servo.channel,
+                SERVO_FREQ_HZ, SERVO_RESOLUTION_BITS,
+                SERVO_MIN_US, SERVO_MAX_US);
+}
+
+// Slew loop: ramps current_us toward target_us by at most
+// SERVO_SLEW_STEP_US per tick at SERVO_SLEW_HZ rate.
+static void slew_one(ServoState& s) {
+  int target = s.target_us;
+  int delta = target - s.current_us;
+  if (delta >  SERVO_SLEW_STEP_US) delta =  SERVO_SLEW_STEP_US;
+  if (delta < -SERVO_SLEW_STEP_US) delta = -SERVO_SLEW_STEP_US;
+  if (delta != 0) {
+    s.current_us += delta;
+    servo_write_us(s, s.current_us);
+  }
+}
+
+void servo_task(void* pvParameters) {
+  const TickType_t period = pdMS_TO_TICKS(1000 / SERVO_SLEW_HZ);
+  TickType_t last = xTaskGetTickCount();
+  for (;;) {
+    slew_one(pan_servo);
+    slew_one(tilt_servo);
+    vTaskDelayUntil(&last, period);
+  }
+}
+
+// Boot self-test: sweep each axis low->high->center to confirm the
+// LEDC channels are wired correctly and the servos move as expected.
+// Blocks the calling context (Arduino main task) for ~3.6s. Safe to
+// run alongside the byte pump (different core).
+static void servo_self_test() {
+  Serial.println("servo self-test: starting sweep");
+
+  servo_set_pan_us(SERVO_CENTER_US);
+  servo_set_tilt_us(SERVO_CENTER_US);
+  delay(800);
+
+  Serial.println("  pan: low");
+  servo_set_pan_us(SELFTEST_LOW_US);  delay(700);
+  Serial.println("  pan: high");
+  servo_set_pan_us(SELFTEST_HIGH_US); delay(700);
+  Serial.println("  pan: center");
+  servo_set_pan_us(SERVO_CENTER_US);  delay(500);
+
+  Serial.println("  tilt: low");
+  servo_set_tilt_us(SELFTEST_LOW_US);  delay(700);
+  Serial.println("  tilt: high");
+  servo_set_tilt_us(SELFTEST_HIGH_US); delay(700);
+  Serial.println("  tilt: center");
+  servo_set_tilt_us(SERVO_CENTER_US);  delay(500);
+
+  Serial.println("servo self-test: complete");
+}
+
+// =====================================================================
 // Diagnostic counters (parser updates, loop() samples)
 // =====================================================================
 //
@@ -251,6 +420,7 @@ HardwareSerial uartElrs(2);   // UART2 (ELRS module side)
 // =====================================================================
 void byte_pump_task(void* pvParameters);
 void parser_task(void* pvParameters);
+void servo_task(void* pvParameters);
 
 // =====================================================================
 // setup()
@@ -261,7 +431,7 @@ void setup() {
 
   Serial.println();
   Serial.printf("=== zerotx-tracker fw %s ===\n", FW_VERSION);
-  Serial.println("Phase 2: byte pump + parser + az/el math");
+  Serial.println("Phase 3: byte pump + parser + az/el + servos");
   Serial.println();
 
   uartCable.begin(CRSF_BAUD, SERIAL_8N1, UART1_RX, UART1_TX);
@@ -309,6 +479,28 @@ void setup() {
   } else {
     Serial.println("crsf_parser task running on core 0");
   }
+
+  // Servo subsystem. Initialize LEDC channels (writes center pulse
+  // to both axes) before starting the slew task.
+  servo_init();
+
+  // Slew loop on core 0 at SERVO_SLEW_HZ (100Hz). Same priority as
+  // the parser; they cooperate via task switching. NOT registered
+  // with the watchdog: a hung servo loop should not panic the byte
+  // pump, which is on core 1 and independent.
+  rc = xTaskCreatePinnedToCore(
+      servo_task, "servo_slew", 2048, nullptr,
+      1, nullptr, 0);
+  if (rc != pdPASS) {
+    Serial.println("FATAL: failed to start servo task");
+  } else {
+    Serial.println("servo_slew task running on core 0");
+  }
+
+  // Boot self-test sweep. Blocks ~3.6s. Skip by commenting out if
+  // the tracker is already on the pole with antennas attached and
+  // you don't want them moving on every boot.
+  servo_self_test();
 
   Serial.println("ready");
   Serial.println();
