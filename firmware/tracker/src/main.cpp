@@ -1,38 +1,48 @@
 // ZeroTX antenna tracker firmware.
 //
-// Phase 3: Phase 2 + LEDC PWM servo driver with slew-rate limiting.
+// Phase 4: Phase 3 + the actual tracking glue.
 //
-// Adds a 2-axis servo subsystem on core 0: hardware LEDC at 50Hz,
-// 12-bit duty resolution, with a 100Hz slew loop ramping the current
-// pulse width toward the target by at most SERVO_SLEW_STEP_US per
-// tick. This protects the gear train from full-range slams and
-// keeps current draw smooth.
+// The CRSF parser, az/el math, and servo subsystem from earlier
+// phases are now connected: every successfully decoded GPS frame
+// drives the servos via:
 //
-// API:
-//   servo_set_pan_us(us)   - set target pan pulse width
-//   servo_set_tilt_us(us)  - set target tilt pulse width
-// The slew task does the actual writes to LEDC.
+//   GPS frame -> az/el math -> EMA smoothing -> aim_at() -> slew loop
+//                                                            |
+//                                                            v
+//                                                         LEDC PWM
 //
-// On boot a self-test sweeps both axes to verify wiring before the
-// tracker has any reason to move them. If the servos don't respond
-// or move the wrong way, you find out immediately.
+// aim_at() handles the 180-degree-pan-servo case using the standard
+// flip technique: when the aircraft moves to the rear hemisphere,
+// pan snaps 180 degrees and tilt continues sweeping past zenith to
+// the rear. Hysteresis (5 degrees) prevents flip oscillation when
+// the aircraft sits near the boundary.
 //
-// NOT yet wired to az/el. The math from Phase 2 still just logs
-// TRK lines; the servos sit at center until commanded by the
-// USB-CDC test interface (or, in Phase 4, by the az/el output).
+// Input EMA filter (alpha=0.3) on az/el smooths GPS noise without
+// adding meaningful tracking lag. The slew limiter from Phase 3
+// (now SERVO_SLEW_STEP_US=30us/tick = 3000us/s, conservative for
+// any standard hobby servo) bounds physical movement speed.
+//
+// Failsafe on telemetry loss is "hold last position": if no GPS
+// frames arrive, no new servo commands are issued, and the slew
+// loop simply maintains the last commanded position. The heartbeat
+// reports tracking state (tracking / hold / never-seen-telemetry)
+// and the age of the most recent GPS frame.
 //
 // Architecture (full plan):
 //   Phase 0: byte pump on core 1, hardware watchdog, USB-CDC log.
 //   Phase 1: tee + CRSF parser + GPS extraction.
 //   Phase 2: az/el math.
-//   Phase 3 (this firmware): LEDC PWM servo driver + slew + self-test.
-//   Phase 4: glue az/el outputs to servo angles. Failsafe behavior.
-//   Phase 5: USB-CDC calibration interface, NVS-stored station coords
-//            and servo offsets/limits.
+//   Phase 3: LEDC PWM servo driver + slew + self-test.
+//   Phase 4 (this firmware): tracking glue (EMA + flip + failsafe).
+//   Phase 5: USB-CDC calibration interface, NVS-stored station
+//            coords + per-axis servo offsets, polarity, and travel
+//            range. Until Phase 5 lands, the firmware assumes
+//            standard 180-degree hobby servos with default mounting.
 //
 // The byte pump is the safety floor. It runs at the highest possible
-// priority on core 1 and is never blocked by code added in any later
-// phase. The servo task is on core 0 and never touches the byte pump.
+// priority on core 1 and is never blocked by code added in any
+// later phase. Tracking logic lives entirely in the parser task on
+// core 0; a hung parser cannot affect the wire forwarding.
 //
 // Hardware: ESP32-S3 (QFN56), 16MB QIO flash + 8MB QSPI PSRAM.
 
@@ -41,7 +51,7 @@
 #include <esp_task_wdt.h>
 #include <freertos/stream_buffer.h>
 
-constexpr const char* FW_VERSION = "0.4.0-servos";
+constexpr const char* FW_VERSION = "0.5.0-tracking";
 
 // =====================================================================
 // Pin map
@@ -244,25 +254,31 @@ static AzEl compute_az_el(double lat_a, double lon_a, double alt_a,
 // =====================================================================
 //
 // Two hobby servos via the ESP32 LEDC peripheral, hardware PWM on
-// dedicated GPIOs (no CPU jitter). 50Hz frame rate, 12-bit duty
-// resolution gives ~4.88us/step which is finer than any servo can
-// resolve mechanically; rounding within the slew loop is fine.
+// dedicated GPIOs (no CPU jitter). Standard hobby servo PWM:
+// 50Hz frame rate, 12-bit duty resolution gives ~4.88us/step
+// (finer than any hobby servo can resolve mechanically; rounding in
+// the slew loop is fine).
 //
 // Pulse widths:
-//   default range  1000..2000us, center 1500us (typical hobby)
+//   default range  1000..2000us, center 1500us
 //   self-test      1100..1900us (small margin from limits)
 //
-// KS-3620 spec accepts 500..2000us with 0.16s/60deg at 6.6V.
-// Conservative defaults here; widen by editing the constants below
-// once the mechanical kit's actual range is known. Phase 5 will move
-// per-axis limits to NVS flash via USB-CDC calibration.
+// 1000..2000us is the universal hobby PWM range supported by
+// virtually all digital and analog hobby servos. Some servos accept
+// wider ranges (500..2500us is also common), giving more mechanical
+// travel; widen the constants below once you know the specific
+// servo's safe range. Phase 5 will move per-axis pulse limits to
+// NVS flash via USB-CDC calibration.
 //
 // Slew limiter:
 //   100Hz update task on core 0 ramps current_us toward target_us
-//   by at most SERVO_SLEW_STEP_US per tick. With step=60us and 100Hz,
-//   that caps the slew at 6000us/s, well under what KS-3620 can do
-//   mechanically (~6500us/s on full-range commands at 6.6V), so the
-//   limit only kicks in for software-bug-class jumps. Tunable.
+//   by at most SERVO_SLEW_STEP_US per tick. With step=30us at 100Hz,
+//   that caps the slew at 3000us/s which is well under what any
+//   standard hobby servo can mechanically do (slow analog ~1500us/s,
+//   midrange digital ~5000us/s, top-tier digital 8000+us/s). The
+//   limit primarily protects against software-bug-class jumps and
+//   smooths current draw; it should rarely be the binding constraint
+//   on real tracking movement. Tunable up if you want faster slewing.
 
 constexpr int SERVO_PAN_PIN  = 6;
 constexpr int SERVO_TILT_PIN = 7;
@@ -282,7 +298,7 @@ constexpr int SELFTEST_LOW_US  = 1100;
 constexpr int SELFTEST_HIGH_US = 1900;
 
 constexpr int SERVO_SLEW_HZ       = 100;
-constexpr int SERVO_SLEW_STEP_US  = 60;
+constexpr int SERVO_SLEW_STEP_US  = 30;
 
 struct ServoState {
   int          channel;
@@ -397,6 +413,148 @@ static void servo_self_test() {
 }
 
 // =====================================================================
+// Tracking subsystem
+// =====================================================================
+//
+// Glues the az/el output of the math layer to the servo subsystem.
+// Three pieces:
+//   1. Input EMA filter on az/el to smooth GPS noise.
+//   2. aim_at(): az/el -> pan/tilt servo angles, with the standard
+//      front/rear flip technique for 180-degree pan servos and
+//      hysteresis around the flip boundary.
+//   3. Failsafe via "no commands while stale": if no GPS frames
+//      arrive, no calls to servo_set_*_us happen and the slew loop
+//      simply maintains the last commanded position.
+//
+// Configuration constants. Phase 5 will move these to NVS flash:
+//
+//   PAN_REF_AZ_DEG    Azimuth (0..360) at which pan-center pulse
+//                     points. Default 0.0 = pan center pulse points
+//                     North. Edit before field use to match how the
+//                     gimbal is mounted on the pole.
+//
+//   SERVO_RANGE_DEG   Mechanical travel of the servo over the
+//                     1000..2000us pulse range. Default 180.0 covers
+//                     standard hobby servos. Phase 5 makes this
+//                     per-axis configurable for 270deg or 360deg
+//                     servo variants.
+//
+//   EMA_ALPHA         New-vs-old blend factor on az/el. 0.3 means
+//                     30% new + 70% old per update. At ~5-10Hz GPS
+//                     update rate that's roughly a 200-300ms time
+//                     constant: smooths visible jitter without
+//                     making tracking feel sluggish.
+//
+//   FLIP_HYSTERESIS_DEG  Hysteresis band around the front/rear flip
+//                        decision boundary (|az_rel|=90deg). Inside
+//                        the band the existing pose is held. 5deg
+//                        is plenty for typical GPS jitter.
+//
+//   FAILSAFE_HOLD_MS  After this many ms with no GPS frame, the
+//                     heartbeat reports "hold" instead of "tracking".
+//                     The mechanical behavior is the same either way
+//                     (last commanded position holds); this is just
+//                     a status indicator.
+
+constexpr float    PAN_REF_AZ_DEG       = 0.0f;
+constexpr float    SERVO_RANGE_DEG      = 180.0f;
+constexpr float    EMA_ALPHA            = 0.3f;
+constexpr float    FLIP_HYSTERESIS_DEG  = 5.0f;
+constexpr uint32_t FAILSAFE_HOLD_MS     = 1500;
+
+// EMA state (initialized lazily on first frame)
+static bool   ema_initialized   = false;
+static float  az_filtered_deg   = 0.0f;
+static float  el_filtered_deg   = 0.0f;
+
+// Hysteresis state for the front/rear flip
+static bool   flip_active       = false;
+
+// Last GPS frame timestamp; 0 = never seen telemetry
+static volatile uint32_t g_last_gps_ms = 0;
+
+// Apply exponential moving average to incoming az/el. Handles the
+// azimuth wraparound at 0/360 by working in shortest-delta space.
+static void apply_ema(float az_in, float el_in) {
+  if (!ema_initialized) {
+    az_filtered_deg = az_in;
+    el_filtered_deg = el_in;
+    ema_initialized = true;
+    return;
+  }
+
+  el_filtered_deg = EMA_ALPHA * el_in + (1.0f - EMA_ALPHA) * el_filtered_deg;
+
+  float delta = az_in - az_filtered_deg;
+  while (delta >  180.0f) delta -= 360.0f;
+  while (delta < -180.0f) delta += 360.0f;
+  az_filtered_deg += EMA_ALPHA * delta;
+  if (az_filtered_deg <    0.0f) az_filtered_deg += 360.0f;
+  if (az_filtered_deg >= 360.0f) az_filtered_deg -= 360.0f;
+}
+
+// Convert pan angle in degrees (-90..+90, 0=center pulse) to pulse width.
+static int pan_angle_to_us(float pan_deg) {
+  float us_per_deg = (float)(SERVO_MAX_US - SERVO_MIN_US) / SERVO_RANGE_DEG;
+  int us = SERVO_CENTER_US + (int)(pan_deg * us_per_deg);
+  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
+  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  return us;
+}
+
+// Convert tilt angle in degrees (0..180, 0=horizon-front, 90=zenith,
+// 180=horizon-rear) to pulse width. Linear over the full range so the
+// flip technique stays continuous through zenith.
+static int tilt_angle_to_us(float tilt_deg) {
+  if (tilt_deg <    0.0f) tilt_deg =   0.0f;
+  if (tilt_deg >  180.0f) tilt_deg = 180.0f;
+  float us_per_deg = (float)(SERVO_MAX_US - SERVO_MIN_US) / SERVO_RANGE_DEG;
+  int us = SERVO_MIN_US + (int)(tilt_deg * us_per_deg);
+  if (us < SERVO_MIN_US) us = SERVO_MIN_US;
+  if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+  return us;
+}
+
+// Aim antennas at the given azimuth and elevation. Implements the
+// front/rear flip with hysteresis for 180-degree pan servos:
+//   - Front pose: pan_deg = az_rel, tilt_deg = el
+//   - Rear  pose: pan_deg = az_rel +/- 180, tilt_deg = 180 - el
+//
+// az_deg in 0..360, el_deg typically 0..90 (negative el clamps the
+// tilt servo to horizon). The az_deg input is expected to already
+// be EMA-smoothed.
+static void aim_at(float az_deg, float el_deg) {
+  // Normalize azimuth relative to pan reference, into -180..+180
+  float az_rel = az_deg - PAN_REF_AZ_DEG;
+  while (az_rel >  180.0f) az_rel -= 360.0f;
+  while (az_rel < -180.0f) az_rel += 360.0f;
+
+  float abs_az_rel = fabsf(az_rel);
+
+  // Flip decision with hysteresis. 5deg dead zone around |az_rel|=90
+  // prevents rapid flip oscillation when the aircraft sits near the
+  // boundary and az jitters by a degree or two.
+  if (flip_active) {
+    flip_active = (abs_az_rel > (90.0f - FLIP_HYSTERESIS_DEG));
+  } else {
+    flip_active = (abs_az_rel > (90.0f + FLIP_HYSTERESIS_DEG));
+  }
+
+  float pan_deg, tilt_deg;
+  if (!flip_active) {
+    pan_deg  = az_rel;        // -90..+90
+    tilt_deg = el_deg;        // 0..90 (above horizon, front)
+  } else {
+    // Mirror pan to the other side and continue tilt past zenith.
+    pan_deg  = (az_rel > 0.0f) ? (az_rel - 180.0f) : (az_rel + 180.0f);
+    tilt_deg = 180.0f - el_deg;  // 90..180 (above horizon, rear)
+  }
+
+  servo_set_pan_us( pan_angle_to_us(pan_deg)  );
+  servo_set_tilt_us(tilt_angle_to_us(tilt_deg));
+}
+
+// =====================================================================
 // Diagnostic counters (parser updates, loop() samples)
 // =====================================================================
 //
@@ -431,7 +589,7 @@ void setup() {
 
   Serial.println();
   Serial.printf("=== zerotx-tracker fw %s ===\n", FW_VERSION);
-  Serial.println("Phase 3: byte pump + parser + az/el + servos");
+  Serial.println("Phase 4: full tracking glue (EMA + flip + failsafe)");
   Serial.println();
 
   uartCable.begin(CRSF_BAUD, SERIAL_8N1, UART1_RX, UART1_TX);
@@ -643,6 +801,13 @@ void parser_task(void* pvParameters) {
                                           (double)gps.altitude_m);
                   Serial.printf("TRK az=%.2f el=%.2f dist=%.0fm\n",
                                 ae.az_deg, ae.el_deg, ae.dist_m);
+
+                  // Smooth and command the servos.
+                  apply_ema((float)ae.az_deg, (float)ae.el_deg);
+                  aim_at(az_filtered_deg, el_filtered_deg);
+
+                  // Mark fresh telemetry for the heartbeat status.
+                  g_last_gps_ms = millis();
                 }
               }
               // Other types ignored. We could log BATTERY voltage,
@@ -664,12 +829,31 @@ void loop() {
   uint32_t now = millis();
   if (now - last_log_ms >= 5000) {
     last_log_ms = now;
-    Serial.printf("heartbeat uptime=%lus frames=%u gps=%u bad_crc=%u dropped=%u\n",
+
+    // Tracking state. The mechanical behavior is the same in all
+    // three states (the slew loop holds last commanded position when
+    // no new commands arrive); this is just a status indicator for
+    // the operator.
+    const char* track_state;
+    char age_str[32] = "";
+    uint32_t last_gps = g_last_gps_ms;
+    if (last_gps == 0) {
+      track_state = "no-telem";
+    } else {
+      uint32_t age_ms = now - last_gps;
+      track_state = (age_ms < FAILSAFE_HOLD_MS) ? "tracking" : "hold";
+      snprintf(age_str, sizeof(age_str), " age=%lums",
+               (unsigned long)age_ms);
+    }
+
+    Serial.printf("heartbeat uptime=%lus frames=%u gps=%u bad_crc=%u dropped=%u %s%s\n",
                   (unsigned long)(now / 1000),
                   (unsigned)g_frames_seen,
                   (unsigned)g_frames_gps,
                   (unsigned)g_frames_bad_crc,
-                  (unsigned)g_bytes_dropped);
+                  (unsigned)g_bytes_dropped,
+                  track_state,
+                  age_str);
   }
   delay(100);
 }

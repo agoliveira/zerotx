@@ -38,8 +38,8 @@ configuration changes.
 | 0     | Pure byte-pump. Inline CRSF passthrough + watchdog.      | done |
 | 1     | CRSF telemetry sniffer on core 0 (parses GPS frames).    | done |
 | 2     | Az/el math from aircraft GPS + station GPS.              | done |
-| 3     | LEDC PWM driving 2 servos with slew-rate limiting.       | this firmware |
-| 4     | Glue az/el outputs to servo angles. Failsafe behaviors.  | pending |
+| 3     | LEDC PWM driving 2 servos with slew-rate limiting.       | done |
+| 4     | Glue az/el outputs to servo angles. Failsafe behaviors.  | this firmware |
 | 5     | USB-CDC calibration interface, NVS-stored station coords.| pending |
 
 Phase 0 is the safety floor. The byte pump runs on core 1 at the
@@ -52,7 +52,10 @@ or starve it. Every Phase 1+ feature must live on core 0.
 - **Cable side**: MAX490 (or MAX3490 if available) RS-422 transceiver
 - **ELRS side**: RadioMaster Nomad (or equivalent ELRS TX module) via
   CRSF UART
-- **Servos** (Phase 3+): KS-3620 class digital servos, 6V supply rail
+- **Servos** (Phase 3+): standard hobby PWM (1000-2000us, 50Hz),
+  6V supply rail. Firmware assumes 180-degree mechanical travel for
+  the front/rear flip technique; Phase 5 will make per-axis travel
+  range configurable for 270-degree or 360-degree servo variants.
 - **Power**: 12V from cable, with bucks at 6V (servos) and 5V (ESP32-S3)
 
 ## Pin map
@@ -99,8 +102,8 @@ the native-USB cable shows firmware logs without an external bridge.
    cable for monitor). USB-CDC should print roughly:
 
    ```
-   === zerotx-tracker fw 0.4.0-servos ===
-   Phase 3: byte pump + parser + az/el + servos
+   === zerotx-tracker fw 0.5.0-tracking ===
+   Phase 4: full tracking glue (EMA + flip + failsafe)
 
    UART1 (cable): RX=GP17 TX=GP18 @ 420000 baud
    UART2 (ELRS):  RX=GP4 TX=GP5 @ 420000 baud
@@ -111,29 +114,33 @@ the native-USB cable shows firmware logs without an external bridge.
    servos: pan GP6 ch0, tilt GP7 ch1, 50Hz, 12-bit, 1000..2000us
    servo_slew task running on core 0
    servo self-test: starting sweep
-     pan: low
-     pan: high
-     pan: center
-     tilt: low
-     tilt: high
-     tilt: center
+     pan: low / pan: high / pan: center
+     tilt: low / tilt: high / tilt: center
    servo self-test: complete
    ready
 
-   heartbeat uptime=10s frames=0 gps=0 bad_crc=0 dropped=0
+   heartbeat uptime=5s frames=0 gps=0 bad_crc=0 dropped=0 no-telem
+   heartbeat uptime=10s frames=0 gps=0 bad_crc=0 dropped=0 no-telem
    ...
    ```
 
-   With telemetry flowing, each successful GPS decode appears as
-   a pair of lines, GPS first then TRK:
+   With telemetry flowing, each successful GPS decode produces a
+   GPS log line, a TRK log line, and drives the servos:
 
    ```
    GPS lat=-22.9101234 lon=-47.0612345 alt=712m spd=14.2km/h hdg=183.45 sats=15
    TRK az=178.32 el=12.45 dist=842m
    ```
 
-   The servos do NOT yet move based on TRK output - that's Phase 4.
-   They sit at center after the boot self-test until Phase 4 lands.
+   The heartbeat status field becomes `tracking` when telemetry is
+   fresh (< 1500ms old) and `hold` when stale. Mechanical behavior
+   is the same in both: hold-last-position. Status is just for the
+   operator.
+
+   ```
+   heartbeat uptime=125s frames=873 gps=421 bad_crc=0 dropped=0 tracking age=98ms
+   heartbeat uptime=130s frames=988 gps=478 bad_crc=0 dropped=0 hold age=4218ms
+   ```
 
 3. **Connect inline** between the case-side MAX490 and the ELRS TX
    module. Power up the tracker, then power up the daemon and the ELRS
