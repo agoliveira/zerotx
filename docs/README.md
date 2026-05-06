@@ -2,6 +2,8 @@
 
 Documentation for the ZeroTX ground control station. Each top-level doc has a single audience and a single purpose; no doc duplicates content found in another.
 
+![ZeroTX ground control station, opened](images/zerotx-render.png)
+
 ## Top-level docs
 
 | Doc | Audience | What's in it |

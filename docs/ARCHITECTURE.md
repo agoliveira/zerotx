@@ -6,6 +6,8 @@ High-level architecture of ZeroTX: a workstation-grade ground control station fo
 
 For wire-level protocols see `docs/protocols/`. For per-firmware detail follow the links at the end. This doc deliberately avoids duplicating either.
 
+![ZeroTX ground control station, opened](images/zerotx-render.png)
+
 ## System overview
 
 The Raspberry Pi 400 is the brain. It runs the `zerotxd` Go daemon and two Chromium kiosk browsers (HUD and Map). The daemon ingests CRSF/MAVLink telemetry from an external ELRS TX backpack, drives twin LCDs via HDMI, orchestrates a HUB75 LED panel via an ESP32 satellite, talks to a Mega 2560 IO board for buttons, LEDs, relays, and the VFD, plays audio (pre-baked samples plus Piper TTS), and bridges a USB joystick to CPPM/CRSF for the radio via an RP2040 satellite. The case is wired-only inside; ELRS modules and any other RF live on external poles.
