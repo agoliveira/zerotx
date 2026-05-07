@@ -63,3 +63,6 @@ maptiles/
 cache/
 *.tmp
 *.log
+
+# PlatformIO build artifacts (firmware/io, firmware/tracker, etc.)
+.pio/
