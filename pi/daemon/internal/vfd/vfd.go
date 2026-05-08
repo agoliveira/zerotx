@@ -207,8 +207,13 @@ func (d *LogDriver) Event(kind string, args ...string) error {
 // can keep using the old API). NewWithHub(client) takes a shared
 // client so the same Mega connection can be used for VFD and other
 // subsystems (trackball LED, indicator LEDs, etc).
+//
+// The Mega firmware exposes two VFD instances (vfd.0 and vfd.1).
+// NewWithHub selects vfd.0 by default; NewInstanceWithHub addresses
+// either explicitly.
 type HubDriver struct {
-	hub iohub.Client
+	hub      iohub.Client
+	instance uint8
 
 	// ownsHub is true when this driver constructed its own hub (via
 	// New). Close on such drivers also closes the hub. When the hub
@@ -217,24 +222,39 @@ type HubDriver struct {
 	ownsHub bool
 }
 
-// NewWithHub returns a Driver that sends VFD commands to the given
-// iohub.Client. The client lifecycle is managed by the caller; the
-// returned driver's Close is a no-op.
+// NewWithHub returns a Driver that sends commands to vfd.0 via the
+// given iohub.Client. The client lifecycle is managed by the caller;
+// the returned driver's Close is a no-op.
 func NewWithHub(hub iohub.Client) Driver {
-	return &HubDriver{hub: hub, ownsHub: false}
+	return NewInstanceWithHub(hub, 0)
+}
+
+// NewInstanceWithHub returns a Driver targeting vfd.<instance>.
+// Instance must be 0 or 1 (the firmware's kInstanceCount); higher
+// values are accepted at construction but Send will produce errors
+// from the firmware ("unknown-target") at runtime.
+func NewInstanceWithHub(hub iohub.Client, instance uint8) Driver {
+	return &HubDriver{hub: hub, instance: instance, ownsHub: false}
+}
+
+// target formats the protocol target token for this driver's
+// instance, e.g. "vfd.0" or "vfd.1".
+func (d *HubDriver) target() string {
+	return fmt.Sprintf("vfd.%d", d.instance)
 }
 
 func (d *HubDriver) WriteLines(row1, row2 string) error {
 	r1 := padOrTruncate(row1)
 	r2 := padOrTruncate(row2)
-	if err := d.hub.Send("SET vfd.0 line 0 " + r1); err != nil {
+	t := d.target()
+	if err := d.hub.Send("SET " + t + " line 0 " + r1); err != nil {
 		return err
 	}
-	return d.hub.Send("SET vfd.0 line 1 " + r2)
+	return d.hub.Send("SET " + t + " line 1 " + r2)
 }
 
 func (d *HubDriver) Clear() error {
-	return d.hub.Send("SET vfd.0 clear")
+	return d.hub.Send("SET " + d.target() + " clear")
 }
 
 func (d *HubDriver) Brightness(level int) error {
@@ -244,7 +264,7 @@ func (d *HubDriver) Brightness(level int) error {
 	if level > 3 {
 		level = 3
 	}
-	return d.hub.Send(fmt.Sprintf("SET vfd.0 brightness %d", level))
+	return d.hub.Send(fmt.Sprintf("SET %s brightness %d", d.target(), level))
 }
 
 func (d *HubDriver) Close() error {
@@ -267,26 +287,27 @@ func (d *HubDriver) Close() error {
 // Unknown kinds are dropped silently with a debug log; the firmware
 // would reject them anyway, no need to flood logs in steady state.
 func (d *HubDriver) Event(kind string, args ...string) error {
+	t := d.target()
 	var cmd string
 	switch kind {
 	case "tick", "arm", "lq", "batt":
-		// Direct param mapping: SET vfd.0 <kind> <args...>
-		cmd = "SET vfd.0 " + kind
+		// Direct param mapping: SET vfd.<n> <kind> <args...>
+		cmd = "SET " + t + " " + kind
 		if len(args) > 0 {
 			cmd += " " + strings.Join(args, " ")
 		}
 	case "mode", "fmmode":
 		// Old name was "mode"; firmware exposes "fmmode" since "mode"
 		// is reserved for display-mode SET. Translate.
-		cmd = "SET vfd.0 fmmode"
+		cmd = "SET " + t + " fmmode"
 		if len(args) > 0 {
 			cmd += " " + strings.Join(args, " ")
 		}
 	case "warn", "critical", "failsafe":
 		// Alarm subcommand on the firmware.
-		cmd = "SET vfd.0 alarm " + kind
+		cmd = "SET " + t + " alarm " + kind
 	case "disarmed":
-		cmd = "SET vfd.0 disarmed"
+		cmd = "SET " + t + " disarmed"
 	default:
 		// Drop unknown silently; firmware would error and we don't
 		// want event drops to flood the daemon log.

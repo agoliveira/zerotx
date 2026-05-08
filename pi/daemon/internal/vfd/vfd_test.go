@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/logbuf"
 )
 
@@ -240,5 +241,98 @@ func TestFirehose_NilDriverIsSafe(t *testing.T) {
 	cancel()
 	if err := fh.Run(ctx); err != nil {
 		t.Errorf("Run with nil driver: %v", err)
+	}
+}
+
+// fakeHub satisfies iohub.Client and records sent lines.
+type fakeHub struct {
+	mu   sync.Mutex
+	sent []string
+}
+
+func (h *fakeHub) Send(line string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.sent = append(h.sent, line)
+	return nil
+}
+func (h *fakeHub) OnEvent(_ iohub.EventHandler) {}
+func (h *fakeHub) Run(_ context.Context) error  { return nil }
+func (h *fakeHub) Close() error                 { return nil }
+func (h *fakeHub) snapshot() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, len(h.sent))
+	copy(out, h.sent)
+	return out
+}
+
+func TestHubDriver_TargetsByInstance(t *testing.T) {
+	h0 := &fakeHub{}
+	h1 := &fakeHub{}
+	d0 := NewInstanceWithHub(h0, 0)
+	d1 := NewInstanceWithHub(h1, 1)
+
+	if err := d0.WriteLines("hello", "world"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d1.WriteLines("foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d0.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d1.Brightness(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := d0.Event("tick"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d1.Event("arm", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	got0 := h0.snapshot()
+	want0 := []string{
+		"SET vfd.0 line 0 hello               ",
+		"SET vfd.0 line 1 world               ",
+		"SET vfd.0 clear",
+		"SET vfd.0 tick",
+	}
+	if len(got0) != len(want0) {
+		t.Fatalf("d0: got %d sends, want %d: %v", len(got0), len(want0), got0)
+	}
+	for i, w := range want0 {
+		if got0[i] != w {
+			t.Errorf("d0 send %d: got %q, want %q", i, got0[i], w)
+		}
+	}
+
+	got1 := h1.snapshot()
+	want1 := []string{
+		"SET vfd.1 line 0 foo                 ",
+		"SET vfd.1 line 1 bar                 ",
+		"SET vfd.1 brightness 2",
+		"SET vfd.1 arm 1",
+	}
+	if len(got1) != len(want1) {
+		t.Fatalf("d1: got %d sends, want %d: %v", len(got1), len(want1), got1)
+	}
+	for i, w := range want1 {
+		if got1[i] != w {
+			t.Errorf("d1 send %d: got %q, want %q", i, got1[i], w)
+		}
+	}
+}
+
+func TestNewWithHub_DefaultsToInstance0(t *testing.T) {
+	h := &fakeHub{}
+	d := NewWithHub(h)
+	if err := d.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	got := h.snapshot()
+	if len(got) != 1 || got[0] != "SET vfd.0 clear" {
+		t.Errorf("NewWithHub should target vfd.0; got %v", got)
 	}
 }
