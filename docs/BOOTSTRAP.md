@@ -331,7 +331,7 @@ ExecStart=/home/adilson/zerotx/pi/daemon/bin/zerotxd \
   -piper-binary /home/adilson/zerotx/bin/piper/piper \
   -web-dir web \
   -port /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66138935F3C4824-if00 \
-  -vfd-port /dev/serial/by-id/<MEGA> \
+  -iohub-port /dev/serial/by-id/<MEGA> \
   -site-lat -22.91 -site-lon -47.06 \
   -tilewarm-rate 5 \
   -v

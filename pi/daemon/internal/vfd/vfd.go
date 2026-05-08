@@ -27,7 +27,7 @@
 //     connection can serve other subsystems too.
 //   - LogDriver: writes to the daemon log so the firehose is
 //     observable without hardware. Useful for development.
-//   - NullDriver: no-op. Active when the -vfd-port flag is empty.
+//   - NullDriver: no-op. Active when the -iohub-port flag is empty.
 //
 // The Firehose subscribes to the daemon's logbuf and pushes new
 // lines onto the VFD at a configurable rate, formatting each line
@@ -90,7 +90,7 @@ type Driver interface {
 // New returns a Driver for the given address. Special values:
 //
 //   - "" (empty)  -> NullDriver: every call is a no-op. Use when the
-//     -vfd-port flag is empty (no display attached).
+//     -iohub-port flag is empty (no display attached).
 //   - "log"       -> LogDriver: writes to the daemon log so the
 //     firehose can be observed without hardware.
 //

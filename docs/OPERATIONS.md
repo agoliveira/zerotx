@@ -35,7 +35,7 @@ cd ~/zerotx/pi/daemon
   -piper-binary $HOME/zerotx/bin/piper/piper \
   -web-dir web \
   -port /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66138935F3C4824-if00 \
-  -vfd-port /dev/serial/by-id/<MEGA> \
+  -iohub-port /dev/serial/by-id/<MEGA> \
   -site-lat -22.91 -site-lon -47.06 \
   -tilewarm-rate 5 \
   -v
@@ -51,7 +51,7 @@ Flags:
 | `-piper-binary` | path to Piper TTS binary |
 | `-web-dir` | static web assets root |
 | `-port` | RP2040 USB-CDC device path |
-| `-vfd-port` | Mega serial device path (also carries iohub multiplex traffic) |
+| `-iohub-port` | Mega IO board USB-CDC device (VFD, trackball LEDs, buttons, etc.) |
 | `-site-lat`, `-site-lon` | home coordinates for Map and bearing calculations |
 | `-tilewarm-rate` | tile prefetch rate (tiles/sec) |
 | `-v` | verbose logging |
@@ -141,7 +141,7 @@ Order matters: stop the daemon before pulling power so recordings finalize and U
 
 ### Mega didn't enumerate
 
-Symptom: daemon log shows `-vfd-port` device not found; VFD dark; trackball ring LEDs unresponsive.
+Symptom: daemon log shows `-iohub-port` device not found; VFD dark; trackball ring LEDs unresponsive.
 
 Diagnose: `ls -l /dev/serial/by-id/ | grep -i mega` or `dmesg | tail`. If absent, check USB cable to hub, hub power, Mega power LED.
 

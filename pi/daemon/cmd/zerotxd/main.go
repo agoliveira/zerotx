@@ -101,7 +101,7 @@ func main() {
 	displayPort := flag.String("display-port", "", "HUB75 display device serial port (e.g. /dev/ttyACM1); empty disables display output")
 	displayBrightness := flag.Int("display-brightness", 80, "HUB75 display brightness 0-100")
 	mwpTeeAddr := flag.String("mwp-tee-addr", "127.0.0.1:5761", "TCP listen addr for CRSF telemetry tee to mwp; empty disables")
-	vfdPort := flag.String("vfd-port", "", "VFD diagnostic display: serial path (e.g. /dev/ttyACM2), \"log\" to scaffold via daemon log, or empty to disable")
+	iohubPort := flag.String("iohub-port", "", "Mega IO board USB-CDC device (serial path, e.g. /dev/ttyACM2; \"log\" to scaffold via daemon log; empty disables)")
 	geoDB := flag.String("geo-db", "", "Offline place-name database for post-flight narration (built by tools/build-geo.sh). Empty disables location enrichment.")
 	weatherCacheDir := flag.String("weather-cache-dir", os.ExpandEnv("$HOME/zerotx/cache/weather"), "directory for cached weather JSON. Empty disables persistence (cache held in memory only).")
 	siteLat := flag.Float64("site-lat", 0, "configured flight site latitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
@@ -685,14 +685,14 @@ func main() {
 	//
 	// Mega IO board connection. One iohub.Client serves multiple
 	// subsystems on the device: VFD, trackball LEDs, indicator LEDs,
-	// buttons, WS2813 strip, future LDR/buzzer. The vfd-port flag
+	// buttons, WS2813 strip, future LDR/buzzer. The iohub-port flag
 	// names the Mega's USB-CDC device.
 	//
-	// With -vfd-port empty the client is a no-op; with -vfd-port=log
+	// With -iohub-port empty the client is a no-op; with -iohub-port=log
 	// commands echo to the daemon log so the wire format can be
 	// validated without hardware. Anything else is treated as a
 	// serial device path.
-	hub := iohub.New(*vfdPort)
+	hub := iohub.New(*iohubPort)
 	defer hub.Close()
 	// Default event handler: log unsolicited EVENT lines so button
 	// presses, boot events, and ready signals from the Mega are
@@ -717,8 +717,8 @@ func main() {
 	// subsystems on the same hub keep working at shutdown.
 	vfdDriver := vfd.NewWithHub(hub)
 	defer vfdDriver.Close()
-	if *vfdPort != "" {
-		log.Printf("vfd: firehose enabled (driver=%s)", *vfdPort)
+	if *iohubPort != "" {
+		log.Printf("vfd: firehose enabled (driver=%s)", *iohubPort)
 		vfdHose := vfd.NewFirehose(vfdDriver, logBuf)
 		go func() {
 			if err := vfdHose.Run(ctx); err != nil {
@@ -798,7 +798,7 @@ func main() {
 
 	// Trackball status LED. Pure operator-feedback indicator: green
 	// when system is healthy, red when an alert needs attention. The
-	// driver shares the Mega iohub.Client; if -vfd-port is empty/log
+	// driver shares the Mega iohub.Client; if -iohub-port is empty/log
 	// the LED simply doesn't drive a real device but the goroutine
 	// runs harmlessly.
 	{
