@@ -140,23 +140,20 @@ func TestRun_GoesLowWhenStale(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Don't call Tick(). Advance the fake clock past the freshness
-	// window over the course of several real-time toggle ticks.
-	for i := 0; i < 6; i++ {
-		clk.advance(20 * time.Millisecond)
-		time.Sleep(15 * time.Millisecond)
-	}
+	// Advance well past the freshness window before any toggle wake
+	// can fire. This makes the first goroutine wake unambiguously
+	// stale, and every wake after it stays stale because we never
+	// call Tick().
+	clk.advance(500 * time.Millisecond)
+
+	// Real-time wait for several toggle wakes (6+ at 10ms interval).
+	time.Sleep(80 * time.Millisecond)
 	_ = h.Close()
 
 	vals := drv.snapshot()
 	if len(vals) == 0 {
 		t.Fatal("expected at least one SetValue, got none")
 	}
-	// Every recorded write should be 0 (low) because the heartbeat
-	// is stale on every tick. The seeded last (in New) records
-	// time.Unix(1000,0); we never updated it, so by the time the
-	// goroutine wakes for the first toggle the clock is already at
-	// 1020ms past that seed, exceeding the 30ms freshness window.
 	for i, v := range vals {
 		if v != 0 {
 			t.Errorf("vals[%d] = %d, want 0 (stale should force low)", i, v)
@@ -178,16 +175,17 @@ func TestRun_RecoversFromStale(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Phase 1: stale. No ticks, advance past freshness.
-	for i := 0; i < 5; i++ {
-		clk.advance(20 * time.Millisecond)
-		time.Sleep(15 * time.Millisecond)
-	}
+	// Phase 1: stale. Pre-advance past freshness, then wait so
+	// several toggle wakes fire and all see stale.
+	clk.advance(500 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 	staleCount := len(drv.snapshot())
 
-	// Phase 2: fresh. Tick on every toggle interval.
-	for i := 0; i < 6; i++ {
-		clk.advance(10 * time.Millisecond)
+	// Phase 2: fresh. Tick on every toggle interval. We advance the
+	// fake clock by a small amount and call Tick() before each
+	// real-time wait so each goroutine wake sees age below freshness.
+	for i := 0; i < 8; i++ {
+		clk.advance(5 * time.Millisecond)
 		h.Tick()
 		time.Sleep(15 * time.Millisecond)
 	}
