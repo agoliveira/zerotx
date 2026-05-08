@@ -1,13 +1,14 @@
 # ZeroTX Hardware Pinout Reference
 
-Pinout for each microcontroller in the ZeroTX case. Values here track
-the source files cited at the top of each section. When a definition
-moves in the source, update this doc in the same commit.
+Pinout, USB topology, and power distribution for the ZeroTX case.
+Values here track the source files cited at the top of each section
+(for the firmware) or the physical layout of the case (for USB and
+power). When a definition moves in the source or the wiring changes,
+update this doc in the same commit.
 
-This first pass covers the three MCUs that are the most complex to
-wire: the RP2040, the Mega 2560, and the ESP32 driving the HUB75 LED
-panel. Pi 400 USB topology and 12V power distribution are deferred
-to a follow-up.
+The MCU sections come first (most complex to wire), followed by the
+case-level USB topology, the power distribution tree, and the
+external pole cable.
 
 ## RP2040 Zero (CRSF generator + arm key)
 
@@ -198,11 +199,107 @@ firmware accounts for this in the pin remap below.
 input-only and lack internal pull-ups, useful for analog or buttons
 with external pull-ups.
 
-## Deferred to a follow-up
+## Pi 400 USB topology
 
-- Pi 400 USB topology: which physical port carries which MCU, udev
-  rules, `/dev/serial/by-id/` paths.
-- 12V power distribution: PSU output, buck regulators, per-MCU rail
-  assignments and current budgets.
-- External case I/O: pole cable bulkhead pinout, front-panel jacks,
-  mains/12V input.
+The Pi 400 has 3 USB ports total. Allocation:
+
+| Pi 400 port | Device | Notes |
+|-------------|--------|-------|
+| 1 | OS / code USB drive | The Pi boots and runs from this drive. Keep it on its own port so the OS isn't sharing bandwidth with anything chatty |
+| 2 | RP2040 Zero | CRSF generator. Direct connection (no hub between Pi and RP2040) so the radio link doesn't share USB hub bandwidth or power with peripherals |
+| 3 | 7-port powered USB hub | Everything else. Hub has its own 5V external power (does not pull from the Pi); see Power distribution |
+
+### USB hub allocation
+
+| Hub port | Device | Notes |
+|----------|--------|-------|
+| 1 | ESP32 DevKit V1 | HUB75 LED panel driver |
+| 2 | Mega 2560 | IO board (VFD, trackball LEDs, buttons, relays, encoder, buzzer, LDR, WS2813 strip) |
+| 3 | USB joystick passthrough | Routes via an internal USB-A extension cable to a panel-mount USB-A on the front of the case. Operator plugs in their X-HOTAS (or any class-compliant USB joystick) |
+| 4 | Trackball | USB HID |
+| 5 | USB audio interface | Generic class-compliant USB audio board, drives the case speakers |
+| 6, 7 | unused | Headroom for future devices |
+
+**Tracker note:** the experimental ESP32-S3 antenna tracker is NOT on
+the case USB. It sits on the wired CRSF cable between the case and
+the ELRS module, byte-pumping frames in both directions and sniffing
+GPS telemetry. The case-side stack does not see the tracker over USB.
+
+### Stable device naming
+
+Use `/dev/serial/by-id/` paths in the daemon's flag arguments so a
+USB enumeration shuffle doesn't break the launch. The current
+`OPERATIONS.md` documents the canonical paths for each device.
+
+## Power distribution
+
+Single 12V input to the case. Two buck converters split it for the
+two 5V loads; the 12V rail itself feeds the ELRS module externally
+through the pole cable.
+
+```
+12V input
+  |
+  |-- 12V (case rail) --> pole cable --> ELRS module
+  |
+  |-- 12V/5V buck #1 --> Pi 400 (USB-C, 5V)
+  |
+  |-- 12V/5V buck #2 --> 7-port USB hub (5V)
+```
+
+| Rail | Source | Destination | Notes |
+|------|--------|-------------|-------|
+| 12V case | external input | ELRS module (via pole cable), bucks #1 and #2 | TODO: input current rating, fuse rating |
+| 5V Pi | buck #1 | Pi 400 USB-C | Pi 400 needs 5V/3A nominal |
+| 5V hub | buck #2 | 7-port USB hub | Powers everything on the hub plus the WS2813 strip if drawn from a hub port (TODO: confirm WS2813 power source) |
+| 3.3V | (per device) | per-MCU onboard LDO from USB 5V | No case-level 3.3V rail needed |
+
+The Pi 400 is not powered from a hub port: it has its own dedicated
+buck. This keeps the Pi's supply clean and avoids the hub's
+inrush/load transients showing up on the Pi's 5V.
+
+**Open items / TODO:**
+
+- 12V input current budget: Pi 400 (~3A at 5V = ~1.3A at 12V through
+  buck), hub + USB devices (~2-3A at 5V = ~1A at 12V through buck),
+  ELRS module (~0.5A peak at 12V down the cable). Round budget
+  around 3A at 12V. Confirm against actual draw once everything is
+  wired and warmed up.
+- Buck converter models. Both should be sized for the worst-case
+  draw plus headroom; cheap modules with marginal heatsinks have a
+  habit of throttling under sustained load.
+- Inrush limiting on the 12V input. Capacitor banks downstream of
+  bucks and the WS2813 strip can pull a meaningful inrush on power-on.
+- WS2813 strip power source: hub-port-derived 5V is fine for short
+  strips; a dedicated 5V feed is better for longer ones. TODO: pick
+  and document.
+
+## External case I/O
+
+### Pole cable to ELRS module
+
+5m, 4-conductor shielded multi-core cable (cabo manga blindado
+4x0.5mm² malha de cobre puro cobre flexível) running from the case
+to the externally-mounted ELRS TX module on the antenna pole.
+
+| Conductor | Function | Notes |
+|-----------|----------|-------|
+| Signal | CRSF (single-wire half-duplex) | Case-side TX merged via 470Ω series resistor; case-side RX direct. Both terminate on the ELRS module's single CRSF pin |
+| Signal GND | CRSF ground reference | Separate from power GND inside the case for noise isolation; tied at the ELRS module end |
+| 12V | ELRS module power | Direct off the case 12V rail. ~0.5V drop at 1A peak through 0.5mm² loop at 5m |
+| Power GND | ELRS module ground return | |
+
+The cable's outer shield is bonded to chassis ground at the case
+end. Tracker (when present) sits inline at any point along the
+CRSF path, byte-pumping transparently.
+
+### Front-panel I/O
+
+| Jack | Function | Wiring |
+|------|----------|--------|
+| USB-A (joystick port) | Operator's joystick connection | Internal USB-A extension cable from hub port 3 to a panel-mount USB-A jack on the front of the case |
+
+### Power input
+
+12V single rail. TODO: connector type (XT60, EC5, barrel jack), polarity,
+fuse rating.
