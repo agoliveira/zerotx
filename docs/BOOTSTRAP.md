@@ -237,6 +237,112 @@ amixer -c 0 set PCM 80%
 sudo alsactl store
 ```
 
+## GPIO breakout: heartbeat LED and DS3231 RTC
+
+The Pi 400 GPIO header is exposed via a passive breakout board. ZeroTX
+currently uses two pins: GPIO 17 for a daemon heartbeat LED, and the
+I2C1 bus (GPIO 2/3) for a DS3231 real-time clock module. Pinout
+detail in `docs/hardware-pinout.md`.
+
+### Enable I2C
+
+```
+sudo raspi-config nonint do_i2c 0
+sudo apt-get install -y i2c-tools
+```
+
+Reboot or `sudo modprobe i2c-dev`. Verify:
+
+```
+ls /dev/i2c-1
+i2cdetect -y 1
+```
+
+`i2cdetect` should show the bus with no devices yet (DS3231 not wired
+or not powered).
+
+### DS3231 RTC
+
+Wire the DS3231 module: VCC to header pin 1 (3V3), GND to header pin 6,
+SDA to header pin 3 (GPIO 2), SCL to header pin 5 (GPIO 3). Some
+modules ship with an EEPROM at 0x57; that's harmless and unused.
+
+After wiring, confirm detection:
+
+```
+i2cdetect -y 1
+```
+
+Address `0x68` should show. Add the kernel overlay so the RTC is
+exposed as a hardware clock device:
+
+```
+sudo sed -i '/^dtparam=i2c_arm=on/a dtoverlay=i2c-rtc,ds3231' /boot/firmware/config.txt
+```
+
+(Or hand-edit `/boot/firmware/config.txt` and add `dtoverlay=i2c-rtc,ds3231`
+near the existing `dtparam` lines.)
+
+Disable the userspace fake-hwclock that would otherwise compete:
+
+```
+sudo apt-get -y remove fake-hwclock
+sudo update-rc.d -f fake-hwclock remove
+sudo systemctl disable fake-hwclock
+```
+
+Edit `/lib/udev/hwclock-set` and comment out the three lines that
+return early when `systemd` is in use (the kernel's `hctosys` already
+handles the RTC-to-system sync at boot, but the udev rule is harmless
+to leave intact on most setups; comment-out is the conservative move
+documented in the kernel RTC howto):
+
+```
+#if [ -e /run/systemd/system ] ; then
+#    exit 0
+#fi
+```
+
+Reboot. Verify the RTC is recognized:
+
+```
+sudo dmesg | grep -i rtc
+sudo hwclock -r
+```
+
+`dmesg` should show `rtc-ds1307 ... registered as rtc0`. `hwclock -r`
+should print the current time. If the RTC battery is fresh and the
+chip has never been written, the time will be wrong; set it from the
+network-synced kernel clock:
+
+```
+sudo hwclock -w
+```
+
+After this, the kernel reads the RTC at boot before chrony or any
+network is available, so flight recordings get accurate timestamps
+even with no network at the field.
+
+### Heartbeat LED (optional)
+
+Wire a small LED + 1k resistor from header pin 11 (GPIO 17) to any
+ground pin (e.g. pin 9). Active-high: pin 11 high turns the LED on.
+
+The daemon enables the heartbeat with `-heartbeat-gpio 17`. Default is
+`-1` (disabled), so the daemon runs identically without a breakout.
+
+Verify with the line tool while the daemon is stopped:
+
+```
+sudo apt-get install -y gpiod
+gpioget gpiochip0 17
+gpioset gpiochip0 17=1   # LED on
+gpioset gpiochip0 17=0   # LED off
+```
+
+When the daemon runs with `-heartbeat-gpio 17`, the LED blinks at 1Hz
+while the 50Hz mapper loop is healthy, and goes dark on hang.
+
 ## Display arrangement
 
 Confirm both LCDs are detected:

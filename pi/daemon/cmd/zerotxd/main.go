@@ -27,6 +27,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/crsftee"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/heartbeat"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/sitl"
@@ -114,6 +115,8 @@ func main() {
 	wxShearDirDeg := flag.Float64("wx-shear-dir-deg", 45, "weather alert: surface-vs-80m wind direction delta threshold, degrees.")
 	wxShearSpeedRatio := flag.Float64("wx-shear-speed-ratio", 2.0, "weather alert: 80m/surface wind speed ratio threshold.")
 	wxGoldenElevDeg := flag.Float64("wx-golden-elev-deg", 6, "weather alert: sun elevation threshold (degrees) for golden_hour_active.")
+	heartbeatGPIO := flag.Int("heartbeat-gpio", -1, "Pi GPIO line number for the daemon heartbeat LED (BCM numbering). -1 disables. The pin blinks at 1Hz while the main loop is healthy and goes dark on hang.")
+	heartbeatChip := flag.String("heartbeat-chip", "gpiochip0", "GPIO character device for the heartbeat LED. Pi 4 / Pi 400 use gpiochip0.")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -958,6 +961,29 @@ func main() {
 		}()
 	}
 
+	// Heartbeat LED: drives a Pi GPIO at 1Hz while the 50Hz mapper
+	// loop is healthy; goes dark on hang. Disabled by default
+	// (-heartbeat-gpio < 0) so the daemon runs identically without
+	// a breakout board attached.
+	var hbDrv heartbeat.Driver
+	if *heartbeatGPIO >= 0 {
+		d, err := heartbeat.NewReal(*heartbeatChip, *heartbeatGPIO)
+		if err != nil {
+			log.Printf("heartbeat: %v (running without LED)", err)
+			hbDrv = heartbeat.NewNull()
+		} else {
+			hbDrv = d
+			log.Printf("heartbeat: %s line %d", *heartbeatChip, *heartbeatGPIO)
+		}
+	} else {
+		hbDrv = heartbeat.NewNull()
+	}
+	hb := heartbeat.New(hbDrv, heartbeat.Config{})
+	if err := hb.Start(); err != nil {
+		log.Printf("heartbeat start: %v", err)
+	}
+	defer hb.Close()
+
 	// 50Hz mapper -> CHANNEL_INTENT.
 	period := time.Second / time.Duration(*rate)
 	if period <= 0 {
@@ -986,6 +1012,7 @@ func main() {
 			log.Println("daemon stopped.")
 			return
 		case <-ticker.C:
+			hb.Tick()
 			s := holder.Load()
 			if s == nil {
 				// IDLE: no model loaded. Don't emit CRSF; RP2040's own

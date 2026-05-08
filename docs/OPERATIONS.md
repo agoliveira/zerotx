@@ -54,6 +54,8 @@ Flags:
 | `-iohub-port` | Mega IO board USB-CDC device (VFD, trackball LEDs, buttons, etc.) |
 | `-site-lat`, `-site-lon` | home coordinates for Map and bearing calculations |
 | `-tilewarm-rate` | tile prefetch rate (tiles/sec) |
+| `-heartbeat-gpio` | Pi GPIO line driving the daemon heartbeat LED (BCM numbering). -1 disables (default) |
+| `-heartbeat-chip` | GPIO chip device for the heartbeat LED. Default `gpiochip0` |
 | `-v` | verbose logging |
 
 Logs:
@@ -244,6 +246,18 @@ Symptom: daemon log shows `joystick` no device matching `-joystick-name`; contro
 Diagnose: `ls /dev/input/by-id/` shows the joystick? `lsusb` shows it?
 
 Fix: replug joystick at the hub. Confirm `-joystick-name Thrustmaster` substring still matches the device name.
+
+### Heartbeat LED stuck or dark
+
+Symptom: `-heartbeat-gpio` is set, but the LED is dark, solid on, or stuck.
+
+Diagnose:
+
+- Dark, daemon running: either the 50Hz mapper loop is hung past the 1.5s freshness window (genuine hang, check `journalctl -u zerotxd -f` for the last log line), or the GPIO chip / line is wrong (try `gpioinfo gpiochip0 | grep zerotx-heartbeat` to confirm the line was claimed).
+- Solid on (rare): the toggle goroutine itself died after writing high. Restart the daemon. If reproducible, file as a bug — by construction this shouldn't happen.
+- Solid on, daemon not running: GPIO line is open-collector floating high; harmless, the daemon will retake it and resume blinking on next start.
+
+Fix: restart the daemon. If the failure mode is "dark while daemon running", the actual problem is upstream of the LED — investigate as a daemon hang.
 
 ### Tile coverage missing in current area
 

@@ -199,6 +199,43 @@ firmware accounts for this in the pin remap below.
 input-only and lack internal pull-ups, useful for analog or buttons
 with external pull-ups.
 
+## Pi 400 GPIO breakout
+
+The Pi 400 exposes the standard 40-pin Raspberry Pi GPIO header on the
+back edge. ZeroTX uses a passive breakout board for access. The header
+follows the Pi 4 pinout and uses BCM GPIO numbering in software (which
+does not match the physical pin numbers on the header).
+
+| Header pin | Function | Notes |
+|------------|----------|-------|
+| 1 | 3V3 power | Reference for I2C pull-ups; also feeds the DS3231 RTC module |
+| 3 | GPIO 2 (I2C1 SDA) | Shared I2C bus: DS3231 RTC at addr 0x68. Reserved for future I2C peripherals on the same bus |
+| 5 | GPIO 3 (I2C1 SCL) | Shared I2C bus, paired with SDA above |
+| 6 | GND | RTC ground; common with rest of breakout |
+| 9 | GND | Heartbeat LED ground return |
+| 11 | GPIO 17 | Daemon heartbeat LED (active-high). Drive a 1k series resistor + LED to GND |
+| 14, 20, 25, 30, 34, 39 | GND | Additional ground points; use whichever is closest |
+
+Software notes:
+
+- Heartbeat LED is driven by `internal/heartbeat/` via the
+  `github.com/warthog618/go-gpiocdev` library (Linux GPIO character
+  device API). The daemon flag `-heartbeat-gpio 17` enables it; the
+  default `-1` disables. While the daemon's 50Hz mapper loop is
+  healthy, the LED blinks at 1Hz. Loop hang past 1.5s forces the LED
+  low, daemon dead means the LED is dark.
+- DS3231 RTC is handled by the kernel via `dtoverlay=i2c-rtc,ds3231`
+  in `/boot/firmware/config.txt`. The daemon does not read or write
+  the RTC directly; chrony / hwclock manage the kernel clock from it
+  at boot. Setup procedure: `docs/BOOTSTRAP.md`.
+
+**Free pins** on the breakout that ZeroTX does not currently use:
+GPIO 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21,
+22, 23, 24, 25, 26, 27. SPI0 is on GPIO 8/9/10/11; UART0 is on
+GPIO 14/15; PCM/I2S is on GPIO 18/19/20/21. Reserve those banks
+when planning future expansions (I2S DAC, second UART for GPS, etc.)
+rather than picking pins by free-from-function logic alone.
+
 ## Pi 400 USB topology
 
 The Pi 400 has 3 USB ports total. Allocation:
