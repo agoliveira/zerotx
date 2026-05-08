@@ -30,7 +30,7 @@ func TestParseSentence_Valid(t *testing.T) {
 // TestParseSentence_GNTalker confirms multi-constellation prefixes
 // parse the same as GP.
 func TestParseSentence_GNTalker(t *testing.T) {
-	line := "$GNRMC,113132.00,A,2255.0000,S,04706.0000,W,0.5,123.4,080525,,,A*64"
+	line := withChecksum("GNRMC,113132.00,A,2255.0000,S,04706.0000,W,0.5,123.4,080525,,,A")
 	s, err := ParseSentence(line)
 	if err != nil {
 		t.Fatalf("ParseSentence: %v", err)
@@ -107,7 +107,7 @@ func TestApplyGGA_Basic(t *testing.T) {
 
 // TestApplyGGA_NoFix records a 0 fix-quality field.
 func TestApplyGGA_NoFix(t *testing.T) {
-	sent, err := ParseSentence("$GPGGA,123519,,,,,0,00,99.9,,M,,M,,*48")
+	sent, err := ParseSentence(withChecksum("GPGGA,123519,,,,,0,00,99.9,,M,,M,,"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,15 +123,7 @@ func TestApplyGGA_NoFix(t *testing.T) {
 
 // TestApplyGGA_2DFix triggers the sats<4 downgrade path.
 func TestApplyGGA_2DFix(t *testing.T) {
-	// Manually crafted sentence: fix=1 (valid), sats=3 (forces 2D).
-	// Compute the checksum: XOR of "GPGGA,123519,4807.038,N,01131.000,E,1,03,2.5,100.0,M,46.9,M,,"
-	body := "GPGGA,123519,4807.038,N,01131.000,E,1,03,2.5,100.0,M,46.9,M,,"
-	var ck byte
-	for i := 0; i < len(body); i++ {
-		ck ^= body[i]
-	}
-	line := "$" + body + "*" + hexByte(ck)
-	sent, err := ParseSentence(line)
+	sent, err := ParseSentence(withChecksum("GPGGA,123519,4807.038,N,01131.000,E,1,03,2.5,100.0,M,46.9,M,,"))
 	if err != nil {
 		t.Fatalf("ParseSentence: %v", err)
 	}
@@ -149,7 +141,7 @@ func TestApplyGGA_2DFix(t *testing.T) {
 // conversion and date+time merging.
 func TestApplyRMC_Basic(t *testing.T) {
 	// 100 knots = 185.2 km/h. Heading 084.4 degrees true.
-	sent, err := ParseSentence("$GPRMC,225446,A,4916.45,N,12311.12,W,100.0,084.4,191194,003.1,W*61")
+	sent, err := ParseSentence(withChecksum("GPRMC,225446,A,4916.45,N,12311.12,W,100.0,084.4,191194,003.1,W"))
 	if err != nil {
 		t.Fatalf("ParseSentence: %v", err)
 	}
@@ -177,15 +169,9 @@ func TestApplyRMC_Basic(t *testing.T) {
 
 // TestApplyRMC_TwoDigitYear2000s confirms 00..79 maps into the 21st century.
 func TestApplyRMC_TwoDigitYear2000s(t *testing.T) {
-	body := "GPRMC,123000,A,4916.45,N,12311.12,W,000.0,000.0,080525,,,A"
-	var ck byte
-	for i := 0; i < len(body); i++ {
-		ck ^= body[i]
-	}
-	line := "$" + body + "*" + hexByte(ck)
-	sent, _ := ParseSentence(line)
-	if sent == nil {
-		t.Fatal("ParseSentence returned nil")
+	sent, err := ParseSentence(withChecksum("GPRMC,123000,A,4916.45,N,12311.12,W,000.0,000.0,080525,,,A"))
+	if err != nil {
+		t.Fatalf("ParseSentence: %v", err)
 	}
 	var s State
 	applyToState(&s, sent, time.Now())
@@ -208,8 +194,7 @@ func TestParseLatLon_EmptyFieldsIgnored(t *testing.T) {
 // TestUnknownSentenceIgnored covers sentences we don't parse but
 // don't reject either (GSA, GSV, VTG, ...).
 func TestUnknownSentenceIgnored(t *testing.T) {
-	// $GPGSA,A,3,29,07,16,...,*HASH (auto-mode-3D, 8 sats in solution)
-	sent, err := ParseSentence("$GPGSA,A,3,29,07,16,30,26,21,05,18,,,,,1.7,0.9,1.5*39")
+	sent, err := ParseSentence(withChecksum("GPGSA,A,3,29,07,16,30,26,21,05,18,,,,,1.7,0.9,1.5"))
 	if err != nil {
 		t.Fatalf("ParseSentence: %v", err)
 	}
@@ -217,6 +202,18 @@ func TestUnknownSentenceIgnored(t *testing.T) {
 	if applyToState(&s, sent, time.Now()) {
 		t.Error("unknown sentence reported as state change")
 	}
+}
+
+// withChecksum wraps a sentence body (everything between the leading
+// '$' and the trailing '*XX') with the correct NMEA XOR checksum.
+// All test sentences go through this so the tests are correct by
+// construction; hand-typed checksums are too easy to get wrong.
+func withChecksum(body string) string {
+	var ck byte
+	for i := 0; i < len(body); i++ {
+		ck ^= body[i]
+	}
+	return "$" + body + "*" + hexByte(ck)
 }
 
 // hexByte renders b as two uppercase hex digits.

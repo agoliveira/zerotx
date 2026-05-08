@@ -27,21 +27,18 @@ func TestReader_StreamsState(t *testing.T) {
 	}
 	defer r.Close()
 
-	// Write a clean GGA. Each sentence ends with CRLF the way real
-	// modules send them.
+	gga := withChecksum("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,")
+	rmc := withChecksum("GPRMC,225446,A,4916.45,N,12311.12,W,100.0,084.4,191194,003.1,W")
+
 	go func() {
-		_, _ = pw.Write([]byte(
-			"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n" +
-				"$GPRMC,225446,A,4916.45,N,12311.12,W,100.0,084.4,191194,003.1,W*61\r\n",
-		))
+		_, _ = pw.Write([]byte(gga + "\r\n" + rmc + "\r\n"))
 	}()
 
-	// Poll until both updates land or the deadline expires.
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		s := r.Get()
 		if s.Sats == 8 && s.SpeedKmh > 0 {
-			return // success
+			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -54,8 +51,6 @@ func TestReader_StreamsState(t *testing.T) {
 func TestReader_BadLineDoesntStop(t *testing.T) {
 	pr, pw := io.Pipe()
 	r := New(pipeRC{pr})
-	// Tighten the throttle so the test doesn't depend on the default
-	// minute-long quiet period.
 	r.errLogInterval = 0
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -65,11 +60,13 @@ func TestReader_BadLineDoesntStop(t *testing.T) {
 	}
 	defer r.Close()
 
+	good := withChecksum("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,")
+
 	go func() {
 		_, _ = pw.Write([]byte(
 			"garbage line with no dollar sign\r\n" +
 				"$GPGGA,not,a,real,sentence,*ZZ\r\n" +
-				"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n",
+				good + "\r\n",
 		))
 	}()
 
@@ -97,14 +94,14 @@ func TestReader_GetIsThreadSafe(t *testing.T) {
 	}
 	defer r.Close()
 
+	gga := withChecksum("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,")
+
 	// Continuous writer.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := 0; i < 200; i++ {
-			_, _ = pw.Write([]byte(
-				"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n",
-			))
+			_, _ = pw.Write([]byte(gga + "\r\n"))
 		}
 		_ = pw.Close()
 	}()
