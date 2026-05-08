@@ -68,16 +68,16 @@ The table below is the **default** map.
 | 3  | Encoder B (`enc0_b`) | INT1, hardware-interrupt capable |
 | 4  | Encoder SW (`enc0_sw`) | KY-040 push button |
 | 5  | Buzzer (`buzzer`) | Drives passive piezo via `tone()`. `tone()` retargets timer at runtime regardless of the pin |
-| 6  | Servo 0 (`servo_0`) | Reserved in HAL; subsystem lands in commit 2 |
-| 7  | Servo 1 (`servo_1`) | Reserved in HAL; subsystem lands in commit 2 |
-| 8  | Servo 2 (`servo_2`) | Reserved in HAL; subsystem lands in commit 2 |
-| 9  | Servo 3 (`servo_3`) | Reserved in HAL; subsystem lands in commit 2 |
+| 6  | Servo 0 (`servo_0`) | Driven by Servo subsystem (`servo.0`); Arduino Servo library |
+| 7  | Servo 1 (`servo_1`) | `servo.1` |
+| 8  | Servo 2 (`servo_2`) | `servo.2` |
+| 9  | Servo 3 (`servo_3`) | `servo.3` |
 | 11 | Trackball ring LED, green (`led_trackball_green`) | Timer 1 PWM, off Timer 2 (which `tone()` uses) |
 | 12 | Trackball ring LED, red (`led_trackball_red`) | Timer 1 PWM |
 | 14, 15 | Serial3 TX/RX | Free for future use |
 | 16, 17 | Serial2 TX/RX | Free for future use |
 | 18, 19 | Serial1 TX/RX (also INT3, INT2) | Free for future use |
-| 20, 21 | I2C SDA, SCL | Hardware I2C bus. Not in HAL (hardware-fixed pins). Future LCM2002 LCD lands here in commit 2 |
+| 20, 21 | I2C SDA, SCL | Hardware I2C bus. Not in HAL (hardware-fixed pins). I2cLcd subsystem (`lcd.0`) lives here, default auto-detect address |
 | 22 | Relay 0 (`relay_0`) | Default active-high |
 | 23 | Relay 1 (`relay_1`) | Default active-high |
 | 24 | Relay 2 (`relay_2`) | Default active-high |
@@ -105,12 +105,12 @@ The table below is the **default** map.
 | 49 | VFD0 D7 (`vfd0_d7`) | |
 | 50, 51, 52, 53 | SPI MISO, MOSI, SCK, SS | Free for future SPI peripheral (SD card, SPI display, etc.) |
 | 54 (A0) | LDR ambient-light sensor (`ldr_0`) | Analog input |
-| 56 (A2) | VFD1 RS (`vfd1_rs`) | Reserved in HAL; subsystem lands in commit 2 |
-| 57 (A3) | VFD1 EN (`vfd1_en`) | Reserved in HAL |
-| 58 (A4) | VFD1 D4 (`vfd1_d4`) | Reserved in HAL |
-| 59 (A5) | VFD1 D5 (`vfd1_d5`) | Reserved in HAL |
-| 60 (A6) | VFD1 D6 (`vfd1_d6`) | Reserved in HAL |
-| 61 (A7) | VFD1 D7 (`vfd1_d7`) | Reserved in HAL |
+| 56 (A2) | VFD1 RS (`vfd1_rs`) | Second VFD via Vfd subsystem (`vfd.1`) |
+| 57 (A3) | VFD1 EN (`vfd1_en`) | |
+| 58 (A4) | VFD1 D4 (`vfd1_d4`) | |
+| 59 (A5) | VFD1 D5 (`vfd1_d5`) | |
+| 60 (A6) | VFD1 D6 (`vfd1_d6`) | |
+| 61 (A7) | VFD1 D7 (`vfd1_d7`) | |
 
 **Unused pins** in the default config: 10, 13 (also onboard LED), 41,
 42, 43, and analog A1, A8-A15 (9 free analog channels). Pins 14-19
@@ -127,18 +127,14 @@ inputs).
 - **Pins 0/1 are reserved** for the USB-serial protocol channel and
   intentionally hardcoded out of HAL: if they could be remapped, the
   daemon couldn't recover from a bricked config.
-- **HAL slots can outpace subsystems.** VFD1 and Servo 0..3 have HAL
-  slots and default pin numbers reserved here, but the firmware
-  subsystems that consume them are not yet implemented. The pin
-  defaults stake out their wiring so future commits don't reshuffle
-  the case. Configuring those slots from the daemon today is harmless
-  but does nothing.
-- **Servo library uses Timer 5.** Once the Servo subsystem lands and
-  any servo is attached, hardware PWM on pins 44/45/46 disappears.
-  Today VFD0 lives on those pins as plain digital outputs (no PWM
-  needed for HD44780), so the conflict has no practical effect. Worth
-  knowing if you ever want to repurpose those pins for PWM-driven
-  loads.
+- **Servo library uses Timer 5.** Once the Servo subsystem attaches
+  any servo, hardware PWM on pins 44/45/46 disappears. Today VFD0
+  lives on those pins as plain digital outputs (no PWM needed for
+  HD44780), so the conflict has no practical effect. Worth knowing
+  if you ever want to repurpose those pins for PWM-driven loads.
+  The Servo subsystem uses lazy attach: pins are not grabbed until
+  the first SET servo.<n> command, so unattached servos do not
+  steal Timer 5.
 - **HAL EEPROM layout is versioned** (`HAL_EEPROM_VERSION` in
   `hal.cpp`). Bumping it invalidates older EEPROM contents, so a
   freshly-flashed Mega comes up on the new defaults. Operator-saved

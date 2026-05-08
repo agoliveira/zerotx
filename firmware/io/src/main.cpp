@@ -28,10 +28,12 @@
 #include "subsystems/buzzer.h"
 #include "subsystems/encoder.h"
 #include "subsystems/hal_subsystem.h"
+#include "subsystems/i2c_lcd.h"
 #include "subsystems/ldr.h"
 #include "subsystems/led.h"
 #include "subsystems/led_trackball.h"
 #include "subsystems/relay.h"
+#include "subsystems/servo.h"
 #include "subsystems/vfd.h"
 #include "subsystems/ws.h"
 // New subsystem headers go here as they land.
@@ -40,7 +42,7 @@ namespace {
 
 // Firmware identity. Bumped on protocol-affecting changes.
 constexpr const char* kFirmwareName    = "zerotx-io";
-constexpr const char* kFirmwareVersion = "0.6.0-sense";
+constexpr const char* kFirmwareVersion = "0.7.0-multi";
 
 // Watchdog timeout. Long enough for any tick to complete (no
 // subsystem should take more than a few ms), short enough for a real
@@ -61,6 +63,7 @@ constexpr uint8_t kWatchdogTimeout = WDTO_500MS;
 zerotx::HalSubsystem g_hal_subsys;
 zerotx::LedTrackball g_led_trackball;
 zerotx::Vfd          g_vfd;
+zerotx::I2cLcd       g_i2c_lcd;
 zerotx::Button       g_button;
 zerotx::Led          g_led;
 zerotx::Relay        g_relay;
@@ -68,11 +71,13 @@ zerotx::Ws           g_ws;
 zerotx::Ldr          g_ldr;
 zerotx::Buzzer       g_buzzer;
 zerotx::Encoder      g_encoder;
+zerotx::ServoSubsys  g_servo;
 
 zerotx::Subsystem* const kSubsystems[] = {
   &g_hal_subsys,
   &g_led_trackball,
   &g_vfd,
+  &g_i2c_lcd,
   &g_button,
   &g_led,
   &g_relay,
@@ -80,6 +85,7 @@ zerotx::Subsystem* const kSubsystems[] = {
   &g_ldr,
   &g_buzzer,
   &g_encoder,
+  &g_servo,
   // Add more here.
 };
 constexpr size_t kSubsystemCount = sizeof(kSubsystems) / sizeof(kSubsystems[0]);

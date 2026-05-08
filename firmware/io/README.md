@@ -14,8 +14,14 @@ all share one Mega 2560 connected to the daemon over USB-CDC.
   reconfigurable at runtime; no reflash needed to re-pin or change
   polarity on a buried Mega.
 - VFD subsystem: Noritake CU20025ECPB-W1J 2x20 in 4-bit HD44780 mode.
+  Two instances supported (`vfd.0` and `vfd.1`) on independent pin
+  groups, each running the animation engine independently.
+- I2C LCD subsystem: HD44780-compatible character LCD on a PCF8574
+  I2C backpack (LCM2002 default geometry, others configurable).
+- Servo subsystem: 4 servo channels via the Arduino Servo library,
+  lazy-attached to keep Timer 5 free until first use.
 - Trackball LEDs: five canonical states with on-firmware animation.
-- Buttons: 5 panel buttons, 20ms polling debounce, edge events.
+- Buttons: 10 panel buttons, 20ms polling debounce, edge events.
 - LEDs: 4 generic indicator LEDs.
 - Relays: 4 relays (separate from led for protocol clarity).
 - WS2813: 16-pixel strip.
@@ -48,10 +54,10 @@ Examples:
 
 ```
 GET version
-> version zerotx-io 0.6.0-sense
+> version zerotx-io 0.7.0-multi
 
 GET caps
-> caps hal led.trackball vfd.0 button.0..4 led.0..3 relay.0..3 ws.0 ldr.0 buzzer enc.0
+> caps hal led.trackball vfd.0 vfd.1 lcd button.0..9 led.0..3 relay.0..3 ws.0 ldr.0 buzzer enc.0 servo.0..3
 
 EVENT ldr.0 raw=412
 EVENT enc.0 cw
@@ -63,20 +69,39 @@ SET led.0 on
 
 ## Subsystem command summary
 
-### `vfd.0` - 2x20 character VFD
+### `vfd.<n>` - 2x20 character VFD (n = 0 or 1)
 ```
-SET vfd.0 mode <banner|idle|ambient|armed>
-SET vfd.0 brightness <0..3>
-SET vfd.0 line <row> <text...>
-SET vfd.0 clear
-SET vfd.0 tick [<n>]
-SET vfd.0 arm <0|1>
-SET vfd.0 fmmode <text>
-SET vfd.0 lq <0..100>
-SET vfd.0 batt <text>
-SET vfd.0 alarm <warn|critical|failsafe>
-SET vfd.0 disarmed
-GET vfd.0
+SET vfd.<n> mode <banner|idle|ambient|armed>
+SET vfd.<n> brightness <0..3>
+SET vfd.<n> line <row> <text...>
+SET vfd.<n> clear
+SET vfd.<n> tick [<n>]
+SET vfd.<n> arm <0|1>
+SET vfd.<n> fmmode <text>
+SET vfd.<n> lq <0..100>
+SET vfd.<n> batt <text>
+SET vfd.<n> alarm <warn|critical|failsafe>
+SET vfd.<n> disarmed
+GET vfd.<n>
+```
+
+### `lcd.0` - I2C-attached HD44780 character LCD (LCM2002 default geometry)
+```
+SET lcd.0 line <row> <text...>
+SET lcd.0 clear
+SET lcd.0 backlight <0|1>
+SET lcd.0 cursor <off|on|blink>
+SET lcd.0 geom <cols> <rows>      # default 20 2; reconfigure for 16x2, 20x4, etc.
+SET lcd.0 addr <0xNN>             # force I2C address; default is auto-detect
+GET lcd.0
+```
+
+### `servo.<0..3>` - servo outputs (Arduino Servo library, lazy-attach)
+```
+SET servo.<n> angle <0..180>
+SET servo.<n> us <500..2500>
+SET servo.<n> detach
+GET servo.<n>
 ```
 
 ### `led.trackball` - bicolor trackball ring
@@ -97,7 +122,7 @@ SET relay.<n> <on|off|0|1>
 GET relay.<n>
 ```
 
-### `button.<0..4>` - panel buttons
+### `button.<0..9>` - panel buttons
 ```
 GET button.<n>            # > button.<n> <pressed|released>
 EVENT button.<n> down     # press edge
@@ -167,11 +192,11 @@ USB Serial0 (pins 0/1) is hardcoded and cannot be remapped, so
 The companion `tools/zerotx-iohal-config` CLI automates JSON-driven
 pin/flag management.
 
-## EEPROM layout (v2)
+## EEPROM layout (v3)
 
 ```
 [0..3]      magic = 0x5A455243
-[4]         version = 2
+[4]         version = 3
 [5]         pin count
 [6..6+2N-1] N entries, 2 bytes each: { pin_number, flags }
 [end..+1]   CRC16 over preceding bytes
