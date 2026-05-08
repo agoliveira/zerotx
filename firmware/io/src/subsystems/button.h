@@ -1,6 +1,6 @@
 // button.h - panel button subsystem.
 //
-// Five GPIO buttons wired active-low to ground with the Mega's
+// Ten GPIO buttons wired active-low to ground with the Mega's
 // internal pull-up resistors enabled. Polled at the loop cadence
 // with 20ms software debounce. State changes (down/up edges) emit
 // EVENT lines; the daemon decides what each button does.
@@ -26,7 +26,7 @@ namespace zerotx {
 
 class Button : public Subsystem {
 public:
-  static constexpr uint8_t kCount = 5;
+  static constexpr uint8_t kCount = 10;
   // Debounce: state must be stable for this many ms before edge fires.
   static constexpr uint32_t kDebounceMs = 20;
 

@@ -50,50 +50,72 @@ onboard USB-serial bridge.
 **Source of truth:**
 
 - `firmware/io/src/hal.h` (`enum HalPinId`): the symbolic pin slots
-- `firmware/io/src/hal.cpp` (`kHalPinDefaults[]`, lines 61-89): the
-  default pin numbers for each slot
+- `firmware/io/src/hal.cpp` (`kHalPinDefaults[]`): the default pin
+  numbers for each slot
 
 Unlike the RP2040 and ESP32, **Mega pin numbers are runtime-configurable**.
 The HAL stores the pin map in EEPROM and falls back to the compiled
-defaults if EEPROM is blank or corrupt. The daemon can rewrite pin
-assignments via the `hal` subsystem protocol commands and reboot the
-Mega; no reflash required. The table below is the **default** map.
+defaults if EEPROM is blank, the magic number is wrong, or the version
+doesn't match. The daemon can rewrite pin assignments via the `hal`
+subsystem protocol commands and reboot the Mega; no reflash required.
+The table below is the **default** map.
 
 | Mega pin | Function (HAL slot) | Notes |
 |----------|---------------------|-------|
 | 0  | USB Serial RX (Serial0) | Hardcoded, NOT in HAL. Protocol channel to the daemon. Don't touch |
 | 1  | USB Serial TX (Serial0) | Hardcoded, NOT in HAL. Protocol channel to the daemon. Don't touch |
-| 8  | Trackball ring LED, green (`led_trackball_green`) | PWM-capable (Timer 2/4) |
-| 9  | Trackball ring LED, red (`led_trackball_red`) | PWM-capable (Timer 2/4) |
+| 2  | Encoder A (`enc0_a`) | INT0, hardware-interrupt capable |
+| 3  | Encoder B (`enc0_b`) | INT1, hardware-interrupt capable |
+| 4  | Encoder SW (`enc0_sw`) | KY-040 push button |
+| 5  | Buzzer (`buzzer`) | Drives passive piezo via `tone()`. `tone()` retargets timer at runtime regardless of the pin |
+| 6  | Servo 0 (`servo_0`) | Reserved in HAL; subsystem lands in commit 2 |
+| 7  | Servo 1 (`servo_1`) | Reserved in HAL; subsystem lands in commit 2 |
+| 8  | Servo 2 (`servo_2`) | Reserved in HAL; subsystem lands in commit 2 |
+| 9  | Servo 3 (`servo_3`) | Reserved in HAL; subsystem lands in commit 2 |
+| 11 | Trackball ring LED, green (`led_trackball_green`) | Timer 1 PWM, off Timer 2 (which `tone()` uses) |
+| 12 | Trackball ring LED, red (`led_trackball_red`) | Timer 1 PWM |
+| 14, 15 | Serial3 TX/RX | Free for future use |
+| 16, 17 | Serial2 TX/RX | Free for future use |
+| 18, 19 | Serial1 TX/RX (also INT3, INT2) | Free for future use |
+| 20, 21 | I2C SDA, SCL | Hardware I2C bus. Not in HAL (hardware-fixed pins). Future LCM2002 LCD lands here in commit 2 |
 | 22 | Relay 0 (`relay_0`) | Default active-high |
 | 23 | Relay 1 (`relay_1`) | Default active-high |
 | 24 | Relay 2 (`relay_2`) | Default active-high |
 | 25 | Relay 3 (`relay_3`) | Default active-high |
-| 30 | VFD RS (`vfd0_rs`) | Noritake CU20025ECPB-W1J in 4-bit HD44780 mode |
-| 31 | VFD EN (`vfd0_en`) | |
-| 32 | VFD D4 (`vfd0_d4`) | |
-| 33 | VFD D5 (`vfd0_d5`) | |
-| 34 | VFD D6 (`vfd0_d6`) | |
-| 35 | VFD D7 (`vfd0_d7`) | |
-| 38 | Panel button 0 (`button_0`) | Active-low to GND, internal pull-up |
-| 39 | Panel button 1 (`button_1`) | |
-| 40 | Panel button 2 (`button_2`) | |
-| 41 | Panel button 3 (`button_3`) | |
-| 42 | Panel button 4 (`button_4`) | |
-| 44 | Indicator LED 0 (`led_0`) | PWM-capable (Timer 5), simple on/off in firmware today |
-| 45 | Indicator LED 1 (`led_1`) | PWM-capable (Timer 5) |
-| 46 | Indicator LED 2 (`led_2`) | PWM-capable (Timer 5) |
-| 47 | Indicator LED 3 (`led_3`) | PWM-capable (Timer 5) |
-| 49 | WS2813 strip data (`ws_data`) | |
-| 50 | Buzzer (`buzzer`) | Drives passive piezo via `tone()`. **Also SPI MISO** |
-| 51 | Encoder A (`enc0_a`) | KY-040 quadrature. **Also SPI MOSI** |
-| 52 | Encoder B (`enc0_b`) | KY-040 quadrature. **Also SPI SCK** |
-| 53 | Encoder switch (`enc0_sw`) | KY-040 push button. **Also SPI SS** |
-| 54 (A0) | LDR ambient-light sensor (`ldr_0`) | Analog input. `analogRead()` accepts the digital pin number directly |
+| 26 | Panel button 0 (`button_0`) | Active-low to GND, internal pull-up |
+| 27 | Panel button 1 (`button_1`) | |
+| 28 | Panel button 2 (`button_2`) | |
+| 29 | Panel button 3 (`button_3`) | |
+| 30 | Panel button 4 (`button_4`) | |
+| 31 | Panel button 5 (`button_5`) | |
+| 32 | Panel button 6 (`button_6`) | |
+| 33 | Panel button 7 (`button_7`) | |
+| 34 | Panel button 8 (`button_8`) | |
+| 35 | Panel button 9 (`button_9`) | |
+| 36 | Indicator LED 0 (`led_0`) | On/off in firmware today |
+| 37 | Indicator LED 1 (`led_1`) | |
+| 38 | Indicator LED 2 (`led_2`) | |
+| 39 | Indicator LED 3 (`led_3`) | |
+| 40 | WS2813 strip data (`ws_data`) | |
+| 44 | VFD0 RS (`vfd0_rs`) | Noritake CU20025ECPB-W1J in 4-bit HD44780 mode |
+| 45 | VFD0 EN (`vfd0_en`) | |
+| 46 | VFD0 D4 (`vfd0_d4`) | |
+| 47 | VFD0 D5 (`vfd0_d5`) | |
+| 48 | VFD0 D6 (`vfd0_d6`) | |
+| 49 | VFD0 D7 (`vfd0_d7`) | |
+| 50, 51, 52, 53 | SPI MISO, MOSI, SCK, SS | Free for future SPI peripheral (SD card, SPI display, etc.) |
+| 54 (A0) | LDR ambient-light sensor (`ldr_0`) | Analog input |
+| 56 (A2) | VFD1 RS (`vfd1_rs`) | Reserved in HAL; subsystem lands in commit 2 |
+| 57 (A3) | VFD1 EN (`vfd1_en`) | Reserved in HAL |
+| 58 (A4) | VFD1 D4 (`vfd1_d4`) | Reserved in HAL |
+| 59 (A5) | VFD1 D5 (`vfd1_d5`) | Reserved in HAL |
+| 60 (A6) | VFD1 D6 (`vfd1_d6`) | Reserved in HAL |
+| 61 (A7) | VFD1 D7 (`vfd1_d7`) | Reserved in HAL |
 
-**Free pins** in the default config: 2-7, 10-21, 26-29, 36-37, 43, 48,
-A1-A15. The Serial1 (18/19), Serial2 (16/17), and Serial3 (14/15) UARTs
-are unused and free.
+**Unused pins** in the default config: 10, 13 (also onboard LED), 41,
+42, 43, and analog A1, A8-A15 (9 free analog channels). Pins 14-19
+(Serial1/2/3) are reserved free for future UART expansion. Pins 50-53
+(SPI bus) are reserved free.
 
 **Per-pin polarity flags** are also EEPROM-stored. The default for all
 outputs is active-high; flip the `ACTIVE_LOW` bit per slot for boards
@@ -102,17 +124,26 @@ inputs).
 
 **Caveats:**
 
-- **Encoder and buzzer occupy the SPI bus** (50-53). Fine while there
-  is no other SPI peripheral, but adding an SD card reader, OLED via
-  SPI, or any other SPI device requires remapping these slots first.
-  All four are HAL-configurable, so this is a config change, not a
-  hardware swap.
 - **Pins 0/1 are reserved** for the USB-serial protocol channel and
   intentionally hardcoded out of HAL: if they could be remapped, the
   daemon couldn't recover from a bricked config.
-- HAL EEPROM layout is versioned (`HAL_EEPROM_VERSION` in `hal.cpp`).
-  Reordering `HalPinId` values bumps the version and invalidates older
-  EEPROM contents.
+- **HAL slots can outpace subsystems.** VFD1 and Servo 0..3 have HAL
+  slots and default pin numbers reserved here, but the firmware
+  subsystems that consume them are not yet implemented. The pin
+  defaults stake out their wiring so future commits don't reshuffle
+  the case. Configuring those slots from the daemon today is harmless
+  but does nothing.
+- **Servo library uses Timer 5.** Once the Servo subsystem lands and
+  any servo is attached, hardware PWM on pins 44/45/46 disappears.
+  Today VFD0 lives on those pins as plain digital outputs (no PWM
+  needed for HD44780), so the conflict has no practical effect. Worth
+  knowing if you ever want to repurpose those pins for PWM-driven
+  loads.
+- **HAL EEPROM layout is versioned** (`HAL_EEPROM_VERSION` in
+  `hal.cpp`). Bumping it invalidates older EEPROM contents, so a
+  freshly-flashed Mega comes up on the new defaults. Operator-saved
+  pin maps from a previous version are lost; re-issue any custom
+  `SET hal pin ...` commands as needed.
 
 ## ESP32 DevKit V1 (HUB75 LED panel driver)
 

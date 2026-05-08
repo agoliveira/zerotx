@@ -3,7 +3,7 @@
 // EEPROM layout v2:
 //
 //   [0..3]   magic = 0x5A455243 ("ZERC" little-endian)
-//   [4]      version = HAL_EEPROM_VERSION (2)
+//   [4]      version = HAL_EEPROM_VERSION (3)
 //   [5]      stored count (must match compile-time HAL_PIN_COUNT)
 //   [6..6+2N-1]  N entries, 2 bytes each: { pin_number, flags }
 //   [end..end+1] CRC16 over preceding bytes
@@ -33,7 +33,7 @@ namespace hal {
 
 static constexpr uint16_t HAL_EEPROM_BASE    = 0;
 static constexpr uint32_t HAL_EEPROM_MAGIC   = 0x5A455243UL;
-static constexpr uint8_t  HAL_EEPROM_VERSION = 2;
+static constexpr uint8_t  HAL_EEPROM_VERSION = 3;
 
 // Bytes per pin entry in EEPROM v2 (pin_number + flags).
 static constexpr uint8_t HAL_ENTRY_BYTES = 2;
@@ -59,33 +59,48 @@ static constexpr uint8_t HAL_PIN_MAX = 69;
 // via SET hal flag for boards that wire their inputs through an
 // inverting transistor stage.
 static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
-  /* HAL_LED_TRACKBALL_GREEN */ 8,
-  /* HAL_LED_TRACKBALL_RED   */ 9,
-  /* HAL_VFD0_RS             */ 30,
-  /* HAL_VFD0_EN             */ 31,
-  /* HAL_VFD0_D4             */ 32,
-  /* HAL_VFD0_D5             */ 33,
-  /* HAL_VFD0_D6             */ 34,
-  /* HAL_VFD0_D7             */ 35,
-  /* HAL_BUTTON_0            */ 38,
-  /* HAL_BUTTON_1            */ 39,
-  /* HAL_BUTTON_2            */ 40,
-  /* HAL_BUTTON_3            */ 41,
-  /* HAL_BUTTON_4            */ 42,
-  /* HAL_LED_0               */ 44,
-  /* HAL_LED_1               */ 45,
-  /* HAL_LED_2               */ 46,
-  /* HAL_LED_3               */ 47,
-  /* HAL_WS_DATA             */ 49,
+  /* HAL_LED_TRACKBALL_GREEN */ 11,  // Timer 1 PWM, off Timer 2 (which tone() takes)
+  /* HAL_LED_TRACKBALL_RED   */ 12,  // Timer 1 PWM
+  /* HAL_VFD0_RS             */ 44,
+  /* HAL_VFD0_EN             */ 45,
+  /* HAL_VFD0_D4             */ 46,
+  /* HAL_VFD0_D5             */ 47,
+  /* HAL_VFD0_D6             */ 48,
+  /* HAL_VFD0_D7             */ 49,
+  /* HAL_VFD1_RS             */ 56,  // = A2 used as digital
+  /* HAL_VFD1_EN             */ 57,  // = A3
+  /* HAL_VFD1_D4             */ 58,  // = A4
+  /* HAL_VFD1_D5             */ 59,  // = A5
+  /* HAL_VFD1_D6             */ 60,  // = A6
+  /* HAL_VFD1_D7             */ 61,  // = A7
+  /* HAL_BUTTON_0            */ 26,
+  /* HAL_BUTTON_1            */ 27,
+  /* HAL_BUTTON_2            */ 28,
+  /* HAL_BUTTON_3            */ 29,
+  /* HAL_BUTTON_4            */ 30,
+  /* HAL_BUTTON_5            */ 31,
+  /* HAL_BUTTON_6            */ 32,
+  /* HAL_BUTTON_7            */ 33,
+  /* HAL_BUTTON_8            */ 34,
+  /* HAL_BUTTON_9            */ 35,
+  /* HAL_LED_0               */ 36,
+  /* HAL_LED_1               */ 37,
+  /* HAL_LED_2               */ 38,
+  /* HAL_LED_3               */ 39,
+  /* HAL_WS_DATA             */ 40,
   /* HAL_RELAY_0             */ 22,
   /* HAL_RELAY_1             */ 23,
   /* HAL_RELAY_2             */ 24,
   /* HAL_RELAY_3             */ 25,
   /* HAL_LDR_0               */ 54,  // = A0 on the Mega
-  /* HAL_BUZZER              */ 50,
-  /* HAL_ENC0_A              */ 51,
-  /* HAL_ENC0_B              */ 52,
-  /* HAL_ENC0_SW             */ 53,
+  /* HAL_BUZZER              */ 5,   // off SPI; Timer 3 region but tone() retargets at runtime
+  /* HAL_ENC0_A              */ 2,   // INT0
+  /* HAL_ENC0_B              */ 3,   // INT1
+  /* HAL_ENC0_SW             */ 4,
+  /* HAL_SERVO_0             */ 6,
+  /* HAL_SERVO_1             */ 7,
+  /* HAL_SERVO_2             */ 8,
+  /* HAL_SERVO_3             */ 9,
 };
 
 // Default flags: 0 across the board (active-high). Operator can flip
@@ -103,11 +118,22 @@ static const char* const kHalPinNames[HAL_PIN_COUNT] = {
   /* HAL_VFD0_D5             */ "vfd0_d5",
   /* HAL_VFD0_D6             */ "vfd0_d6",
   /* HAL_VFD0_D7             */ "vfd0_d7",
+  /* HAL_VFD1_RS             */ "vfd1_rs",
+  /* HAL_VFD1_EN             */ "vfd1_en",
+  /* HAL_VFD1_D4             */ "vfd1_d4",
+  /* HAL_VFD1_D5             */ "vfd1_d5",
+  /* HAL_VFD1_D6             */ "vfd1_d6",
+  /* HAL_VFD1_D7             */ "vfd1_d7",
   /* HAL_BUTTON_0            */ "button_0",
   /* HAL_BUTTON_1            */ "button_1",
   /* HAL_BUTTON_2            */ "button_2",
   /* HAL_BUTTON_3            */ "button_3",
   /* HAL_BUTTON_4            */ "button_4",
+  /* HAL_BUTTON_5            */ "button_5",
+  /* HAL_BUTTON_6            */ "button_6",
+  /* HAL_BUTTON_7            */ "button_7",
+  /* HAL_BUTTON_8            */ "button_8",
+  /* HAL_BUTTON_9            */ "button_9",
   /* HAL_LED_0               */ "led_0",
   /* HAL_LED_1               */ "led_1",
   /* HAL_LED_2               */ "led_2",
@@ -122,6 +148,10 @@ static const char* const kHalPinNames[HAL_PIN_COUNT] = {
   /* HAL_ENC0_A              */ "enc0_a",
   /* HAL_ENC0_B              */ "enc0_b",
   /* HAL_ENC0_SW             */ "enc0_sw",
+  /* HAL_SERVO_0             */ "servo_0",
+  /* HAL_SERVO_1             */ "servo_1",
+  /* HAL_SERVO_2             */ "servo_2",
+  /* HAL_SERVO_3             */ "servo_3",
 };
 
 // ----- Module state -----------------------------------------------------

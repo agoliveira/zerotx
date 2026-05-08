@@ -25,9 +25,10 @@
 
 namespace hal {
 
-// Stable pin identifiers. Order is part of the EEPROM layout - new
-// entries go at the END to keep older EEPROM contents valid. If you
-// reorder these, bump HAL_EEPROM_VERSION in hal.cpp.
+// Stable pin identifiers. Order is part of the EEPROM layout. When
+// the order changes (insertions, removals, reordering), bump
+// HAL_EEPROM_VERSION in hal.cpp so previously-saved EEPROM maps
+// invalidate cleanly and the new defaults take over on next boot.
 enum HalPinId : uint8_t {
   HAL_LED_TRACKBALL_GREEN = 0,
   HAL_LED_TRACKBALL_RED   = 1,
@@ -39,38 +40,61 @@ enum HalPinId : uint8_t {
   HAL_VFD0_D5 = 5,
   HAL_VFD0_D6 = 6,
   HAL_VFD0_D7 = 7,
-  // 5 panel buttons. Active-low to GND with internal pull-up.
-  HAL_BUTTON_0 = 8,
-  HAL_BUTTON_1 = 9,
-  HAL_BUTTON_2 = 10,
-  HAL_BUTTON_3 = 11,
-  HAL_BUTTON_4 = 12,
+  // VFD instance 1: same shape as VFD0. Subsystem support lands in
+  // a follow-up; the slots are reserved here so the EEPROM layout
+  // stabilizes before code starts using them.
+  HAL_VFD1_RS = 8,
+  HAL_VFD1_EN = 9,
+  HAL_VFD1_D4 = 10,
+  HAL_VFD1_D5 = 11,
+  HAL_VFD1_D6 = 12,
+  HAL_VFD1_D7 = 13,
+  // 10 panel buttons. Active-low to GND with internal pull-up.
+  HAL_BUTTON_0 = 14,
+  HAL_BUTTON_1 = 15,
+  HAL_BUTTON_2 = 16,
+  HAL_BUTTON_3 = 17,
+  HAL_BUTTON_4 = 18,
+  HAL_BUTTON_5 = 19,
+  HAL_BUTTON_6 = 20,
+  HAL_BUTTON_7 = 21,
+  HAL_BUTTON_8 = 22,
+  HAL_BUTTON_9 = 23,
   // 4 generic indicator LEDs. Pure on/off, daemon controls.
-  HAL_LED_0 = 13,
-  HAL_LED_1 = 14,
-  HAL_LED_2 = 15,
-  HAL_LED_3 = 16,
+  HAL_LED_0 = 24,
+  HAL_LED_1 = 25,
+  HAL_LED_2 = 26,
+  HAL_LED_3 = 27,
   // WS2813 strip data line.
-  HAL_WS_DATA = 17,
+  HAL_WS_DATA = 28,
   // 4 relays. Active-high default like all other outputs; per-pin
   // ACTIVE_LOW flag flips polarity for boards that need it.
-  HAL_RELAY_0 = 18,
-  HAL_RELAY_1 = 19,
-  HAL_RELAY_2 = 20,
-  HAL_RELAY_3 = 21,
+  HAL_RELAY_0 = 29,
+  HAL_RELAY_1 = 30,
+  HAL_RELAY_2 = 31,
+  HAL_RELAY_3 = 32,
   // LDR (light-dependent resistor) analog input. Default A0 which
   // is digital pin 54 on the Mega; analogRead() accepts the digital
   // pin number directly.
-  HAL_LDR_0 = 22,
+  HAL_LDR_0 = 33,
   // Buzzer output. Drives a passive piezo via tone(). Active piezo
   // works too - it just sounds at its native frequency regardless
   // of the requested freq.
-  HAL_BUZZER = 23,
+  HAL_BUZZER = 34,
   // Rotary encoder (KY-040 style): A and B quadrature pins plus a
   // push-button switch. All three idle HIGH via internal pull-ups.
-  HAL_ENC0_A  = 24,
-  HAL_ENC0_B  = 25,
-  HAL_ENC0_SW = 26,
+  // Defaults place A and B on hardware-interrupt-capable pins
+  // (INT0, INT1) so a future ISR-based decoder can drop in without
+  // touching the pin map.
+  HAL_ENC0_A  = 35,
+  HAL_ENC0_B  = 36,
+  HAL_ENC0_SW = 37,
+  // 4 servo outputs. Subsystem support lands in a follow-up; slots
+  // reserved here.
+  HAL_SERVO_0 = 38,
+  HAL_SERVO_1 = 39,
+  HAL_SERVO_2 = 40,
+  HAL_SERVO_3 = 41,
   HAL_PIN_COUNT  // sentinel; must be last
 };
 

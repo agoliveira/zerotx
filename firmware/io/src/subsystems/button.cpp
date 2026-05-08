@@ -8,7 +8,7 @@
 
 namespace zerotx {
 
-// Map instance index to its HAL pin id. Buttons 0-4 -> HAL_BUTTON_0..4.
+// Map instance index to its HAL pin id. Buttons 0-9 -> HAL_BUTTON_0..9.
 static hal::HalPinId pinIdFor(uint8_t instance) {
   return static_cast<hal::HalPinId>(hal::HAL_BUTTON_0 + instance);
 }
