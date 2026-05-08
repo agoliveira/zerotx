@@ -27,7 +27,8 @@ Current capability:
 - Offline satellite and OSM map tiles (PMTiles) for in-the-field operation without internet
 - Per-flight recordings stored in SQLite, with automatic post-flight narration summaries
 - IDLE/READY state machine: daemon refuses to emit channel intents until a model is explicitly loaded
-- Inline antenna tracker (experimental): an ESP32-S3 sits on the wired CRSF path between the case and the ELRS module, byte-pumps frames transparently in both directions, sniffs GPS telemetry, and drives a 2-DOF pan/tilt gimbal autonomously. Daemon-unaware; the case-side stack does not know the tracker exists.
+
+The default cable run from the case to the ELRS module is single-wire CRSF over a short multi-conductor cable, no transceivers, no pole electronics. An optional extended configuration adds RS-422 transceivers and a pole-end project box for longer runs or for hosting an inline ESP32-S3 antenna tracker (firmware complete, integration deferred); the case-side stack is unchanged in either configuration.
 
 ## Layout
 
@@ -41,7 +42,7 @@ zerotx/
 ├── firmware/
 │   ├── display/       ESP32 HUB75 panel driver
 │   ├── io/            Mega 2560 IO board
-│   └── tracker/       ESP32-S3 inline antenna tracker (experimental)
+│   └── tracker/       ESP32-S3 inline antenna tracker (optional add-on)
 ├── rp2040/            Pico SDK firmware (CRSF generator)
 ├── tools/             Tile builders, replay tools, HAL configurator
 ├── docs/              Architecture, connections, operations, protocols

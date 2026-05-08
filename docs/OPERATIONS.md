@@ -80,9 +80,9 @@ Mostly hands-off after launch. The system narrates mode transitions, alarms, and
 
 Mode changes are made via radio, not via GCS.
 
-## Antenna tracker
+## Antenna tracker (optional, extended configuration only)
 
-The pole-end ESP32-S3 antenna tracker is autonomous. Once configured for the site, it tracks the aircraft based on CRSF GPS frames it sees passing through on the wired link. The daemon is not involved; tracker behavior survives Pi reboots and daemon restarts.
+The pole-end ESP32-S3 antenna tracker is an optional add-on used in the extended cable configuration (see `docs/CONNECTIONS.md`). When present, it is autonomous: once configured for the site, it tracks the aircraft based on CRSF GPS frames it sees passing through on the wired link. The daemon is not involved; tracker behavior survives Pi reboots and daemon restarts. In default cable configuration there is no tracker on the line and this section can be skipped.
 
 ### First-time site setup
 
@@ -204,7 +204,7 @@ Fix: confirm ALSA default sink with `pactl list short sinks`. Re-set with `pactl
 
 ### Tracker not tracking (gimbal not moving)
 
-Symptom: aircraft is in the air with GPS lock, but the pole-end gimbal does not move.
+Applies only to the extended cable configuration with tracker installed. Symptom: aircraft is in the air with GPS lock, but the pole-end gimbal does not move.
 
 Diagnose: connect to the tracker via USB-CDC and run `stats` to check parser counters and telemetry age. If telemetry age is high or no GPS frames have been parsed, the wired CRSF path is at fault, not the tracker. If parser counters are healthy but the gimbal is still, check `pos` for clamped servo positions and `cfg show` for misconfigured pan_ref or station coordinates.
 
@@ -215,7 +215,7 @@ Fix:
 
 ### Tracker firmware failure (need bypass)
 
-Symptom: tracker is enumerated but byte-pumping is broken; channel intents do not reach ELRS, or telemetry does not return to the case.
+Applies only to the extended cable configuration with tracker installed. Symptom: tracker is enumerated but byte-pumping is broken; channel intents do not reach ELRS, or telemetry does not return to the case.
 
 Diagnose: this would manifest case-side as failsafe on the airframe and absent telemetry on the HUD. Confirm by power-cycling the pole-end project box.
 
@@ -225,9 +225,9 @@ Fix: with the planned hardware bypass jumper (TODO, not yet implemented), route 
 
 Symptom: HUD values frozen; panel does not reflect aircraft state.
 
-Diagnose: the telemetry path is ELRS module to tracker to RS-422 cable to RP2040 to daemon. Walk it end to end. RP2040 still enumerated on the Pi side? `source` subsystem in daemon log? Tracker `stats` show parser still receiving frames?
+Diagnose: walk the telemetry path end to end. Default cable configuration: ELRS module to case-to-pole cable to RP2040 to daemon. Extended configuration: ELRS module to tracker (if present) to RS-422 cable to case-end MAX490 to RP2040 to daemon. In either case, RP2040 still enumerated on the Pi side? `source` subsystem in daemon log? In extended configuration, do tracker `stats` show parser still receiving frames?
 
-Fix: replug RP2040 USB if its enumeration dropped. If RP2040 is fine but no telemetry is parsing, the issue is upstream of the case (cable, MAX490s, tracker, ELRS module). Power-cycle the pole-end project box. If recurrent, suspect cable connection at the bulkhead or ELRS module firmware.
+Fix: replug RP2040 USB if its enumeration dropped. If RP2040 is fine but no telemetry is parsing, the issue is upstream of the case (cable, transceivers if present, tracker if present, ELRS module). Power-cycle the pole-end electronics. If recurrent, suspect cable connection at the bulkhead or ELRS module firmware.
 
 ### Web UI won't load or WebSocket dropping
 
@@ -291,9 +291,9 @@ See `firmware/io/README.md`. Same `pio run -t upload` pattern in `firmware/io/`.
 
 See `rp2040/README.md`. Build the .uf2 with Pico SDK and CMake, then put the RP2040 into BOOTSEL mode and copy the file.
 
-### Tracker firmware (ESP32-S3, pole-end)
+### Tracker firmware (ESP32-S3, pole-end, optional)
 
-See `firmware/tracker/README.md`. Built with PlatformIO. Connect the tracker via USB-CDC (typically `/dev/ttyACM0` through the CH343 bridge during dev), then:
+Only applicable in the extended cable configuration with a tracker installed. See `firmware/tracker/README.md`. Built with PlatformIO. Connect the tracker via USB-CDC (typically `/dev/ttyACM0` through the CH343 bridge during dev), then:
 
 ```
 cd ~/zerotx/firmware/tracker

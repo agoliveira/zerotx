@@ -23,12 +23,18 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 - Case is wired-only inside: no internal antennas, no SMA bulkhead passthroughs, no RF shielding concerns for the case itself.
 - Case mechanicals settled: sun hoods for LCDs, cable bulkhead connectors, dual-rail (13.8V CCTV plus 12V/AC field) power input, front-panel USB layout, ventilation and cooling, power switch, interior status indication via lid LED panels.
 
-## Antenna tracker
+## Case-to-pole link
+
+- Default cable configuration is single-wire CRSF over a 5m shielded multi-core cable, terminating directly on the ELRS module. No transceivers, no pole-end electronics. The 470Ω TX series resistor at the case end handles half-duplex contention.
+- Extended cable configuration uses RS-422 (MAX490 pair on each end) instead of single-wire CRSF. Required for cable runs longer than ~5m and as the substrate the inline antenna tracker requires. Differential pairs handle long cable runs cleanly where a native UART would suffer noise and length limits.
+- Switching between configurations requires no firmware change on the RP2040. GP0/GP1 either drive a single-wire merge through 470Ω or feed a MAX490; the firmware is unchanged.
+
+## Antenna tracker (optional)
 
 - Antenna tracker is pole-end and inline on the wired CRSF path (not daemon-side): keeps tracking autonomous across Pi reboots, requires no second comms link, and is invisible to the daemon. Adding or removing the tracker requires zero daemon-side code changes.
-- Tracker byte_pump_task on Core 1 with top priority is the safety floor: it is the only task registered with the hardware watchdog. Tracker logic stalls on Core 0 (parser, math, servo loop, console) cannot panic the wire forwarder.
+- Tracker is only deployable in the extended cable configuration. Inline byte-pump on a single-wire half-duplex line is not supported.
+- Tracker `byte_pump_task` on Core 1 with top priority is the safety floor: it is the only task registered with the hardware watchdog. Tracker logic stalls on Core 0 (parser, math, servo loop, console) cannot panic the wire forwarder.
 - Custom tracker over U360GTS or other OSS trackers: ZeroTX's inline-on-wired-CRSF deployment is unusual; existing tracker projects target different topologies (parallel WiFi telemetry, daemon-side commanded tracking, etc.).
-- CRSF between case and pole runs over RS-422 (MAX490 pair on each end): differential pairs handle long cable runs cleanly where a native UART would suffer noise and length limits. Also gives the tracker a clean inline insertion point.
 - Tracker failsafe is hold-last-position by construction, not a programmed timeout: if no GPS frames arrive, the slew loop simply has no new target, so the gimbal sits where it was. No park-to-home pose.
 
 ## Power

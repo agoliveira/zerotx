@@ -21,7 +21,9 @@ TODO: confirm regulator topology, then redraw
                    |                     VFD, WS2813, lid LED panels, SSD
                    |
                    +---- 12V direct  ---- LCDs (TODO confirm voltage per panel),
-                   |                      pole-end project box via cable
+                   |                      pole cable (ELRS module direct in
+                   |                      default cfg; pole-end project box
+                   |                      in extended cfg)
                    |
                    +---- TODO: any 3.3V direct loads
 
@@ -42,12 +44,13 @@ Initial estimates. Refine with bench measurements once the regulator topology is
 | Mega 2560 | 5V | ~0.2A | via USB |
 | ESP32 (panel driver) | 5V | ~0.3A | via USB |
 | RP2040 (CRSF) | 5V | ~0.1A | via USB |
-| Pole-end project box | 12V via cable | TODO | tracker + ELRS + 2x servos under bucks; servos dominate |
 | VFD (CU20025ECPB-W1J) | 5V | TODO | confirm against datasheet |
 | Trackball ring LEDs | 5V | small | sourced from Mega |
 | WS2813 strip (16 px) | 5V | 0.96A worst case | full white |
 | Lid LED panels | TODO | TODO | TODO |
 | Powered USB hub | TODO | TODO | self-powered vs internal-rail-powered: TODO |
+| ELRS TX module (default) | 12V via cable | ~1A peak | direct off the case 12V rail through the pole cable |
+| Pole-end project box (extended cfg only) | 12V via cable | TODO | tracker + ELRS + 2x servos under bucks; servos dominate |
 
 **TODO**: measure actual peak with HUB75 at maximum brightness plus all LEDs lit. Confirm 5V rail headroom.
 
@@ -132,21 +135,47 @@ Project-wide convention: active-HIGH default, per-pin HAL flag opts into active-
 | Connection | From | To | Notes |
 |---|---|---|---|
 | USB-CDC + 5V | Pi USB port B (direct, not hub) | RP2040 USB port | data and power; isolated from hub |
-| CRSF UART | RP2040 GPIO **TODO** | Case-end MAX490 RS-422 transceiver | bidirectional (channel intents out, telemetry in) |
-| GND | shared | shared with MAX490 and onward to pole | common ground reference |
+| CRSF UART | RP2040 GP0 (TX) and GP1 (RX) | Case bulkhead, then case-to-pole cable | bidirectional (channel intents out, telemetry in) |
+| GND | shared | shared with bulkhead and onward to pole | common ground reference |
 
-**TODO**: document the specific RP2040 GPIO pins for TX/RX. Cross-check against `rp2040/` source.
+In default cable configuration GP0 (TX) is joined to GP1 (RX) at the case end through a 470Ω series resistor on the TX side, and the resulting single-wire signal goes out on the cable to the ELRS module's CRSF pin. In extended configuration GP0 and GP1 connect to the case-end MAX490's DI and RO pins respectively, and the differential pair travels the cable. No firmware change is required to switch modes.
 
 ## Case-to-pole cable
 
-A single multi-conductor cable connects the case to the pole-end project box. It carries:
+Two configurations are supported. The default is a short single-wire CRSF cable terminating directly on the ELRS module. An extended configuration with RS-422 transceivers and a pole-end project box is documented after it; that configuration is required for cable runs longer than ~5m, and for use of the inline antenna tracker.
+
+### Default configuration (single-wire, up to 5m)
+
+5m, 4-conductor shielded multi-core cable (`cabo manga blindado 4x0.5mm² malha de cobre puro cobre flexível`) running from the case directly to the externally-mounted ELRS TX module. Detailed conductor table and termination wiring are in `docs/hardware-pinout.md` under "External case I/O".
+
+```
+Case end                                          Pole end
++----------+                                      +-----------+
+| RP2040   | TX (GP0) ---- 470Ω ---+----- signal ------>|     |
+|  (CRSF)  | RX (GP1) -------------+                    |ELRS |
+|          |                                            | TX  |
+|          | GND ---------- signal GND -------->        |     |
++----------+                                            |     |
+12V rail ----------- 12V cable -------------->          |     |
+GND ----------------- power GND -------------->         |     |
+                                                        +-----+
+Outer shield: chassis GND at case end only.
+```
+
+No transceivers, no pole-end electronics. CRSF is half-duplex on a single wire; the 470Ω series resistor on TX prevents driver contention with the module's telemetry direction.
+
+### Extended configuration (RS-422, longer runs and tracker support)
+
+Required when cable length exceeds ~5m or when the inline antenna tracker is in use. Replaces the single-wire signal pair with an RS-422 differential pair driven by MAX490 transceivers at each end, and adds a pole-end project box documented in the next section.
+
+The cable carries:
 
 - 12V power for the pole-end electronics (tracker, ELRS module, servos via downstream bucks)
-- RS-422 differential pair (DI/RO/DE/RE on the MAX490 sense; A/B on the wire)
+- RS-422 differential pair (DI/RO on each MAX490; A/B on the wire)
 - GND
 - Optional spare conductor reserved for future use
 
-CRSF frames travel as RS-422 between the case-end MAX490 and the pole-end MAX490 in both directions. RS-422 was chosen over native UART for cable noise immunity and length tolerance.
+CRSF frames travel as RS-422 between the case-end MAX490 and the pole-end MAX490 in both directions. RS-422 was chosen over native UART for cable noise immunity and length tolerance, and gives the tracker a clean inline insertion point.
 
 ```
 Case end                                     Pole end (project box)
@@ -156,7 +185,7 @@ Case end                                     Pole end (project box)
 |          |<----+   |    +-------------+    |          |    +------------+
 +----------+     |   v    | RS-422 pair |    |          |    | ESP32-S3   |
                  |  +-------------------+--->|          |--->|  Tracker   |
-                 +--| Case-end MAX490   |    |          |    |            |
+                 +--| Case-end MAX490   |    |          |    | (optional) |
                     +-------------------+<---|          |<---|            |
                                              +----------+    +-----+------+
                                                                    |
@@ -170,9 +199,11 @@ Case end                                     Pole end (project box)
                                                           (RF out via pole antenna)
 ```
 
-## Pole-end project box
+If the tracker is not installed, the pole-end MAX490 connects directly to the ELRS module's CRSF UART; the case-side stack is unchanged.
 
-External to the case, mounted on the pole. Houses the antenna tracker, the ELRS TX module, and local power conditioning. Receives 12V from the case via the multi-conductor cable.
+## Pole-end project box (extended configuration only)
+
+External to the case, mounted on the pole. Houses the ELRS TX module, local power conditioning (RS-422 transceiver, bucks), and optionally the antenna tracker plus its servos. Receives 12V from the case via the multi-conductor cable. The tracker is optional within this configuration; an RS-422 cable run without a tracker is a valid use of the extended layout when the only requirement is cable length.
 
 | Component | Role | Notes |
 |---|---|---|
@@ -209,7 +240,7 @@ Case-side connectors. **TODO**: confirm final list and locations after assembly.
 |---|---|---|
 | Lab power input | IEC C14 (front) | mains to internal 13.8V CCTV PSU |
 | Field power input | TODO (XT60? Anderson Powerpole?) | 12V/AC dual-rail field input |
-| Pole connector | Multi-conductor (12V + RS-422 pair + GND + spare) | feeds pole-end project box (tracker, ELRS, servos) |
+| Pole connector | Multi-conductor; default config carries CRSF + signal GND + 12V + power GND, extended config carries RS-422 pair + 12V + GND + spare | feeds the ELRS module directly (default) or the pole-end project box (extended) |
 | Front-panel USB | USB-A x N | ad-hoc devices, charging, dev access |
 
 ## See also
