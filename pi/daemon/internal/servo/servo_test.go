@@ -38,7 +38,7 @@ func TestNullController_NoOp(t *testing.T) {
 }
 
 func TestController_InstanceValidation(t *testing.T) {
-	c := &NullController{}
+	c := &LogController{logf: func(string, ...interface{}) {}}
 	if err := c.Angle(Count, 90); err == nil {
 		t.Errorf("Angle on instance=Count should error")
 	}
