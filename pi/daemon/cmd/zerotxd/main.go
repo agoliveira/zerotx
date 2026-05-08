@@ -27,6 +27,8 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/crsftee"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/gps"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/heartbeat"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
@@ -43,7 +45,6 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/trackballled"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
-	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/netclass"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/tilewarm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/weather"
@@ -117,6 +118,8 @@ func main() {
 	wxGoldenElevDeg := flag.Float64("wx-golden-elev-deg", 6, "weather alert: sun elevation threshold (degrees) for golden_hour_active.")
 	heartbeatGPIO := flag.Int("heartbeat-gpio", -1, "Pi GPIO line number for the daemon heartbeat LED (BCM numbering). -1 disables. The pin blinks at 1Hz while the main loop is healthy and goes dark on hang.")
 	heartbeatChip := flag.String("heartbeat-chip", "gpiochip0", "GPIO character device for the heartbeat LED. Pi 4 / Pi 400 use gpiochip0.")
+	gpsPort := flag.String("gps-port", "", "serial device for an optional Pi-attached GPS module (e.g. /dev/ttyAMA0, /dev/serial0). Empty disables. Failure to open is non-fatal: the daemon logs and continues.")
+	gpsBaud := flag.Int("gps-baud", 9600, "baud rate for the GPS serial port. Most consumer u-blox modules ship at 9600.")
 	flag.Parse()
 
 	if *panelFile != "" && *panelStdin {
@@ -983,6 +986,36 @@ func main() {
 		log.Printf("heartbeat start: %v", err)
 	}
 	defer hb.Close()
+
+	// RTC presence: the daemon does not read or write the RTC, but
+	// announcing it at startup confirms the kernel detected the
+	// DS3231 (or any other dtoverlay-loaded RTC). Absence is also
+	// fine; the system clock is set from the network or the previous
+	// systohc on shutdown.
+	if data, err := os.ReadFile("/sys/class/rtc/rtc0/name"); err == nil {
+		log.Printf("RTC: %s", strings.TrimSpace(string(data)))
+	} else {
+		log.Printf("RTC: not detected (relying on system clock)")
+	}
+
+	// GPS: optional Pi-attached serial GPS. Failure to open is
+	// non-fatal; the daemon proceeds and Get() on the (nil) reader
+	// is gated below at every consumer site by a nil check.
+	var gpsRdr *gps.Reader
+	if *gpsPort != "" {
+		r, err := gps.Open(*gpsPort, *gpsBaud)
+		if err != nil {
+			log.Printf("GPS: %v (continuing without)", err)
+		} else if err := r.Start(ctx); err != nil {
+			log.Printf("GPS start: %v (continuing without)", err)
+			_ = r.Close()
+		} else {
+			gpsRdr = r
+			log.Printf("GPS: %s @%d", *gpsPort, *gpsBaud)
+			defer gpsRdr.Close()
+		}
+	}
+	_ = gpsRdr // consumers wired in a follow-up patch
 
 	// 50Hz mapper -> CHANNEL_INTENT.
 	period := time.Second / time.Duration(*rate)

@@ -343,6 +343,61 @@ gpioset gpiochip0 17=0   # LED off
 When the daemon runs with `-heartbeat-gpio 17`, the LED blinks at 1Hz
 while the 50Hz mapper loop is healthy, and goes dark on hang.
 
+### GPS (optional)
+
+ZeroTX supports an optional Pi-attached serial GPS module (u-blox M6,
+M7, M10 or any NMEA TTL device) on UART3 (header pins 7/29). The
+daemon parses NMEA in-process and exposes a state snapshot to other
+subsystems. Failure to open the device is non-fatal: the daemon logs
+and continues, and consumers fall back to other position sources.
+
+Wire the module: GPS VCC to header pin 1 (3V3) or header pin 4 (5V,
+depending on the module's input range), GPS GND to header pin 6 or 9,
+GPS TX to header pin 29 (GPIO 5, UART3 RX), GPS RX to header pin 7
+(GPIO 4, UART3 TX). Most modules are 3V3-compatible on both rails;
+check the datasheet before connecting 5V power.
+
+Enable UART3 in the Pi's device tree:
+
+```
+echo 'dtoverlay=uart3' | sudo tee -a /boot/firmware/config.txt
+```
+
+Reboot. After boot the device appears as `/dev/ttyAMA1` (the Pi's
+primary mini-UART, `/dev/ttyAMA0`, stays where it is and is normally
+used by Bluetooth or the serial console).
+
+Verify raw NMEA flows:
+
+```
+ls /dev/ttyAMA*
+sudo cat /dev/ttyAMA1
+```
+
+Garbage on stty defaults usually means the wrong baud. Common GPS
+baud rates: 9600 (default for u-blox M6/M7/M10), 38400, 115200. Set
+explicitly if `cat` shows nothing readable:
+
+```
+stty -F /dev/ttyAMA1 9600 raw -echo
+sudo cat /dev/ttyAMA1
+```
+
+You should see lines beginning with `$GP...` or `$GN...` arriving at
+1 Hz (default) or faster.
+
+Daemon flags:
+
+```
+-gps-port /dev/ttyAMA1
+-gps-baud 9600
+```
+
+Default `-gps-port` is empty (disabled). When set, the daemon opens
+the port at startup and runs an internal NMEA parser. The reader
+silently absorbs malformed sentences and rate-limits parse-error
+logs (one per minute) so a flaky cable doesn't flood the journal.
+
 ## Display arrangement
 
 Confirm both LCDs are detected:

@@ -56,6 +56,8 @@ Flags:
 | `-tilewarm-rate` | tile prefetch rate (tiles/sec) |
 | `-heartbeat-gpio` | Pi GPIO line driving the daemon heartbeat LED (BCM numbering). -1 disables (default) |
 | `-heartbeat-chip` | GPIO chip device for the heartbeat LED. Default `gpiochip0` |
+| `-gps-port` | serial device for an optional Pi-attached GPS (e.g. `/dev/ttyAMA1`). Empty disables (default) |
+| `-gps-baud` | baud rate for the GPS serial port. Default 9600 |
 | `-v` | verbose logging |
 
 Logs:
@@ -246,6 +248,16 @@ Symptom: daemon log shows `joystick` no device matching `-joystick-name`; contro
 Diagnose: `ls /dev/input/by-id/` shows the joystick? `lsusb` shows it?
 
 Fix: replug joystick at the hub. Confirm `-joystick-name Thrustmaster` substring still matches the device name.
+
+### GPS not detected
+
+Symptom: `-gps-port` is set, but the daemon log shows `GPS: ... (continuing without)` at startup, or no `GPS: <port> @<baud>` confirmation line.
+
+Diagnose: `ls /dev/ttyAMA*` to confirm the device exists. `sudo cat /dev/ttyAMA1` (or whichever device) at the right baud should produce `$GP...` / `$GN...` lines once per second. Check `sudo dmesg | grep -i serial` for kernel-level UART issues. Confirm `dtoverlay=uart3` in `/boot/firmware/config.txt` and that the system was rebooted after the edit.
+
+Fix: most often the wrong device path or baud rate. M6/M7/M10 ship at 9600. Check the breakout wiring: GPS TX must land on the Pi's RX (GPIO 5, header pin 29), GPS RX on the Pi's TX (GPIO 4, header pin 7). A swapped pair shows up as "I can read garbage but the GPS doesn't seem to react"; the daemon will log NMEA parse errors at most once per minute.
+
+This is a non-blocking subsystem: a misconfigured or absent GPS does not stop the rest of the daemon. Consumers fall back to `-site-lat` / `-site-lon` or other position sources.
 
 ### Heartbeat LED stuck or dark
 

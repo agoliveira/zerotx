@@ -211,9 +211,11 @@ does not match the physical pin numbers on the header).
 | 1 | 3V3 power | Reference for I2C pull-ups; also feeds the DS3231 RTC module |
 | 3 | GPIO 2 (I2C1 SDA) | Shared I2C bus: DS3231 RTC at addr 0x68. Reserved for future I2C peripherals on the same bus |
 | 5 | GPIO 3 (I2C1 SCL) | Shared I2C bus, paired with SDA above |
-| 6 | GND | RTC ground; common with rest of breakout |
+| 6 | GND | RTC and GPS ground; common with rest of breakout |
+| 7 | GPIO 4 (UART3 TXD) | Pi -> GPS module RX. Enabled by `dtoverlay=uart3` |
 | 9 | GND | Heartbeat LED ground return |
 | 11 | GPIO 17 | Daemon heartbeat LED (active-high). Drive a 1k series resistor + LED to GND |
+| 29 | GPIO 5 (UART3 RXD) | GPS module TX -> Pi |
 | 14, 20, 25, 30, 34, 39 | GND | Additional ground points; use whichever is closest |
 
 Software notes:
@@ -224,17 +226,25 @@ Software notes:
   default `-1` disables. While the daemon's 50Hz mapper loop is
   healthy, the LED blinks at 1Hz. Loop hang past 1.5s forces the LED
   low, daemon dead means the LED is dark.
-- DS3231 RTC is handled by the kernel via `dtoverlay=i2c-rtc,ds3231`
-  in `/boot/firmware/config.txt`. The daemon does not read or write
-  the RTC directly; chrony / hwclock manage the kernel clock from it
-  at boot. Setup procedure: `docs/BOOTSTRAP.md`.
+- DS3231 RTC is an external module (typically a small board with the
+  chip plus a CR2032 battery; e.g. the common Mercado Livre listing).
+  Wired to header pins 1/3/5/6. Handled by the kernel via
+  `dtoverlay=i2c-rtc,ds3231` in `/boot/firmware/config.txt`. The
+  daemon does not read or write the RTC; it just logs whether the
+  kernel detected one at startup. Setup procedure: `docs/BOOTSTRAP.md`.
+- GPS is an optional Pi-attached serial module (u-blox M6/M7/M10 or
+  equivalent NMEA TTL device) on UART3. The daemon flag `-gps-port`
+  (e.g. `/dev/ttyAMA1`) enables reading; `-gps-baud` sets the rate
+  (default 9600). Failure to open the port is non-fatal: the daemon
+  logs and continues. UART3 needs `dtoverlay=uart3` in
+  `/boot/firmware/config.txt`. Setup procedure: `docs/BOOTSTRAP.md`.
 
 **Free pins** on the breakout that ZeroTX does not currently use:
-GPIO 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21,
-22, 23, 24, 25, 26, 27. SPI0 is on GPIO 8/9/10/11; UART0 is on
-GPIO 14/15; PCM/I2S is on GPIO 18/19/20/21. Reserve those banks
-when planning future expansions (I2S DAC, second UART for GPS, etc.)
-rather than picking pins by free-from-function logic alone.
+GPIO 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23,
+24, 25, 26, 27. SPI0 is on GPIO 8/9/10/11; UART0 is on GPIO 14/15;
+PCM/I2S is on GPIO 18/19/20/21. Reserve those banks when planning
+future expansions (I2S DAC, additional UARTs, etc.) rather than
+picking pins by free-from-function logic alone.
 
 ## Pi 400 USB topology
 
