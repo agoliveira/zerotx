@@ -74,7 +74,7 @@ bool I2cLcd::handleSet(const proto::Command& cmd, Stream& out) {
     // Buffer caps at cols_+1; longer text gets truncated rather than
     // wrapping (we never want ambiguous overflow into the next row).
     char buf[33];   // covers up to 32 cols
-    if (cols_ + 1 > sizeof(buf)) {
+    if (static_cast<size_t>(cols_) + 1 > sizeof(buf)) {
       proto::writeError(out, "lcd.0", "geometry-too-wide");
       return true;
     }
