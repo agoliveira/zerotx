@@ -6,6 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/protomaps/go-pmtiles v1.30.2
 	github.com/veandco/go-sdl2 v0.4.40
+	github.com/warthog618/go-gpiocdev v0.9.1
 	go.bug.st/serial v1.6.2
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
