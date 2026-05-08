@@ -686,7 +686,6 @@ func main() {
 	// Mega IO board connection. One iohub.Client serves multiple
 	// subsystems on the device: VFD, trackball LEDs, indicator LEDs,
 	// buttons, WS2813 strip, future LDR/buzzer. The vfd-port flag
-	// historically targeted just the VFD-bearing Pro Micro; now it
 	// names the Mega's USB-CDC device.
 	//
 	// With -vfd-port empty the client is a no-op; with -vfd-port=log

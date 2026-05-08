@@ -1,10 +1,9 @@
 # zerotx-io firmware (Mega 2560)
 
-General IO board firmware. Replaces the Pro Micro VFD firmware with a
-multi-subsystem design: Noritake VFD, trackball status LEDs,
-indicator LEDs, panel buttons, WS2813 strip, relays, LDR ambient-
-light sensor, piezo buzzer, and rotary encoder all share one Mega
-2560 connected to the daemon over USB-CDC.
+General IO board firmware. Multi-subsystem design: Noritake VFD,
+trackball status LEDs, indicator LEDs, panel buttons, WS2813 strip,
+relays, LDR ambient-light sensor, piezo buzzer, and rotary encoder
+all share one Mega 2560 connected to the daemon over USB-CDC.
 
 ## Status
 

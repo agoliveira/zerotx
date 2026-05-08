@@ -4,8 +4,7 @@
 // library (Bill Perry / duinoWitchery). Pin assignments come from
 // HAL (HAL_VFD0_RS, HAL_VFD0_EN, HAL_VFD0_D4..D7).
 //
-// Animation engine ported from the Pro Micro VFD firmware. Six
-// modes: BANNER, IDLE, AMBIENT, ARMED, TEXT, EVENT. The daemon
+// Animation engine: six modes: BANNER, IDLE, AMBIENT, ARMED, TEXT, EVENT. The daemon
 // drives mode transitions via SET commands and pushes telemetry
 // snippets that the firmware uses to render mode-appropriate
 // screens. The firmware does the per-frame rendering locally so

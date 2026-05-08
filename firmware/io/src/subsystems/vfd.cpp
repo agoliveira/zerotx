@@ -1,12 +1,10 @@
-// vfd.cpp - VFD subsystem implementation. Port of the Pro Micro
-// firmware's animation engine into the new subsystem framework.
+// vfd.cpp - VFD subsystem implementation. Animation engine for the
+// Noritake CU20025ECPB-W1J 2x20 character VFD.
 //
-// Most of the rendering code is structurally unchanged from the Pro
-// Micro version: same modes, same per-mode renderers, same custom
-// glyph layout. Differences:
-//   - State that was file-scope global is now class members.
-//   - The line-protocol parser is gone; commands arrive as parsed
-//     proto::Command structs from the framework dispatcher.
+// Notes on the framework integration:
+//   - State is held as class members (no file-scope globals).
+//   - Commands arrive as parsed proto::Command structs from the
+//     framework dispatcher (no in-package line parser).
 //   - Pin numbers come from HAL at begin(), and the hd44780 driver
 //     is constructed in-place via placement-new since its pins are
 //     ctor args and we don't know them at module-load time.
@@ -21,8 +19,7 @@
 
 namespace zerotx {
 
-// 8 user CGRAM glyphs. Identical to the Pro Micro firmware - this
-// is the bar-fill plus dot/tick set.
+// 8 user CGRAM glyphs. Bar-fill plus dot/tick set.
 static const byte kGlyphs[8][8] PROGMEM = {
   {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b00000}, // 1px
   {0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b00000}, // 2px
@@ -166,7 +163,7 @@ void Vfd::enterEvent(Event k) {
 
 void Vfd::renderBanner(uint32_t now_ms) {
   // Banner is static; transition to IDLE if no traffic for the
-  // timeout. Same logic as the Pro Micro version.
+  // timeout.
   if (now_ms - mode_entered_ms_ >= kIdleTimeoutMs) {
     lcd_->clear();
     enterMode(Mode::Idle);

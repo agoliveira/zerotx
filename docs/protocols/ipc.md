@@ -6,7 +6,7 @@ channel intent (Pi → MCU) and telemetry/log/input upstream events
 
 ## Transport
 
-USB-CDC. The Pro Micro VFD and the ESP32 panel also enumerate as
+USB-CDC. The Mega IO board and the ESP32 panel also enumerate as
 `/dev/ttyACM*` devices; identify the RP2040 by its USB VID:PID
 `2e8a:000a` (Raspberry Pi Pico). Use `/dev/serial/by-id/` paths
 in production:

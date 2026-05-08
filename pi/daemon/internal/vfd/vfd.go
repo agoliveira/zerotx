@@ -1,8 +1,8 @@
 // Package vfd drives the ZeroTX cool-glow diagnostic display: a
 // 2x20 character VFD (Noritake CU20025ECPB-W1J) reached over USB-CDC.
 //
-// As of firmware/io v0.3.0+ the VFD is driven by the Mega 2560 IO
-// board (zerotx-io firmware), addressed via the structured protocol:
+// The VFD is driven by the Mega 2560 IO board (zerotx-io firmware),
+// addressed via the structured protocol:
 //   SET vfd.0 line <row> <text...>
 //   SET vfd.0 clear
 //   SET vfd.0 brightness <n>
@@ -13,11 +13,6 @@
 //   SET vfd.0 batt <text>
 //   SET vfd.0 alarm <warn|critical|failsafe>
 //   SET vfd.0 disarmed
-//
-// (Previously the VFD ran on a Pro Micro with a single-letter
-// protocol: L<row><sp>text, C, B<sp>level, E <kind>... The Pro
-// Micro firmware is retired; this package now speaks the Mega's
-// structured protocol exclusively.)
 //
 // The VFD is purely aesthetic: it shows live daemon activity
 // (IPC frames, CRSF telemetry, TTS events, API hits, boot init)
@@ -146,7 +141,7 @@ func (d *NullDriver) Close() error                 { return nil }
 
 // LogDriver writes the lines that would have gone to the VFD to
 // the daemon log instead. Lets us validate the firehose end-to-end
-// before the Pro Micro is wired. Safe for concurrent use.
+// before hardware is wired. Safe for concurrent use.
 type LogDriver struct {
 	mu   sync.Mutex
 	logf func(format string, args ...interface{})

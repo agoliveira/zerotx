@@ -79,7 +79,7 @@ sudo usermod -aG dialout,input,audio $USER
 # Log out and back in for the new groups to apply.
 ```
 
-- `dialout` for `/dev/ttyACM*` (RP2040, ESP32, Pro Micro VFD)
+- `dialout` for `/dev/ttyACM*` (RP2040, ESP32, Mega)
 - `input` for joystick `/dev/input/js*`
 - `audio` for ALSA / PulseAudio playback
 
