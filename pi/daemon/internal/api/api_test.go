@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -114,6 +115,96 @@ func TestHandleState(t *testing.T) {
 	}
 	if s.Joystick == nil || s.Joystick.Axes[2] != -1.0 {
 		t.Errorf("joystick: %+v", s.Joystick)
+	}
+	if s.Station != nil {
+		t.Errorf("station should be omitted when provider is nil, got %+v", s.Station)
+	}
+}
+
+// TestHandleState_StationOmittedRaw verifies that an unconfigured station
+// produces no `"station":` key in the wire JSON at all (the omitempty on
+// the *StationSnapshot pointer handles this). UI consumers rely on this
+// to decide whether to show any station-GPS UI at all.
+func TestHandleState_StationOmittedRaw(t *testing.T) {
+	srv := NewServer("", makeProviders())
+	rr := httptest.NewRecorder()
+	srv.handleState(rr, httptest.NewRequest("GET", "/api/v1/state", nil))
+	if !json.Valid(rr.Body.Bytes()) {
+		t.Fatal("response not valid JSON")
+	}
+	if bytes.Contains(rr.Body.Bytes(), []byte(`"station"`)) {
+		t.Errorf("station key should be absent when provider is nil; body=%s", rr.Body.String())
+	}
+}
+
+// TestHandleState_StationPresent_NoFix confirms that with a station
+// provider returning a no-fix snapshot, the block is emitted with
+// Available=false and no lat/lon.
+func TestHandleState_StationPresent_NoFix(t *testing.T) {
+	p := makeProviders()
+	p.Station = func() *StationSnapshot {
+		return &StationSnapshot{
+			Available: false,
+			Fix:       "none",
+			Sats:      0,
+		}
+	}
+	srv := NewServer("", p)
+	rr := httptest.NewRecorder()
+	srv.handleState(rr, httptest.NewRequest("GET", "/api/v1/state", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var s State
+	if err := json.Unmarshal(rr.Body.Bytes(), &s); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if s.Station == nil {
+		t.Fatal("station block missing")
+	}
+	if s.Station.Available {
+		t.Error("Available should be false when no fix")
+	}
+	if s.Station.Fix != "none" {
+		t.Errorf("Fix=%q want 'none'", s.Station.Fix)
+	}
+	if s.Station.LatDeg != 0 || s.Station.LonDeg != 0 {
+		t.Errorf("position should be zero with no fix; got %v,%v", s.Station.LatDeg, s.Station.LonDeg)
+	}
+}
+
+// TestHandleState_StationPresent_With3DFix confirms a 3D fix populates
+// position fields and Available=true.
+func TestHandleState_StationPresent_With3DFix(t *testing.T) {
+	p := makeProviders()
+	p.Station = func() *StationSnapshot {
+		return &StationSnapshot{
+			Available:  true,
+			Fix:        "3D",
+			Sats:       11,
+			HDOP:       0.8,
+			LatDeg:     -22.95,
+			LonDeg:     -47.05,
+			AltMeters:  650.0,
+			SpeedKmh:   0.5,
+			HeadingDeg: 187.3,
+		}
+	}
+	srv := NewServer("", p)
+	rr := httptest.NewRecorder()
+	srv.handleState(rr, httptest.NewRequest("GET", "/api/v1/state", nil))
+	var s State
+	if err := json.Unmarshal(rr.Body.Bytes(), &s); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if s.Station == nil || !s.Station.Available || s.Station.Fix != "3D" {
+		t.Fatalf("station unexpected: %+v", s.Station)
+	}
+	if s.Station.Sats != 11 || s.Station.HDOP != 0.8 {
+		t.Errorf("sats/HDOP wrong: %+v", s.Station)
+	}
+	if s.Station.LatDeg != -22.95 || s.Station.LonDeg != -47.05 {
+		t.Errorf("lat/lon wrong: %+v", s.Station)
 	}
 }
 

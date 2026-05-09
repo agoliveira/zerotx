@@ -377,6 +377,47 @@ func TestSetHome_IdempotentUnlessForced(t *testing.T) {
 	}
 }
 
+// TestHomePosition_NoHomeReturnsNotOk confirms the typed accessor
+// returns ok=false when no home has been set.
+func TestHomePosition_NoHomeReturnsNotOk(t *testing.T) {
+	s := New(nil)
+	if _, _, ok := s.HomePosition(); ok {
+		t.Error("HomePosition should return ok=false when no home set")
+	}
+}
+
+// TestHomePosition_AfterSetHome confirms the typed accessor returns
+// the same coordinates that SetHome recorded.
+func TestHomePosition_AfterSetHome(t *testing.T) {
+	s := New(nil)
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	if !s.SetHome(false) {
+		t.Fatal("SetHome should succeed")
+	}
+	lat, lon, ok := s.HomePosition()
+	if !ok {
+		t.Fatal("HomePosition should return ok=true after SetHome")
+	}
+	if lat < 51.4320 || lat > 51.4322 {
+		t.Errorf("lat: got %v, want ~51.4321", lat)
+	}
+	if lon < -12.3457 || lon > -12.3456 {
+		t.Errorf("lon: got %v, want ~-12.34567", lon)
+	}
+}
+
+// TestHomePosition_AfterClearHome confirms ClearHome makes the typed
+// accessor return ok=false again.
+func TestHomePosition_AfterClearHome(t *testing.T) {
+	s := New(nil)
+	s.Feed(wrap(0xEA, frameGPS, gpsBody(514321000, -12345670, 0, 0, 1100, 9)))
+	s.SetHome(false)
+	s.ClearHome()
+	if _, _, ok := s.HomePosition(); ok {
+		t.Error("HomePosition should return ok=false after ClearHome")
+	}
+}
+
 func TestSnapshot_DistanceComputed(t *testing.T) {
 	s := New(nil)
 	// Set home.

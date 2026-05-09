@@ -540,6 +540,27 @@ func main() {
 		cancel()
 	}()
 
+	// GPS: optional Pi-attached serial GPS. Failure to open is
+	// non-fatal; the daemon proceeds without it. Constructed early
+	// so the weather coordinate resolver and the API state provider
+	// can capture the reader without taking on nil-handling boilerplate
+	// at every call site (Get returns a zero State on a nil reader is
+	// a no-go because reader is *gps.Reader, not an interface).
+	var gpsRdr *gps.Reader
+	if *gpsPort != "" {
+		r, err := gps.Open(*gpsPort, *gpsBaud)
+		if err != nil {
+			log.Printf("GPS: %v (continuing without)", err)
+		} else if err := r.Start(ctx); err != nil {
+			log.Printf("GPS start: %v (continuing without)", err)
+			_ = r.Close()
+		} else {
+			gpsRdr = r
+			log.Printf("GPS: %s @%d", *gpsPort, *gpsBaud)
+			defer gpsRdr.Close()
+		}
+	}
+
 	// Display device (HUB75 LED panel), optional. When -display-port
 	// is set, run a Manager that opens the serial port, talks the
 	// DISP protocol, and reconnects on failure. When unset, dispMgr
@@ -735,10 +756,10 @@ func main() {
 		go vfdEvt.Run(ctx)
 	}
 
-	// Construct the weather service if enabled. Resolver tier today
-	// is "configured site only" via -site-lat / -site-lon. GPS and
-	// home-position fallbacks slot in later when the pre-flight gate
-	// work needs them.
+	// Construct the weather service if enabled. The resolver chain
+	// is: station GPS (when available with at least a 2D fix) ->
+	// telemetry home (set on arm) -> -site-lat/-site-lon flag.
+	// Returns ok=false when none of the tiers has coordinates yet.
 	var weatherSvc *weather.Service
 	if !*noWeather {
 		cache, err := weather.NewCache(*weatherCacheDir)
@@ -748,6 +769,15 @@ func main() {
 			lat := *siteLat
 			lon := *siteLon
 			resolver := func() (float64, float64, string, bool) {
+				if gpsRdr != nil {
+					st := gpsRdr.Get()
+					if st.Fix >= gps.Fix2D {
+						return st.LatDeg, st.LonDeg, "gps", true
+					}
+				}
+				if hLat, hLon, ok := telemetryState.HomePosition(); ok {
+					return hLat, hLon, "home", true
+				}
 				if lat != 0 || lon != 0 {
 					return lat, lon, "site", true
 				}
@@ -770,12 +800,15 @@ func main() {
 						log.Printf("weather: %v", err)
 					}
 				}()
-				if lat != 0 || lon != 0 {
-					log.Printf("weather: started, configured site lat=%.4f lon=%.4f cache=%s",
-						lat, lon, *weatherCacheDir)
-				} else {
-					log.Printf("weather: started but no site coordinates configured (-site-lat/-site-lon); fetches will be skipped until coordinates are available")
+				tiers := []string{}
+				if gpsRdr != nil {
+					tiers = append(tiers, "station-gps")
 				}
+				tiers = append(tiers, "telemetry-home")
+				if lat != 0 || lon != 0 {
+					tiers = append(tiers, fmt.Sprintf("site=%.4f,%.4f", lat, lon))
+				}
+				log.Printf("weather: started, resolver chain=%v cache=%s", tiers, *weatherCacheDir)
 			}
 		}
 	}
@@ -836,7 +869,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -997,25 +1030,6 @@ func main() {
 	} else {
 		log.Printf("RTC: not detected (relying on system clock)")
 	}
-
-	// GPS: optional Pi-attached serial GPS. Failure to open is
-	// non-fatal; the daemon proceeds and Get() on the (nil) reader
-	// is gated below at every consumer site by a nil check.
-	var gpsRdr *gps.Reader
-	if *gpsPort != "" {
-		r, err := gps.Open(*gpsPort, *gpsBaud)
-		if err != nil {
-			log.Printf("GPS: %v (continuing without)", err)
-		} else if err := r.Start(ctx); err != nil {
-			log.Printf("GPS start: %v (continuing without)", err)
-			_ = r.Close()
-		} else {
-			gpsRdr = r
-			log.Printf("GPS: %s @%d", *gpsPort, *gpsBaud)
-			defer gpsRdr.Close()
-		}
-	}
-	_ = gpsRdr // consumers wired in a follow-up patch
 
 	// 50Hz mapper -> CHANNEL_INTENT.
 	period := time.Second / time.Duration(*rate)
@@ -1226,6 +1240,7 @@ func buildAPIProviders(
 	wxAlerts *wxAlertHolder,
 	netClassHolder *netclass.Holder,
 	tileWarmStatsHolder *tileWarmStats,
+	gpsRdr *gps.Reader,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1442,6 +1457,33 @@ func buildAPIProviders(
 				TotalRuns:      totalRuns,
 				TotalErrors:    totalErrors,
 			}
+		},
+		Station: func() *api.StationSnapshot {
+			if gpsRdr == nil {
+				return nil
+			}
+			st := gpsRdr.Get()
+			snap := &api.StationSnapshot{
+				Available: st.Fix >= gps.Fix2D,
+				Fix:       st.Fix.String(),
+				Sats:      st.Sats,
+				HDOP:      st.HDOP,
+			}
+			if st.Fix >= gps.Fix2D {
+				snap.LatDeg = st.LatDeg
+				snap.LonDeg = st.LonDeg
+				snap.AltMeters = st.AltMeters
+				snap.SpeedKmh = st.SpeedKmh
+				snap.HeadingDeg = st.HeadingDeg
+			}
+			if !st.Time.IsZero() {
+				snap.UTCTime = st.Time.UTC().Format(time.RFC3339Nano)
+			}
+			if !st.Updated.IsZero() {
+				snap.Updated = st.Updated.Format(time.RFC3339Nano)
+				snap.AgeMs = time.Since(st.Updated).Milliseconds()
+			}
+			return snap
 		},
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{

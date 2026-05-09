@@ -36,6 +36,7 @@ type State struct {
 	Telemetry interface{}       `json:"telemetry,omitempty"`
 	Audio     *AudioInfo        `json:"audio,omitempty"`
 	Arm       interface{}       `json:"arm,omitempty"`
+	Station   *StationSnapshot  `json:"station,omitempty"`
 }
 
 // AudioInfo summarises the audio subsystem's current state for API
@@ -68,6 +69,35 @@ type LinkSnapshot struct {
 	State         string `json:"state"` // "active", "stale", "down"
 	Port          string `json:"port,omitempty"`
 	LastHeartbeat string `json:"lastHeartbeat,omitempty"` // RFC3339 or empty
+}
+
+// StationSnapshot exposes the operator/ground-station GPS state. Only
+// emitted when an operator-side GPS reader is configured (the daemon's
+// -gps-port flag was set and the device opened); when no operator GPS
+// is configured this block is omitted entirely from /state.
+//
+// "Available" tracks whether the position fields can be trusted: true
+// only when Fix is at least 2D. UI consumers that just want to know
+// "show the operator marker?" can check Available alone. Consumers
+// that want to render a "GPS searching" indicator can check the block's
+// presence (any value) and inspect Sats / Fix even when Available is
+// false.
+//
+// This is distinct from telemetry.GPS, which is the *aircraft's* GPS
+// from the CRSF link. Don't conflate the two.
+type StationSnapshot struct {
+	Available  bool    `json:"available"`
+	Fix        string  `json:"fix"`                  // "none" | "2D" | "3D"
+	Sats       int     `json:"sats"`
+	HDOP       float64 `json:"hdop,omitempty"`
+	LatDeg     float64 `json:"latDeg,omitempty"`
+	LonDeg     float64 `json:"lonDeg,omitempty"`
+	AltMeters  float64 `json:"altMeters,omitempty"`
+	SpeedKmh   float64 `json:"speedKmh,omitempty"`
+	HeadingDeg float64 `json:"headingDeg,omitempty"`
+	UTCTime    string  `json:"utcTime,omitempty"` // RFC3339Nano UTC, from GPS
+	Updated    string  `json:"updated,omitempty"` // RFC3339Nano, when daemon last saw a state-changing sentence
+	AgeMs      int64   `json:"ageMs"`             // ms since Updated; 0 if no Updated
 }
 
 // ModelSummary is returned by /model. Lightweight — just enough to label
@@ -404,6 +434,13 @@ type Providers struct {
 	// when LastRunAt is zero).
 	TileWarmStats func() *TileWarmStatsSnapshot
 
+	// Station returns the operator/ground-station GPS snapshot. nil
+	// means no operator GPS is configured; the api package omits the
+	// station block entirely from /state in that case. When non-nil,
+	// the function is called per /state request and may return a
+	// StationSnapshot with Available=false (configured but no fix yet).
+	Station func() *StationSnapshot
+
 	Version string
 	Uptime  func() time.Duration
 }
@@ -463,6 +500,9 @@ func (p *Providers) snapshot() State {
 	}
 	if p.Arm != nil {
 		out.Arm = p.Arm()
+	}
+	if p.Station != nil {
+		out.Station = p.Station()
 	}
 	return out
 }

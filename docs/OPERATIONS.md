@@ -52,7 +52,7 @@ Flags:
 | `-web-dir` | static web assets root |
 | `-port` | RP2040 USB-CDC device path |
 | `-iohub-port` | Mega IO board USB-CDC device (VFD, trackball LEDs, buttons, etc.) |
-| `-site-lat`, `-site-lon` | home coordinates for Map and bearing calculations |
+| `-site-lat`, `-site-lon` | static fallback coordinates for the weather resolver chain (`station GPS → telemetry home → site flag`). Used only when no station GPS lock and no in-flight home position are available |
 | `-tilewarm-rate` | tile prefetch rate (tiles/sec) |
 | `-heartbeat-gpio` | Pi GPIO line driving the daemon heartbeat LED (BCM numbering). -1 disables (default) |
 | `-heartbeat-chip` | GPIO chip device for the heartbeat LED. Default `gpiochip0` |

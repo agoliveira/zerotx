@@ -618,6 +618,19 @@ func (s *State) ClearHome() {
 	s.homeSet = false
 }
 
+// HomePosition returns the recorded home lat/lon. ok is false when
+// no home has been set in this session. This is the typed accessor
+// for callers that just want the position without building a full
+// JSON snapshot (the resolver chain in main.go, for example).
+func (s *State) HomePosition() (lat, lon float64, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.homeSet {
+		return 0, 0, false
+	}
+	return s.homeLat, s.homeLon, true
+}
+
 // HasHome reports whether a home position is currently set.
 func (s *State) HasHome() bool {
 	s.mu.RLock()
