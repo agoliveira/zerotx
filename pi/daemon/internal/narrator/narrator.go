@@ -86,6 +86,17 @@ func (n *Narrator) SpeakBootGreeting(modelName string) {
 	n.player.Speak(phrasebook.BootGreeting(n.lang, modelName), audio.LevelInfo)
 }
 
+// SpeakStationGPSAcquired announces the first acquisition of station
+// GPS lock since daemon startup. The caller (a watcher goroutine in
+// cmd/zerotxd) is responsible for the once-only semantics; the
+// narrator just speaks when called.
+func (n *Narrator) SpeakStationGPSAcquired() {
+	if n == nil || n.player == nil {
+		return
+	}
+	n.player.Speak(phrasebook.StationGPSAcquired(n.lang), audio.LevelInfo)
+}
+
 // SpeakPostFlight emits the post-flight summary as a single TTS
 // utterance derived from the in-flight event log. Tier 1 narration:
 // duration + peaks + noteworthy events (failsafe, RTH, battery

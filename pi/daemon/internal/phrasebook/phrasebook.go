@@ -111,6 +111,18 @@ func JoystickReconnected(lang string) string {
 	return "Joystick reconnected."
 }
 
+// StationGPSAcquired announces the first station-GPS lock since
+// daemon startup. Spoken at most once per daemon lifetime; loss
+// and re-acquisition events are deliberately not narrated to avoid
+// TTS chatter from a flapping fix during pre-flight or in-flight.
+func StationGPSAcquired(lang string) string {
+	switch resolveLang(lang) {
+	case "pt":
+		return "GPS da estação fixado."
+	}
+	return "Station GPS lock acquired."
+}
+
 // === Flight modes ===
 
 // FlightMode: prefix + humanized mode. Used for mode-change

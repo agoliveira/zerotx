@@ -48,6 +48,19 @@ func TestJoystickEvents(t *testing.T) {
 	}
 }
 
+func TestStationGPSAcquired(t *testing.T) {
+	if got := StationGPSAcquired("en"); got != "Station GPS lock acquired." {
+		t.Errorf("en: got %q", got)
+	}
+	if got := StationGPSAcquired("pt"); got != "GPS da estação fixado." {
+		t.Errorf("pt: got %q", got)
+	}
+	// Unknown lang falls back to en.
+	if got := StationGPSAcquired("xx"); got != "Station GPS lock acquired." {
+		t.Errorf("fallback: got %q", got)
+	}
+}
+
 func TestFlightMode(t *testing.T) {
 	if got := FlightMode("en", "ANGL"); got != "Flight mode: angle." {
 		t.Errorf("en/ANGL: got %q", got)

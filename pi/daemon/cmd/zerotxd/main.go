@@ -919,6 +919,10 @@ func main() {
 		narr.SpeakBootGreeting(bootModel)
 	}
 
+	// Once-only "Station GPS lock acquired" announcement. No-op when
+	// gpsRdr is nil. Exits after the first 2D+ fix.
+	go runStationGPSWatcher(ctx, gpsRdr, narr, 1*time.Second)
+
 	// Goroutines.
 	go func() {
 		var err error
