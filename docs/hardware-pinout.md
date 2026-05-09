@@ -206,19 +206,74 @@ back edge. ZeroTX uses a passive breakout board for access. The header
 follows the Pi 4 pinout and uses BCM GPIO numbering in software (which
 does not match the physical pin numbers on the header).
 
+### Pin allocation
+
 | Header pin | Function | Notes |
 |------------|----------|-------|
-| 1 | 3V3 power | Reference for I2C pull-ups; also feeds the DS3231 RTC module |
+| 1 | 3V3 power | Feeds the DS3231 RTC module. Can also power a 3V3-input GPS module (most u-blox M-series accept both 3V3 and 5V) |
 | 3 | GPIO 2 (I2C1 SDA) | Shared I2C bus: DS3231 RTC at addr 0x68. Reserved for future I2C peripherals on the same bus |
+| 4 | 5V power | Available if a GPS module needs 5V instead of 3V3. Otherwise unused |
 | 5 | GPIO 3 (I2C1 SCL) | Shared I2C bus, paired with SDA above |
-| 6 | GND | RTC and GPS ground; common with rest of breakout |
+| 6 | GND | RTC and GPS ground return; common with rest of breakout |
 | 7 | GPIO 4 (UART3 TXD) | Pi -> GPS module RX. Enabled by `dtoverlay=uart3` |
 | 9 | GND | Heartbeat LED ground return |
 | 11 | GPIO 17 | Daemon heartbeat LED (active-high). Drive a 1k series resistor + LED to GND |
 | 29 | GPIO 5 (UART3 RXD) | GPS module TX -> Pi |
 | 14, 20, 25, 30, 34, 39 | GND | Additional ground points; use whichever is closest |
 
-Software notes:
+### Module wiring summary
+
+Per-module view of the same allocation, organized for wiring rather
+than for reference. The 40-pin header is two rows of 20; pin 1 is at
+the corner closest to the SD card slot (BCM 3V3), and odd-numbered
+pins are on the row closer to the board edge.
+
+```
+                      Pi 400 GPIO header (back edge)
+                  closer to board edge ─────────────────►
+
+Row of odd pins:    1  3  5  7  9  11 13 15 17 19 21 23 25 27 29 31 33 35 37 39
+                    ●  ●  ●  ●  ●   ●  ·  ·  ·  ·  ·  ·  ·  ·  ●  ·  ·  ·  ·  ·
+                                          (used pins marked ●)
+Row of even pins:   2  4  6  8  10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40
+                    ·  ·  ●  ·  ·   ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
+
+  ●  pin 1   3V3        -> DS3231 VCC, optional GPS VCC (3V3-input modules)
+  ●  pin 3   GPIO 2     -> DS3231 SDA (I2C1)
+  ●  pin 5   GPIO 3     -> DS3231 SCL (I2C1)
+  ●  pin 6   GND        -> DS3231 GND, GPS GND (shared)
+  ●  pin 7   GPIO 4     -> GPS RX (UART3 TX from the Pi)
+  ●  pin 9   GND        -> Heartbeat LED cathode (any GND would work)
+  ●  pin 11  GPIO 17    -> Heartbeat LED anode through 1k resistor
+  ●  pin 29  GPIO 5     -> GPS TX (UART3 RX into the Pi)
+```
+
+**DS3231 RTC module** (4 wires)
+
+| RTC module pin | Header pin |
+|----------------|------------|
+| VCC | 1 (3V3) |
+| GND | 6 |
+| SDA | 3 (GPIO 2) |
+| SCL | 5 (GPIO 3) |
+
+**GPS module** (4 wires)
+
+| GPS module pin | Header pin |
+|----------------|------------|
+| VCC | 1 (3V3) or 4 (5V), per module spec |
+| GND | 6 |
+| TX | 29 (GPIO 5, UART3 RXD) |
+| RX | 7 (GPIO 4, UART3 TXD) |
+
+**Heartbeat LED** (2 wires)
+
+| LED | Header pin |
+|-----|------------|
+| Anode (long lead, +) | 11 (GPIO 17) via 1k resistor |
+| Cathode (short lead, -) | 9 (any GND will do) |
+
+### Software notes
 
 - Heartbeat LED is driven by `internal/heartbeat/` via the
   `github.com/warthog618/go-gpiocdev` library (Linux GPIO character
@@ -228,10 +283,10 @@ Software notes:
   low, daemon dead means the LED is dark.
 - DS3231 RTC is an external module (typically a small board with the
   chip plus a CR2032 battery; e.g. the common Mercado Livre listing).
-  Wired to header pins 1/3/5/6. Handled by the kernel via
-  `dtoverlay=i2c-rtc,ds3231` in `/boot/firmware/config.txt`. The
-  daemon does not read or write the RTC; it just logs whether the
-  kernel detected one at startup. Setup procedure: `docs/BOOTSTRAP.md`.
+  Handled by the kernel via `dtoverlay=i2c-rtc,ds3231` in
+  `/boot/firmware/config.txt`. The daemon does not read or write the
+  RTC; it just logs whether the kernel detected one at startup. Setup
+  procedure: `docs/BOOTSTRAP.md`.
 - GPS is an optional Pi-attached serial module (u-blox M6/M7/M10 or
   equivalent NMEA TTL device) on UART3. The daemon flag `-gps-port`
   (e.g. `/dev/ttyAMA1`) enables reading; `-gps-baud` sets the rate
@@ -239,12 +294,13 @@ Software notes:
   logs and continues. UART3 needs `dtoverlay=uart3` in
   `/boot/firmware/config.txt`. Setup procedure: `docs/BOOTSTRAP.md`.
 
-**Free pins** on the breakout that ZeroTX does not currently use:
-GPIO 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23,
-24, 25, 26, 27. SPI0 is on GPIO 8/9/10/11; UART0 is on GPIO 14/15;
-PCM/I2S is on GPIO 18/19/20/21. Reserve those banks when planning
-future expansions (I2S DAC, additional UARTs, etc.) rather than
-picking pins by free-from-function logic alone.
+### Free pins
+
+ZeroTX does not currently use GPIO 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27. SPI0 is on GPIO 8/9/10/11;
+UART0 is on GPIO 14/15; PCM/I2S is on GPIO 18/19/20/21. Reserve those
+banks when planning future expansions (I2S DAC, additional UARTs, etc.)
+rather than picking pins by free-from-function logic alone.
 
 ## Pi 400 USB topology
 
