@@ -401,8 +401,9 @@ func TestHomePosition_AfterSetHome(t *testing.T) {
 	if lat < 51.4320 || lat > 51.4322 {
 		t.Errorf("lat: got %v, want ~51.4321", lat)
 	}
-	if lon < -12.3457 || lon > -12.3456 {
-		t.Errorf("lon: got %v, want ~-12.34567", lon)
+	// CRSF GPS frame uses 1e-7 deg scaling: -12345670 -> -1.234567.
+	if lon < -1.2346 || lon > -1.2345 {
+		t.Errorf("lon: got %v, want ~-1.234567", lon)
 	}
 }
 
