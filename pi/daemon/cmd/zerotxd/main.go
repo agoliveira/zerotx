@@ -626,6 +626,27 @@ func main() {
 			if telemetryState.SetHome(false) {
 				log.Printf("home position set on arm")
 			}
+			// Record operator station position at this moment, if
+			// station GPS is configured and locked. One-shot event
+			// per flight: 'where the operator was standing when
+			// they armed this aircraft'. The post-flight summary
+			// can pair it with the home position to reason about
+			// where takeoff happened. Most other domain events live
+			// in flight_events.go; this one is here because it
+			// reads gpsRdr (constructed in main alongside other I/O)
+			// and only fires once at arm.
+			if gpsRdr != nil {
+				if s := gpsRdr.Get(); s.Fix >= gps.Fix2D {
+					rec.LogEvent("flight", "station-position", "info", map[string]interface{}{
+						"lat":  s.LatDeg,
+						"lon":  s.LonDeg,
+						"alt":  s.AltMeters,
+						"fix":  s.Fix.String(),
+						"sats": s.Sats,
+						"hdop": s.HDOP,
+					})
+				}
+			}
 			if dispMgr != nil {
 				dispMgr.SetMode(display.ModeFlight)
 			}
