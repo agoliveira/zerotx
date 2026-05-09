@@ -1317,6 +1317,13 @@
         <span class="station-value" id="station-sats">--</span>
         <span>sats</span>
       </div>
+      <div id="station-rel" class="station-info" style="display:none;">
+        <span class="station-label">DIST</span>
+        <span class="station-value" id="station-dist">-- m</span>
+        <span>·</span>
+        <span class="station-label">BRG</span>
+        <span class="station-value" id="station-bearing">--°</span>
+      </div>
     </div>
   </div>
 
@@ -1954,6 +1961,7 @@ function handleStateMessage(state) {
   // daemon when -gps-port was configured; absence means no operator
   // GPS and the indicator stays hidden.
   const stationEl = document.getElementById('station-info');
+  const stationRelEl = document.getElementById('station-rel');
   if (station) {
     stationEl.style.display = '';
     const fix = station.fix || 'none';
@@ -1962,8 +1970,26 @@ function handleStateMessage(state) {
     fixEl.textContent = fix;
     fixEl.className = 'station-value ' + (fix === '3D' ? 'good' : (fix === '2D' ? 'warn' : ''));
     document.getElementById('station-sats').textContent = sats;
+
+    // Station-relative distance/bearing: shown only when both
+    // station has a fix AND aircraft has a fix. This is the
+    // "where is the aircraft from where I'm standing" view, distinct
+    // from the home-relative view above (home = where the aircraft
+    // armed). The two diverge if the operator moves after arming.
+    if (station.available && aircraftPos
+        && Number.isFinite(station.latDeg) && Number.isFinite(station.lonDeg)) {
+      const stationLonLat = [station.lonDeg, station.latDeg];
+      const d = haversineM(aircraftPos, stationLonLat);
+      const b = bearingDeg(aircraftPos, stationLonLat);
+      document.getElementById('station-dist').textContent = fmtDist(d);
+      document.getElementById('station-bearing').textContent = `${Math.round(b)}°`;
+      stationRelEl.style.display = '';
+    } else {
+      stationRelEl.style.display = 'none';
+    }
   } else {
     stationEl.style.display = 'none';
+    stationRelEl.style.display = 'none';
   }
 
   // Heading band: always update if we have aircraft heading.

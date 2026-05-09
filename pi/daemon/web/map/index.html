@@ -414,7 +414,7 @@
   // New since stage 3:
   //  - Compass panel (top-left) showing aircraft heading + bearing to home + distance
   //  - Map controls (top-right under tileset): Follow, Rotate-to-heading, Range rings toggles
-  //  - Zoom-adaptive range rings centered on home
+  //  - Zoom-adaptive range rings centered on home (or operator station when no home set)
   //  - Scale bar (bottom-left), updated on zoom/move
   //  - Cursor lat/lon readout (bottom-center)
 
@@ -842,17 +842,26 @@
     return features;
   }
 
+  // Range-ring center: home wins when set, station fills in pre-arm
+  // when no home has been recorded yet. Returns null when neither is
+  // available. Once home is set during a flight, rings snap to home
+  // and stay there even if the operator (station) moves around.
+  function rangeRingsCenter() {
+    return homePos || stationPos || null;
+  }
+
   function updateRangeRings() {
     if (!map.getSource('range-rings')) return;
-    if (!rangeRingsEnabled || !homePos) {
+    const center = rangeRingsCenter();
+    if (!rangeRingsEnabled || !center) {
       map.getSource('range-rings').setData({ type: 'FeatureCollection', features: [] });
       return;
     }
     const z = map.getZoom();
-    const radii = chooseRingRadii(z, homePos[1]);
+    const radii = chooseRingRadii(z, center[1]);
     map.getSource('range-rings').setData({
       type: 'FeatureCollection',
-      features: buildRingFeatures(homePos, radii)
+      features: buildRingFeatures(center, radii)
     });
   }
 
@@ -1164,6 +1173,9 @@
     // Station GPS: operator/ground-station marker. Only rendered
     // when state.station.available is true (fix >= 2D). Block is
     // omitted by the daemon when no operator GPS is configured.
+    // The range-rings center prefers home but falls back to station
+    // pre-arm; updateRangeRings is called after every station change
+    // and is a no-op when home is set (rangeRingsCenter returns home).
     const station = state?.station;
     if (station && station.available
         && Number.isFinite(station.latDeg) && Number.isFinite(station.lonDeg)) {
@@ -1171,10 +1183,12 @@
       if (!stationPos || stationPos[0] !== newStation[0] || stationPos[1] !== newStation[1]) {
         stationPos = newStation;
         updateStation();
+        updateRangeRings();
       }
     } else if (stationPos !== null) {
       stationPos = null;
       updateStation();
+      updateRangeRings();
     }
 
     setStatusPill(arm, mode);
