@@ -103,3 +103,56 @@ func (m *EdgeTXModel) InputName(i int) string {
 	}
 	return ""
 }
+
+// ThrottleChannel returns the 0-indexed destCh that this model's
+// throttle stick feeds into, or -1 if no throttle source is mixed to
+// any channel. Used by the GCS arming state machine to gate confirm
+// on "throttle low" without hardcoding a channel order.
+//
+// Models can express throttle in two ways: a direct source name in
+// the mix (SrcRaw == "Thr") or a reference to a named input via
+// SrcRaw == "I<n>" where input n is named "Thr" in the inputNames
+// table. Both are accepted. Among multiple matches the highest
+// absolute weight wins; ties break on the lowest DestCh for
+// determinism.
+//
+// For TAER models (typical EdgeTX layout) the result is 0 (wire CH1).
+// For AETR models it's 2 (wire CH3). For aircraft without a
+// throttle source (gliders without a brake mix, etc.), it's -1.
+func (m *EdgeTXModel) ThrottleChannel() int {
+	// Resolve the input index whose val is "Thr". Map iteration order
+	// is non-deterministic but we break on first hit; if a model has
+	// two inputs named "Thr" (malformed) we just pick one and move on.
+	thrInputIdx := -1
+	for idx, in := range m.InputNames {
+		if in.Val == "Thr" {
+			thrInputIdx = idx
+			break
+		}
+	}
+
+	bestCh := -1
+	bestAbsWeight := -1
+	indexedSrc := ""
+	if thrInputIdx >= 0 {
+		indexedSrc = fmt.Sprintf("I%d", thrInputIdx)
+	}
+	for _, mix := range m.MixData {
+		match := mix.SrcRaw == "Thr" || (indexedSrc != "" && mix.SrcRaw == indexedSrc)
+		if !match {
+			continue
+		}
+		w := mix.Weight
+		if w < 0 {
+			w = -w
+		}
+		// Strict-greater wins; tie goes to the lower DestCh.
+		if w > bestAbsWeight {
+			bestCh = mix.DestCh
+			bestAbsWeight = w
+		} else if w == bestAbsWeight && mix.DestCh < bestCh {
+			bestCh = mix.DestCh
+		}
+	}
+	return bestCh
+}

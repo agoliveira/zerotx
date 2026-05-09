@@ -33,6 +33,13 @@ type Stack struct {
 	CFP      *cf.Processor
 	Mapper   *mapper.Mapper
 
+	// ThrottleChannelIdx is the 0-indexed wire channel that this
+	// model's throttle stick feeds (derived from the model's mix
+	// table at load time). -1 when the model has no throttle source
+	// mixed to any channel; the arming machine treats that as "not
+	// low" so confirm is refused rather than green-lit.
+	ThrottleChannelIdx int
+
 	stopAudio chan struct{}
 	audioDone chan struct{}
 }
@@ -61,11 +68,12 @@ func BuildStack(m *model.ZeroTXModel, jsState source.JoystickState, pnl panel.Pa
 	mp.SetCFProcessor(cfp)
 
 	s := &Stack{
-		Model:    m,
-		Resolver: resolver,
-		Engine:   engine,
-		CFP:      cfp,
-		Mapper:   mp,
+		Model:              m,
+		Resolver:           resolver,
+		Engine:             engine,
+		CFP:                cfp,
+		Mapper:             mp,
+		ThrottleChannelIdx: m.EdgeTX.ThrottleChannel(),
 	}
 	if player != nil {
 		s.stopAudio = make(chan struct{})

@@ -173,4 +173,134 @@ func TestRoundTripMarshalsBack(t *testing.T) {
 	}
 }
 
+// TestThrottleChannel_TAERFromBigTalon verifies the helper returns
+// CH1 (index 0) for the real Big Talon fixture, which is TAER:
+// inputNames 0:Thr maps via mix srcRaw "I0" to destCh 0.
+func TestThrottleChannel_TAERFromBigTalon(t *testing.T) {
+	abs, _ := filepath.Abs(fixture)
+	m, err := LoadEdgeTX(abs)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := m.ThrottleChannel(); got != 0 {
+		t.Errorf("Big Talon (TAER) ThrottleChannel: got %d, want 0", got)
+	}
+}
+
+// TestThrottleChannel_AETRSynthetic builds an AETR-style model
+// in-memory and confirms the helper returns CH3 (index 2).
+func TestThrottleChannel_AETRSynthetic(t *testing.T) {
+	m := &EdgeTXModel{
+		InputNames: map[int]InputName{
+			0: {Val: "Ail"},
+			1: {Val: "Ele"},
+			2: {Val: "Thr"},
+			3: {Val: "Rud"},
+		},
+		MixData: []Mix{
+			{DestCh: 0, SrcRaw: "I0", Weight: 100},
+			{DestCh: 1, SrcRaw: "I1", Weight: 100},
+			{DestCh: 2, SrcRaw: "I2", Weight: 100},
+			{DestCh: 3, SrcRaw: "I3", Weight: 100},
+		},
+	}
+	if got := m.ThrottleChannel(); got != 2 {
+		t.Errorf("AETR ThrottleChannel: got %d, want 2", got)
+	}
+}
+
+// TestThrottleChannel_DirectSrcName accepts srcRaw == "Thr" without
+// the input-index indirection. Some hand-edited models or alternative
+// editors write the source name directly into the mix.
+func TestThrottleChannel_DirectSrcName(t *testing.T) {
+	m := &EdgeTXModel{
+		// No inputNames table at all; mix references "Thr" directly.
+		MixData: []Mix{
+			{DestCh: 5, SrcRaw: "Thr", Weight: 100},
+			{DestCh: 0, SrcRaw: "Ail", Weight: 100},
+		},
+	}
+	if got := m.ThrottleChannel(); got != 5 {
+		t.Errorf("direct-srcRaw ThrottleChannel: got %d, want 5", got)
+	}
+}
+
+// TestThrottleChannel_NoThrottleSource returns -1 when no mix
+// references the throttle stick at all (e.g. a glider with no brake
+// mix on a powered channel).
+func TestThrottleChannel_NoThrottleSource(t *testing.T) {
+	m := &EdgeTXModel{
+		InputNames: map[int]InputName{
+			0: {Val: "Ail"},
+			1: {Val: "Ele"},
+			2: {Val: "Rud"},
+		},
+		MixData: []Mix{
+			{DestCh: 0, SrcRaw: "I0", Weight: 100},
+			{DestCh: 1, SrcRaw: "I1", Weight: 100},
+			{DestCh: 2, SrcRaw: "I2", Weight: 100},
+		},
+	}
+	if got := m.ThrottleChannel(); got != -1 {
+		t.Errorf("no-throttle ThrottleChannel: got %d, want -1", got)
+	}
+}
+
+// TestThrottleChannel_HighestWeightWins covers the case where the
+// throttle source is mixed onto multiple channels (e.g. a curve
+// modifier on a secondary channel). The primary mix has the highest
+// absolute weight; that is the one we return.
+func TestThrottleChannel_HighestWeightWins(t *testing.T) {
+	m := &EdgeTXModel{
+		InputNames: map[int]InputName{
+			0: {Val: "Thr"},
+		},
+		MixData: []Mix{
+			// Secondary mix on CH5 with weight 30.
+			{DestCh: 5, SrcRaw: "I0", Weight: 30},
+			// Primary mix on CH0 with weight 100.
+			{DestCh: 0, SrcRaw: "I0", Weight: 100},
+		},
+	}
+	if got := m.ThrottleChannel(); got != 0 {
+		t.Errorf("multi-mix ThrottleChannel: got %d, want 0", got)
+	}
+}
+
+// TestThrottleChannel_TieBreakLowestDestCh confirms that when two
+// throttle mixes have equal weight, the lower destCh wins. Keeps the
+// result deterministic regardless of MixData iteration order.
+func TestThrottleChannel_TieBreakLowestDestCh(t *testing.T) {
+	m := &EdgeTXModel{
+		InputNames: map[int]InputName{
+			0: {Val: "Thr"},
+		},
+		MixData: []Mix{
+			{DestCh: 7, SrcRaw: "I0", Weight: 100},
+			{DestCh: 3, SrcRaw: "I0", Weight: 100},
+		},
+	}
+	if got := m.ThrottleChannel(); got != 3 {
+		t.Errorf("tie-break ThrottleChannel: got %d, want 3", got)
+	}
+}
+
+// TestThrottleChannel_NegativeWeightUsedByAbs confirms that an
+// inverted throttle mix (weight < 0) is still considered: it's the
+// magnitude that ranks, not the sign. Inverted-throttle setups
+// (some helicopters, some experimental airframes) can land here.
+func TestThrottleChannel_NegativeWeightUsedByAbs(t *testing.T) {
+	m := &EdgeTXModel{
+		InputNames: map[int]InputName{
+			0: {Val: "Thr"},
+		},
+		MixData: []Mix{
+			{DestCh: 4, SrcRaw: "I0", Weight: -100},
+		},
+	}
+	if got := m.ThrottleChannel(); got != 4 {
+		t.Errorf("negative-weight ThrottleChannel: got %d, want 4", got)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }

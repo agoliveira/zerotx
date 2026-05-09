@@ -1120,11 +1120,24 @@ func main() {
 
 			ch := s.Mapper.Resolve()
 			chHolder.Set(ch)
-			// Feed throttle (CH3 by EdgeTX convention) into the arm
-			// state machine. CRSF range minimum is ~172; use a
-			// generous 200 cutoff so floating-point jitter near idle
-			// doesn't false-positive as "throttle non-zero".
-			armMachine.ThrottleChanged(ch[2] <= 200)
+			// Feed throttle into the arm state machine, reading the
+			// channel the model's mix table actually routes the Thr
+			// source to (TAER -> CH1 / index 0; AETR -> CH3 / index 2;
+			// other layouts -> whatever the model says). Pre-fix this
+			// hardcoded ch[2] which silently read elevator on any TAER
+			// model. -1 means the model has no throttle source mixed
+			// to any channel (rare; gliders without a powered brake
+			// mix); treat that as "not low" so confirm is refused
+			// rather than green-lit on a model that never had a
+			// throttle in the first place. CRSF range minimum is
+			// ~172; the 200 cutoff absorbs floating-point jitter near
+			// idle.
+			thrIdx := s.ThrottleChannelIdx
+			if thrIdx >= 0 && thrIdx < len(ch) {
+				armMachine.ThrottleChanged(ch[thrIdx] <= 200)
+			} else {
+				armMachine.ThrottleChanged(false)
+			}
 			// FC ready-to-arm: derive from CRSF flight-mode string
 			// using the dedicated decoder (see fc_ready.go).
 			tsnap := telemetryState.Snapshot()
