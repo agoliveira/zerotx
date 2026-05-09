@@ -37,6 +37,7 @@ type State struct {
 	Audio     *AudioInfo        `json:"audio,omitempty"`
 	Arm       interface{}       `json:"arm,omitempty"`
 	Station   *StationSnapshot  `json:"station,omitempty"`
+	Syscheck  interface{}       `json:"syscheck,omitempty"`
 }
 
 // AudioInfo summarises the audio subsystem's current state for API
@@ -441,6 +442,21 @@ type Providers struct {
 	// StationSnapshot with Available=false (configured but no fix yet).
 	Station func() *StationSnapshot
 
+	// Syscheck returns the operator-acknowledgement gate state. Always
+	// non-nil in production; the value is rendered as opaque JSON
+	// (syscheck.Snapshot) so the api package doesn't import the
+	// syscheck package. Used by the /status kiosk to decide whether
+	// to navigate to /hud and /map. Distinct from the daemon's
+	// readiness aggregation at /api/v1/preflight, which computes
+	// whether the system is ready (this just tracks whether the
+	// operator clicked through the page).
+	Syscheck func() interface{}
+
+	// SyscheckDismiss flips the gate to dismissed. Idempotent on the
+	// daemon side (subsequent calls are no-ops). Backs the
+	// /api/v1/syscheck/dismiss endpoint.
+	SyscheckDismiss func()
+
 	Version string
 	Uptime  func() time.Duration
 }
@@ -503,6 +519,9 @@ func (p *Providers) snapshot() State {
 	}
 	if p.Station != nil {
 		out.Station = p.Station()
+	}
+	if p.Syscheck != nil {
+		out.Syscheck = p.Syscheck()
 	}
 	return out
 }

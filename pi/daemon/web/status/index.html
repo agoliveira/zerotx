@@ -152,18 +152,32 @@ button.test:disabled { opacity: 0.4; cursor: not-allowed; }
 
 footer.proceed {
   margin-top: 24px; text-align: center;
+}
+footer.proceed button.primary {
+  background: var(--accent); color: #1a1d21;
+  border: 1px solid var(--accent);
+  font-family: var(--mono);
+  font-size: 14px; font-weight: 600; letter-spacing: 0.06em;
+  padding: 12px 28px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: filter 100ms ease;
+  min-height: 44px; /* touch target */
+}
+footer.proceed button.primary:hover { filter: brightness(1.1); }
+footer.proceed button.primary:active { transform: translateY(1px); }
+footer.proceed button.primary:disabled {
+  background: var(--bg-elevated); color: var(--text-muted);
+  border-color: var(--border-light);
+  cursor: not-allowed;
+}
+footer.proceed .hint {
+  margin-top: 8px;
   font-size: 12px; color: var(--text-muted);
 }
-footer.proceed a {
-  color: var(--accent);
-  text-decoration: none;
-  margin: 0 12px;
-  padding: 8px 16px;
-  border: 1px solid var(--accent);
-  border-radius: 3px;
-  display: inline-block;
+footer.proceed.dismissed button.primary {
+  background: var(--ok); border-color: var(--ok); color: #fff;
 }
-footer.proceed a:hover { background: var(--accent); color: #1a1d21; }
 
 .disconnect-banner {
   display: none;
@@ -275,9 +289,10 @@ footer.proceed a:hover { background: var(--accent); color: #1a1d21; }
 </div>
 
 <footer class="proceed">
-  Once everything checks out:
-  <a href="/hud/">Open HUD</a>
-  <a href="/map/">Open Map</a>
+  <button class="primary" id="btn-proceed">Proceed to flight</button>
+  <div id="proceed-hint" class="hint">
+    Verify checks above, then proceed. The kiosks will switch to HUD and Map.
+  </div>
 </footer>
 
 </div>
@@ -525,6 +540,98 @@ function updateUptime() {
 setInterval(updateUptime, 1000);
 
 // ============================================================
+// Syscheck dismiss + auto-navigation. Both kiosks observe the
+// shared daemon state and navigate when they see a transition.
+//
+// Rules:
+//   - The first state message after page load is the *baseline*.
+//     If syscheck.dismissed is already true at that moment, the
+//     operator has already proceeded (likely from the other kiosk
+//     or a laptop) and we do not auto-redirect — they can click
+//     the proceed button manually if they want to navigate.
+//   - On subsequent messages, if dismissed transitions false->true
+//     while the page is open AND the URL has ?dest=hud or ?dest=map,
+//     we navigate to the corresponding path. Without a ?dest, we
+//     just reflect the dismissed state in the UI (the button turns
+//     green and "Proceed to flight" reads as completed).
+//
+// The ?dest gating means a laptop ad-hoc view of /status/ never
+// hijacks the browser tab when a kiosk dismisses on the operator's
+// behalf. Kiosks are launched by .xinitrc with /status/?dest=hud
+// and /status/?dest=map; only those two URLs auto-redirect.
+// ============================================================
+
+let syscheckBaseline = null; // null until first message; bool after
+let hasNavigated = false;
+
+function destFromQuery() {
+  const p = new URLSearchParams(location.search).get('dest');
+  if (p === 'hud') return '/hud/';
+  if (p === 'map') return '/map/';
+  return null;
+}
+
+function applySyscheck(state) {
+  const sc = state?.syscheck;
+  const dismissed = !!(sc && sc.dismissed);
+
+  // Establish baseline on the first state message after page load.
+  if (syscheckBaseline === null) {
+    syscheckBaseline = dismissed;
+  }
+
+  const footer = document.querySelector('footer.proceed');
+  const btn = document.getElementById('btn-proceed');
+  const hint = document.getElementById('proceed-hint');
+
+  if (dismissed) {
+    footer?.classList.add('dismissed');
+    if (btn) btn.textContent = 'Proceeded';
+    if (hint) hint.textContent = 'System check dismissed.';
+  } else {
+    footer?.classList.remove('dismissed');
+    if (btn) btn.textContent = 'Proceed to flight';
+  }
+
+  // Auto-navigate only when:
+  //   - we have a ?dest=hud|map in the URL (i.e. we are a kiosk),
+  //   - syscheckBaseline was false (we observed the transition),
+  //   - dismissed is now true,
+  //   - we have not already navigated.
+  if (!hasNavigated && dismissed && syscheckBaseline === false) {
+    const dest = destFromQuery();
+    if (dest) {
+      hasNavigated = true;
+      // Small delay so the operator sees the button flip green
+      // before the page navigates away. Avoids a jarring instant
+      // jump and gives the kiosk time to broadcast the transition
+      // to the other kiosk before either tears down its WS.
+      setTimeout(() => { location.href = dest; }, 300);
+    }
+  }
+}
+
+async function dismissSyscheck() {
+  const btn = document.getElementById('btn-proceed');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/v1/syscheck/dismiss', { method: 'POST' });
+    if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`);
+    // Don't navigate or update UI here — wait for the WS roundtrip
+    // so both kiosks transition in lockstep. The next state message
+    // applySyscheck will see dismissed=true and act.
+  } catch (e) {
+    if (btn) {
+      btn.textContent = 'Failed: ' + e.message;
+      setTimeout(() => {
+        btn.textContent = 'Proceed to flight';
+        btn.disabled = false;
+      }, 2500);
+    }
+  }
+}
+
+// ============================================================
 // WebSocket subscription.
 // ============================================================
 
@@ -542,6 +649,7 @@ function handleState(state) {
   updateRow('battery',  evalBattery,     state);
 
   updateArmTest(state);
+  applySyscheck(state);
 }
 
 function connectWS() {
@@ -586,6 +694,12 @@ document.getElementById('btn-speak').addEventListener('click', async (ev) => {
     setTimeout(() => { btn.textContent = 'Test audio (TTS)'; btn.disabled = false; }, 3000);
   }
 });
+
+// ============================================================
+// Proceed button.
+// ============================================================
+
+document.getElementById('btn-proceed').addEventListener('click', dismissSyscheck);
 
 // ============================================================
 // Boot.

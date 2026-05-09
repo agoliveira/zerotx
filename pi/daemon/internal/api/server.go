@@ -77,6 +77,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/stream", s.handleStream)
 	mux.HandleFunc("/api/v1/logs", s.handleLogs)
 	mux.HandleFunc("/api/v1/preflight", s.handlePreflight)
+	mux.HandleFunc("/api/v1/syscheck/dismiss", s.handleSyscheckDismiss)
 	mux.HandleFunc("/api/v1/telemetry", s.handleTelemetry)
 	mux.HandleFunc("/api/v1/audio", s.handleAudio)
 	mux.HandleFunc("/api/v1/audio/threshold", s.handleAudioThreshold)
@@ -252,6 +253,24 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.providers.Preflight())
+}
+
+// handleSyscheckDismiss flips the operator-acknowledgement gate.
+// POST-only; no body required. Returns 204 on success. Idempotent
+// at the daemon level (a second dismiss after the first is a no-op
+// and does not change the dismissedAt timestamp).
+func (s *Server) handleSyscheckDismiss(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.SyscheckDismiss == nil {
+		http.Error(w, "syscheck not configured", http.StatusNotImplemented)
+		return
+	}
+	s.providers.SyscheckDismiss()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleTelemetry returns the current FC telemetry snapshot. Empty

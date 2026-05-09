@@ -208,17 +208,25 @@ common_flags="--kiosk --noerrdialogs --disable-infobars \
 # Chromium locks the profile and refuses to launch a second instance
 # against the same one. /tmp is tmpfs so the dirs vanish on reboot,
 # which is what we want for a stateless kiosk.
+#
+# Both kiosks land on /status first. The operator clicks "Proceed
+# to flight" once the system check is satisfied; the daemon flips
+# the syscheck gate, both pages observe the transition over the
+# WebSocket stream, and each navigates to the path encoded in its
+# ?dest= query (?dest=hud -> /hud/, ?dest=map -> /map/). A daemon
+# reboot resets the gate so the operator sees /status again on
+# next boot.
 chromium-browser $common_flags \
     --user-data-dir=/tmp/chromium-hud \
     --window-position=0,0 --window-size=1920,1080 \
-    http://127.0.0.1:8080/hud/ &
+    "http://127.0.0.1:8080/status/?dest=hud" &
 
 # Map on the right display. Adjust the X offset to match the left
 # display's width.
 chromium-browser $common_flags \
     --user-data-dir=/tmp/chromium-map \
     --window-position=1920,0 --window-size=1920,1080 \
-    http://127.0.0.1:8080/map/ &
+    "http://127.0.0.1:8080/status/?dest=map" &
 
 # Keep the X session alive as long as either kiosk is running. If
 # both exit, X exits and the user gets dropped back to the shell on

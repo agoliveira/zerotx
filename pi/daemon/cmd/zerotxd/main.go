@@ -42,6 +42,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/syscheck"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/trackballled"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
@@ -561,6 +562,13 @@ func main() {
 		}
 	}
 
+	// Operator system-check acknowledgement gate. The kiosks open
+	// /status on boot and stay there until the operator clicks
+	// "Proceed to flight", which POSTs /api/v1/syscheck/dismiss and
+	// flips this gate. Process-local: the gate resets every daemon
+	// reboot so a Pi restart brings the operator back to the check.
+	syscheckGate := syscheck.New()
+
 	// Display device (HUB75 LED panel), optional. When -display-port
 	// is set, run a Manager that opens the serial port, talks the
 	// DISP protocol, and reconnects on failure. When unset, dispMgr
@@ -890,7 +898,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1279,6 +1287,7 @@ func buildAPIProviders(
 	netClassHolder *netclass.Holder,
 	tileWarmStatsHolder *tileWarmStats,
 	gpsRdr *gps.Reader,
+	syscheckGate *syscheck.Gate,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1522,6 +1531,12 @@ func buildAPIProviders(
 				snap.AgeMs = time.Since(st.Updated).Milliseconds()
 			}
 			return snap
+		},
+		Syscheck: func() interface{} {
+			return syscheckGate.Snapshot()
+		},
+		SyscheckDismiss: func() {
+			syscheckGate.Dismiss()
 		},
 		Audio: func() api.AudioInfo {
 			return api.AudioInfo{
