@@ -413,6 +413,32 @@
     .tile-grid .k { color: var(--text-muted); font-size: 0.78rem; align-self: center; letter-spacing: 0.06em; }
     .tile-grid .v { color: var(--data-bright); text-align: right; font-weight: 400; }
 
+    /* Station GPS indicator at the foot of the GPS-HOME tile.
+       Hidden by default; daemon emits state.station only when the
+       operator has configured -gps-port. Style is intentionally
+       muted so it does not compete with the aircraft GPS readout
+       above it. */
+    .station-info {
+      margin-top: 6px;
+      padding-top: 4px;
+      border-top: 1px dashed var(--border-soft);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 8px;
+      letter-spacing: 0.06em;
+    }
+    .station-info .station-label {
+      color: var(--text-muted);
+      letter-spacing: 0.10em;
+    }
+    .station-info .station-value {
+      color: var(--data-bright);
+    }
+    .station-info .station-value.good { color: var(--good); }
+    .station-info .station-value.warn { color: var(--warn); }
+
     /* ============================================================
        Bottom-left: link/RSSI strip with rolling LQ graph.
        ============================================================ */
@@ -1284,6 +1310,13 @@
         <div class="k">ETA</div><div class="v" id="home-eta">--</div>
         <div class="k">ODO</div><div class="v" id="odometer">-- km</div>
       </div>
+      <div id="station-info" class="station-info" style="display:none;">
+        <span class="station-label">STATION</span>
+        <span class="station-value" id="station-fix">--</span>
+        <span>·</span>
+        <span class="station-value" id="station-sats">--</span>
+        <span>sats</span>
+      </div>
     </div>
   </div>
 
@@ -1827,6 +1860,7 @@ function handleStateMessage(state) {
   const att  = state?.telemetry?.attitude?.data;
   const bat  = state?.telemetry?.battery?.data;
   const ch   = state?.channels;
+  const station = state?.station; // operator/ground GPS, distinct from telemetry.gps
 
   // Arm transitions log to events.
   if (arm !== armState) {
@@ -1915,6 +1949,23 @@ function handleStateMessage(state) {
       document.getElementById('home-eta').textContent = '--:--';
     }
   }
+  // Station GPS: operator/ground-station position. Distinct from
+  // aircraft GPS (telemetry.gps). The block is only emitted by the
+  // daemon when -gps-port was configured; absence means no operator
+  // GPS and the indicator stays hidden.
+  const stationEl = document.getElementById('station-info');
+  if (station) {
+    stationEl.style.display = '';
+    const fix = station.fix || 'none';
+    const sats = (station.sats != null) ? station.sats : '--';
+    const fixEl = document.getElementById('station-fix');
+    fixEl.textContent = fix;
+    fixEl.className = 'station-value ' + (fix === '3D' ? 'good' : (fix === '2D' ? 'warn' : ''));
+    document.getElementById('station-sats').textContent = sats;
+  } else {
+    stationEl.style.display = 'none';
+  }
+
   // Heading band: always update if we have aircraft heading.
   if (Number.isFinite(aircraftHdg)) {
     setHeadingBand(aircraftHdg, homeBearing);
@@ -2060,7 +2111,14 @@ function startSimulator() {
         flightMode: { data: { mode: mode } },
         attitude:   { data: { rollDeg: roll, pitchDeg: pitch, yawDeg: heading } },
         battery:    { data: { volts: batV, percent: batPct, cellCount: cells, voltsCell: batV/cells, usedMAh: Math.round((100-batPct)*22), amps: 8 + (spd/4) } }
-      }
+      },
+      // Sim emits a station block so the operator-GPS indicator is
+      // visible in ?simulate=1 mode without real hardware. Cycles
+      // through none -> 2D -> 3D over the simulation timeline so
+      // both color states get exercised.
+      station: (cycle < 4)  ? { available: false, fix: 'none', sats: 0 }
+            : (cycle < 8)  ? { available: false, fix: '2D', sats: 5 }
+            :                { available: true,  fix: '3D', sats: 11, hdop: 0.9, latDeg: homeLatLon[0], lonDeg: homeLatLon[1], altMeters: 650, speedKmh: 0, headingDeg: 0 }
     });
   }, tickMs);
 }

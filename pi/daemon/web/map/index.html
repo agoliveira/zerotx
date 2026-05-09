@@ -732,6 +732,7 @@
   let aircraftPos = null;
   let aircraftHeading = 0;
   let homePos = null;
+  let stationPos = null; // operator/ground-station GPS, distinct from home
   let centeredOnHome = false;
 
   // Map control state.
@@ -997,6 +998,30 @@
     }
   }
 
+  // Station marker: the operator/ground station's own GPS position
+  // (distinct from home, which is where the aircraft was when armed).
+  // Only rendered when state.station.available is true. Color and
+  // size deliberately distinct from home so the operator can tell
+  // them apart at a glance.
+  function setupStationLayer() {
+    if (!map.getSource('station')) {
+      map.addSource('station', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+    if (!map.getLayer('station-layer')) {
+      map.addLayer({
+        id: 'station-layer',
+        type: 'circle',
+        source: 'station',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#3fb950',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2
+        }
+      });
+    }
+  }
+
   function setupRangeRingsLayer() {
     if (!map.getSource('range-rings')) {
       map.addSource('range-rings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -1020,6 +1045,7 @@
     setupTrailLayer();
     await setupAircraftLayer();
     setupHomeLayer();
+    setupStationLayer();
     setupRangeRingsLayer();
     updateAircraft();
     updateHome();
@@ -1049,6 +1075,16 @@
       type: 'FeatureCollection',
       features: homePos
         ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: homePos }, properties: {} }]
+        : []
+    });
+  }
+
+  function updateStation() {
+    if (!map.getSource('station')) return;
+    map.getSource('station').setData({
+      type: 'FeatureCollection',
+      features: stationPos
+        ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: stationPos }, properties: {} }]
         : []
     });
   }
@@ -1123,6 +1159,22 @@
         updateTrail();
       }
       applyCameraMode();
+    }
+
+    // Station GPS: operator/ground-station marker. Only rendered
+    // when state.station.available is true (fix >= 2D). Block is
+    // omitted by the daemon when no operator GPS is configured.
+    const station = state?.station;
+    if (station && station.available
+        && Number.isFinite(station.latDeg) && Number.isFinite(station.lonDeg)) {
+      const newStation = [station.lonDeg, station.latDeg];
+      if (!stationPos || stationPos[0] !== newStation[0] || stationPos[1] !== newStation[1]) {
+        stationPos = newStation;
+        updateStation();
+      }
+    } else if (stationPos !== null) {
+      stationPos = null;
+      updateStation();
     }
 
     setStatusPill(arm, mode);
@@ -1288,6 +1340,13 @@
       if (home && Number.isFinite(home.latDeg) && Number.isFinite(home.lonDeg)
           && (home.latDeg !== 0 || home.lonDeg !== 0)) {
         return { center: [home.lonDeg, home.latDeg], zoom: 16, source: 'home' };
+      }
+      // No home (the typical pre-arm case). Fall back to operator
+      // station GPS when we have a 2D fix or better.
+      const station = data?.station;
+      if (station && station.available
+          && Number.isFinite(station.latDeg) && Number.isFinite(station.lonDeg)) {
+        return { center: [station.lonDeg, station.latDeg], zoom: 16, source: 'station' };
       }
     } catch (e) { console.warn('initial center fallback:', e); }
     return { center: FALLBACK_CENTER, zoom: FALLBACK_ZOOM, source: 'fallback' };
