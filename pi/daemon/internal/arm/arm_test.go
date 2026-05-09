@@ -415,3 +415,52 @@ func TestEventString(t *testing.T) {
 		t.Error("unknown event string")
 	}
 }
+
+// TestConfirmCount_StartsZero confirms a fresh machine reports zero
+// confirms in its snapshot.
+func TestConfirmCount_StartsZero(t *testing.T) {
+	m := New()
+	if got := m.Snapshot().ConfirmCount; got != 0 {
+		t.Errorf("ConfirmCount on fresh machine: got %d, want 0", got)
+	}
+}
+
+// TestConfirmCount_IncrementsRegardlessOfState confirms the counter
+// advances for every Confirm() call, including those the state
+// machine ignores. This is the property the status page depends on
+// to verify the momentary button is wired end-to-end.
+func TestConfirmCount_IncrementsRegardlessOfState(t *testing.T) {
+	m := New()
+	m.Init(false) // DISARMED, key down
+
+	// Confirm in DISARMED is a no-op for state, but should still
+	// increment the counter.
+	m.Confirm()
+	m.Confirm()
+	if got := m.Snapshot().ConfirmCount; got != 2 {
+		t.Errorf("ConfirmCount after 2 noop confirms: got %d, want 2", got)
+	}
+	if m.State() != StateDisarmed {
+		t.Errorf("State should still be DISARMED, got %v", m.State())
+	}
+
+	// Bring the machine to ARMING_REQUESTED.
+	m.ThrottleChanged(true)
+	m.FCReadyChanged(true)
+	m.ChecklistOkChanged(true)
+	m.KeyChanged(true)
+
+	m.Confirm() // should arm AND increment
+	if got := m.Snapshot().ConfirmCount; got != 3 {
+		t.Errorf("ConfirmCount after happy-path confirm: got %d, want 3", got)
+	}
+	if m.State() != StateArmed {
+		t.Errorf("State should be ARMED, got %v", m.State())
+	}
+
+	// Confirm in ARMED: ignored for state, still counts.
+	m.Confirm()
+	if got := m.Snapshot().ConfirmCount; got != 4 {
+		t.Errorf("ConfirmCount after armed-state confirm: got %d, want 4", got)
+	}
+}

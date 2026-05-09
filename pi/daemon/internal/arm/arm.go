@@ -162,6 +162,14 @@ type Machine struct {
 	// usage must also send "true" to arm.
 	checklistOk bool
 
+	// confirmCount increments on every Confirm() call regardless of
+	// whether the press resulted in a state change. The status page
+	// uses it to verify the operator's momentary button is wired up:
+	// if the count advances when the button is pressed, the daemon
+	// is receiving the input even if the state machine declines to
+	// act on it (e.g. pre-arm with no key flip up yet, or post-arm).
+	confirmCount int
+
 	// armRequestedAt is the time when state became
 	// ARMING_REQUESTED. Used to compute timeout.
 	armRequestedAt time.Time
@@ -300,6 +308,7 @@ func (m *Machine) KeyChanged(keyUp bool) {
 func (m *Machine) Confirm() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.confirmCount++
 	if m.state != StateArmingRequested {
 		return
 	}
@@ -382,6 +391,14 @@ type Snapshot struct {
 	ChecklistOk  bool  `json:"checklistOk"`
 	Dropped      int   `json:"dropped"`
 
+	// ConfirmCount is the lifetime count of Confirm() calls received
+	// by this state machine, incremented on every call regardless of
+	// whether the press resulted in a state transition. The status
+	// page reads it to verify the momentary button is wired: if the
+	// count advances when the operator presses the button, the input
+	// path is alive end-to-end (button -> iohub -> daemon).
+	ConfirmCount int `json:"confirmCount"`
+
 	// RequestedAt is when the machine entered ARMING_REQUESTED. Nil
 	// in any other state. Useful for clients that want to display
 	// the original timestamp rather than the derived remaining.
@@ -405,6 +422,7 @@ func (m *Machine) Snapshot() Snapshot {
 		FCReady:      m.fcReady,
 		ChecklistOk:  m.checklistOk,
 		Dropped:      m.dropped,
+		ConfirmCount: m.confirmCount,
 	}
 	if m.state == StateArmingRequested {
 		t := m.armRequestedAt

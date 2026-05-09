@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1a1d21">
+<title>ZeroTX · System check</title>
+<style>
+:root {
+  --bg-body:     #1a1d21;
+  --bg-surface:  #252830;
+  --bg-elevated: #2d3038;
+  --border:      #3a3d45;
+  --border-light:#4a4d55;
+  --text-main:   #e0e0e0;
+  --text-muted:  #909090;
+  --text-dim:    #606060;
+  --accent:      #ff9933;
+  --ok:          #42b341;
+  --warn:        #d99900;
+  --err:         #e73c3c;
+  --idle:        #6e6e6e;
+  --info:        #4a9fdb;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg-body); color: var(--text-main);
+  font-family: var(--mono); font-size: 14px;
+  min-height: 100vh;
+}
+
+.page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header.title {
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+header.title h1 {
+  font-size: 18px; font-weight: 500; letter-spacing: 0.18em;
+  margin: 0; color: var(--accent);
+}
+header.title .meta {
+  font-size: 12px; color: var(--text-muted);
+}
+
+section.group {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+section.group h2 {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--text-muted);
+  margin: 0;
+  padding: 10px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 18px 200px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.row:last-child { border-bottom: none; }
+
+.led {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--idle);
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 3px var(--border-light);
+  transition: background 200ms ease;
+}
+.led.ok    { background: var(--ok); }
+.led.warn  { background: var(--warn); }
+.led.err   { background: var(--err); }
+.led.idle  { background: var(--idle); }
+
+.label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.value {
+  color: var(--text-main);
+  font-size: 13px;
+}
+.value .dim { color: var(--text-dim); }
+.value .strong { color: var(--text-main); font-weight: 500; }
+.value .accent { color: var(--accent); }
+
+/* Arm/momentary test row gets a chunkier visual treatment so the
+   operator can verify a press from across the bench. */
+.test-row {
+  grid-template-columns: 18px 200px 1fr 120px;
+}
+.indicator-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 60px;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 12px; font-weight: 500; letter-spacing: 0.08em;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+}
+.indicator-pill.up   { background: var(--ok);   color: #fff; border-color: var(--ok); }
+.indicator-pill.down { background: var(--bg-elevated); color: var(--text-muted); }
+.indicator-pill.pulse {
+  animation: pulse 600ms ease-out;
+}
+@keyframes pulse {
+  0%   { background: var(--accent); color: #fff; transform: scale(1.05); }
+  100% { background: var(--bg-elevated); color: var(--text-muted); transform: scale(1); }
+}
+
+button.test {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  color: var(--text-main);
+  font-family: var(--mono); font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+button.test:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.test:active { transform: translateY(1px); }
+button.test:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.toolbar {
+  display: flex; gap: 12px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+footer.proceed {
+  margin-top: 24px; text-align: center;
+  font-size: 12px; color: var(--text-muted);
+}
+footer.proceed a {
+  color: var(--accent);
+  text-decoration: none;
+  margin: 0 12px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  display: inline-block;
+}
+footer.proceed a:hover { background: var(--accent); color: #1a1d21; }
+
+.disconnect-banner {
+  display: none;
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background: var(--err); color: #fff;
+  border-radius: 4px; font-size: 13px;
+}
+.disconnect-banner.show { display: block; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="title">
+  <h1>ZeroTX · System Check</h1>
+  <div class="meta">
+    <span id="version">version --</span>
+    <span style="margin-left:14px;">uptime <span id="uptime">--</span></span>
+  </div>
+</header>
+
+<div id="disconnect" class="disconnect-banner">Disconnected from daemon. Reconnecting…</div>
+
+<section class="group">
+  <h2>Hardware</h2>
+  <div class="row" id="row-rp2040">
+    <div class="led" id="led-rp2040"></div>
+    <div class="label">RP2040 link (CRSF)</div>
+    <div class="value" id="val-rp2040">—</div>
+  </div>
+  <div class="row" id="row-joystick">
+    <div class="led" id="led-joystick"></div>
+    <div class="label">Joystick</div>
+    <div class="value" id="val-joystick">—</div>
+  </div>
+  <div class="row" id="row-panel">
+    <div class="led" id="led-panel"></div>
+    <div class="label">Panel</div>
+    <div class="value" id="val-panel">—</div>
+  </div>
+  <div class="row" id="row-station">
+    <div class="led" id="led-station"></div>
+    <div class="label">Station GPS</div>
+    <div class="value" id="val-station">—</div>
+  </div>
+  <div class="row" id="row-audio">
+    <div class="led" id="led-audio"></div>
+    <div class="label">Audio</div>
+    <div class="value" id="val-audio">—</div>
+  </div>
+</section>
+
+<section class="group">
+  <h2>Aircraft (via telemetry)</h2>
+  <div class="row" id="row-elrs">
+    <div class="led" id="led-elrs"></div>
+    <div class="label">ELRS link</div>
+    <div class="value" id="val-elrs">—</div>
+  </div>
+  <div class="row" id="row-fc">
+    <div class="led" id="led-fc"></div>
+    <div class="label">FC ready</div>
+    <div class="value" id="val-fc">—</div>
+  </div>
+  <div class="row" id="row-acgps">
+    <div class="led" id="led-acgps"></div>
+    <div class="label">Aircraft GPS</div>
+    <div class="value" id="val-acgps">—</div>
+  </div>
+  <div class="row" id="row-battery">
+    <div class="led" id="led-battery"></div>
+    <div class="label">Battery</div>
+    <div class="value" id="val-battery">—</div>
+  </div>
+  <div class="row" id="row-model">
+    <div class="led" id="led-model"></div>
+    <div class="label">Active model</div>
+    <div class="value" id="val-model">—</div>
+  </div>
+</section>
+
+<section class="group">
+  <h2>Arm sequence test</h2>
+  <div class="row test-row">
+    <div class="led idle" id="led-armkey"></div>
+    <div class="label">Arm key (SF)</div>
+    <div class="value" id="val-armkey">flip the arm switch up and down to verify</div>
+    <div><span class="indicator-pill" id="armkey-pill">DOWN</span></div>
+  </div>
+  <div class="row test-row">
+    <div class="led idle" id="led-momentary"></div>
+    <div class="label">Momentary (SH)</div>
+    <div class="value" id="val-momentary">press the momentary button to verify</div>
+    <div><span class="indicator-pill" id="momentary-pill">0 presses</span></div>
+  </div>
+  <div class="row">
+    <div class="led" id="led-armstate"></div>
+    <div class="label">Arm machine</div>
+    <div class="value" id="val-armstate">—</div>
+  </div>
+</section>
+
+<div class="toolbar">
+  <button class="test" id="btn-speak">Test audio (TTS)</button>
+  <span style="color: var(--text-muted); font-size: 12px; align-self: center;">
+    Speaks a short phrase via the daemon's TTS pipeline.
+  </span>
+</div>
+
+<footer class="proceed">
+  Once everything checks out:
+  <a href="/hud/">Open HUD</a>
+  <a href="/map/">Open Map</a>
+</footer>
+
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// Subsystem evaluators. Each returns {state: 'ok'|'warn'|'err'|
+// 'idle', text: string}. State drives the LED color; text is the
+// row's right-hand value.
+// ============================================================
+
+function evalRP2040(state) {
+  const link = state?.link;
+  if (!link) return { state: 'idle', text: 'no data' };
+  const port = link.port || 'unknown';
+  if (link.state === 'active') {
+    const hb = link.lastHeartbeat ? new Date(link.lastHeartbeat) : null;
+    const ageMs = hb ? (Date.now() - hb.getTime()) : null;
+    const ageStr = ageMs != null ? `${ageMs}ms ago` : '?';
+    return { state: 'ok', text: `<span class="strong">${port}</span> · last hb ${ageStr}` };
+  }
+  if (link.state === 'stale') return { state: 'warn', text: `${port} · heartbeat stale` };
+  return { state: 'err', text: `${port} · ${link.state}` };
+}
+
+function evalJoystick(state) {
+  const js = state?.joystick;
+  if (!js) return { state: 'warn', text: 'no joystick connected' };
+  const axes = js.axes || [];
+  const moved = axes.some(a => Math.abs(a) > 0.02);
+  const tag = moved ? '<span class="dim">moved recently</span>' : '<span class="dim">idle</span>';
+  return { state: 'ok', text: `<span class="strong">${js.name}</span> · ${axes.length} axes · ${tag}` };
+}
+
+function evalPanel(state) {
+  const p = state?.panel;
+  if (!p) return { state: 'idle', text: 'no panel data' };
+  const sw = Object.keys(p.switches || {}).length;
+  const sel = Object.keys(p.selectors || {}).length;
+  const btn = Object.keys(p.buttons || {}).length;
+  if (sw === 0 && sel === 0 && btn === 0) {
+    return { state: 'warn', text: 'no controls reported' };
+  }
+  return { state: 'ok', text: `${sw} switches · ${sel} selectors · ${btn} buttons` };
+}
+
+function evalStation(state) {
+  const s = state?.station;
+  if (!s) return { state: 'idle', text: 'not configured (no -gps-port)' };
+  if (s.available) {
+    const sats = s.sats != null ? `${s.sats} sats` : '';
+    const hdop = (typeof s.hdop === 'number' && s.hdop > 0) ? ` · HDOP ${s.hdop.toFixed(1)}` : '';
+    return { state: 'ok', text: `<span class="strong">${s.fix}</span> · ${sats}${hdop}` };
+  }
+  const sats = s.sats || 0;
+  return { state: 'warn', text: `searching · ${sats} sats` };
+}
+
+function evalAudio(state) {
+  const a = state?.audio;
+  if (!a) return { state: 'idle', text: 'no audio data' };
+  return { state: 'ok', text: `threshold: <span class="strong">${a.threshold}</span>` };
+}
+
+function evalELRS(state) {
+  const link = state?.telemetry?.link;
+  if (!link || link.stale) return { state: 'warn', text: 'no fresh telemetry' };
+  const d = link.data;
+  if (!d) return { state: 'idle', text: 'no data' };
+  const lq = d.uplinkLq != null ? d.uplinkLq : 0;
+  const rssi = d.uplinkRssiDbm != null ? d.uplinkRssiDbm : '?';
+  let ledState = 'ok';
+  if (lq < 70) ledState = 'warn';
+  if (lq < 30) ledState = 'err';
+  return { state: ledState, text: `LQ <span class="strong">${lq}%</span> · ${rssi} dBm` };
+}
+
+function evalFC(state) {
+  const fm = state?.telemetry?.flightMode;
+  if (!fm || fm.stale) return { state: 'warn', text: 'no telemetry' };
+  const mode = fm.data?.mode || '';
+  if (!mode) return { state: 'idle', text: 'no mode reported' };
+  if (mode.startsWith('!') || mode.startsWith('WAIT')) {
+    return { state: 'warn', text: `<span class="strong">${mode}</span> (not ready)` };
+  }
+  return { state: 'ok', text: `<span class="strong">${mode}</span>` };
+}
+
+function evalAircraftGPS(state) {
+  const g = state?.telemetry?.gps;
+  if (!g || g.stale) return { state: 'warn', text: 'no fresh telemetry' };
+  const d = g.data;
+  if (!d) return { state: 'idle', text: 'no data' };
+  const sats = d.sats != null ? d.sats : 0;
+  const fix = d.fix === 3 ? '3D' : (d.fix === 2 ? '2D' : 'no fix');
+  let ledState = 'ok';
+  if (d.fix < 2) ledState = 'err';
+  else if (sats < 8) ledState = 'warn';
+  return { state: ledState, text: `<span class="strong">${fix}</span> · ${sats} sats` };
+}
+
+function evalBattery(state) {
+  const b = state?.telemetry?.battery;
+  if (!b || b.stale) return { state: 'warn', text: 'no fresh telemetry' };
+  const d = b.data;
+  if (!d) return { state: 'idle', text: 'no data' };
+  const v = d.volts != null ? d.volts.toFixed(2) : '?';
+  const cells = d.cellCount ? `${d.cellCount}S` : '';
+  const pct = d.percent != null ? `${Math.round(d.percent)}%` : '';
+  return { state: 'ok', text: `<span class="strong">${v} V</span> ${cells} ${pct}` };
+}
+
+// ============================================================
+// Arm key + momentary indicators. Drive their own DOM directly so
+// we can run the pulse animation on count delta without a generic
+// row helper.
+// ============================================================
+
+let lastConfirmCount = -1;
+
+function updateArmTest(state) {
+  const arm = state?.arm;
+  if (!arm) return;
+
+  // Arm key indicator. KeyUp=true means SF is up = "armed position
+  // requested". Color the LED green when up, dim when down.
+  const keyUp = !!arm.keyUp;
+  const armKeyLed = document.getElementById('led-armkey');
+  const armKeyPill = document.getElementById('armkey-pill');
+  if (keyUp) {
+    armKeyLed.classList.remove('idle'); armKeyLed.classList.add('ok');
+    armKeyPill.textContent = 'UP';
+    armKeyPill.classList.remove('down'); armKeyPill.classList.add('up');
+  } else {
+    armKeyLed.classList.remove('ok'); armKeyLed.classList.add('idle');
+    armKeyPill.textContent = 'DOWN';
+    armKeyPill.classList.remove('up'); armKeyPill.classList.add('down');
+  }
+
+  // Momentary press indicator. Pulse on count delta. The first
+  // observed count establishes the baseline; subsequent deltas
+  // trigger the pulse animation.
+  const cc = arm.confirmCount != null ? arm.confirmCount : 0;
+  const momLed = document.getElementById('led-momentary');
+  const momPill = document.getElementById('momentary-pill');
+  momPill.textContent = `${cc} press${cc === 1 ? '' : 'es'}`;
+  if (lastConfirmCount >= 0 && cc > lastConfirmCount) {
+    // Re-trigger the CSS animation: remove + force reflow + re-add.
+    momPill.classList.remove('pulse');
+    void momPill.offsetWidth;
+    momPill.classList.add('pulse');
+    momLed.classList.remove('idle'); momLed.classList.add('ok');
+    setTimeout(() => {
+      momLed.classList.remove('ok'); momLed.classList.add('idle');
+    }, 600);
+  }
+  lastConfirmCount = cc;
+
+  // Arm state machine row.
+  const armStateLed = document.getElementById('led-armstate');
+  const armStateVal = document.getElementById('val-armstate');
+  const s = arm.state || 'UNKNOWN';
+  if (s === 'ARMED') {
+    armStateLed.className = 'led err'; // armed = motors live = warn the operator visually
+    armStateVal.innerHTML = `<span class="strong">${s}</span> <span class="dim">— motors live</span>`;
+  } else if (s === 'ARMING_REQUESTED') {
+    armStateLed.className = 'led warn';
+    const rs = arm.remainingSeconds != null ? arm.remainingSeconds : 0;
+    armStateVal.innerHTML = `<span class="strong">${s}</span> <span class="dim">— ${rs}s left</span>`;
+  } else {
+    armStateLed.className = 'led idle';
+    armStateVal.innerHTML = `<span class="strong">${s}</span>`;
+  }
+}
+
+// ============================================================
+// Generic row update helper.
+// ============================================================
+
+function updateRow(rowId, evaluator, state) {
+  const r = evaluator(state);
+  const led = document.getElementById('led-' + rowId);
+  const val = document.getElementById('val-' + rowId);
+  if (led) led.className = 'led ' + r.state;
+  if (val) val.innerHTML = r.text;
+}
+
+// ============================================================
+// Active model row (read from /api/v1/model on connect; not in
+// the live state stream).
+// ============================================================
+
+async function loadModelInfo() {
+  try {
+    const r = await fetch('/api/v1/model');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const m = await r.json();
+    const led = document.getElementById('led-model');
+    const val = document.getElementById('val-model');
+    if (m.available && m.name) {
+      led.className = 'led ok';
+      val.innerHTML = `<span class="strong">${m.name}</span> · ${m.mixes} mixes · ${m.logic} LS`;
+    } else {
+      led.className = 'led warn';
+      val.textContent = 'no model loaded';
+    }
+  } catch (e) {
+    const led = document.getElementById('led-model');
+    led.className = 'led err';
+    document.getElementById('val-model').textContent = 'fetch failed: ' + e.message;
+  }
+}
+
+async function loadHealth() {
+  try {
+    const r = await fetch('/api/v1/health');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const h = await r.json();
+    document.getElementById('version').textContent = 'version ' + (h.version || '?');
+  } catch (e) {
+    document.getElementById('version').textContent = 'version ?';
+  }
+}
+
+// ============================================================
+// Uptime: wall clock since first WS message (proxy for daemon
+// uptime; the daemon's own uptime is not in the health endpoint
+// response by default).
+// ============================================================
+
+let firstSeenAt = 0;
+function updateUptime() {
+  if (!firstSeenAt) {
+    document.getElementById('uptime').textContent = '--';
+    return;
+  }
+  const sec = Math.floor((Date.now() - firstSeenAt) / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  document.getElementById('uptime').textContent =
+    m > 0 ? `${m}m${String(s).padStart(2,'0')}s` : `${s}s`;
+}
+setInterval(updateUptime, 1000);
+
+// ============================================================
+// WebSocket subscription.
+// ============================================================
+
+function handleState(state) {
+  if (!firstSeenAt) firstSeenAt = Date.now();
+
+  updateRow('rp2040',   evalRP2040,      state);
+  updateRow('joystick', evalJoystick,    state);
+  updateRow('panel',    evalPanel,       state);
+  updateRow('station',  evalStation,     state);
+  updateRow('audio',    evalAudio,       state);
+  updateRow('elrs',     evalELRS,        state);
+  updateRow('fc',       evalFC,          state);
+  updateRow('acgps',    evalAircraftGPS, state);
+  updateRow('battery',  evalBattery,     state);
+
+  updateArmTest(state);
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/api/v1/stream`);
+  ws.onopen = () => {
+    document.getElementById('disconnect').classList.remove('show');
+  };
+  ws.onmessage = (ev) => {
+    try { handleState(JSON.parse(ev.data)); }
+    catch (e) { console.warn('ws parse:', e); }
+  };
+  ws.onclose = () => {
+    document.getElementById('disconnect').classList.add('show');
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = (e) => { console.warn('ws error:', e); };
+}
+
+// ============================================================
+// Audio test button.
+// ============================================================
+
+document.getElementById('btn-speak').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Speaking…';
+  try {
+    const r = await fetch('/api/v1/debug/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: 'ZeroTX system check. Audio path operational.',
+        level: 'info',
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    btn.textContent = 'OK';
+    setTimeout(() => { btn.textContent = 'Test audio (TTS)'; btn.disabled = false; }, 1500);
+  } catch (e) {
+    btn.textContent = 'Failed: ' + e.message;
+    setTimeout(() => { btn.textContent = 'Test audio (TTS)'; btn.disabled = false; }, 3000);
+  }
+});
+
+// ============================================================
+// Boot.
+// ============================================================
+
+loadHealth();
+loadModelInfo();
+connectWS();
+</script>
+</body>
+</html>
