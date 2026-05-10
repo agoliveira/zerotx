@@ -19,6 +19,7 @@
 #include "state.h"
 #include "status_led.h"
 #include "input_arm.h"
+#include "input_momentary.h"
 
 #define CRSF_BAUD       400000u
 
@@ -146,6 +147,7 @@ int main(void) {
     ipc_init(usb_write_byte);
     state_init();
     input_arm_init();
+    input_momentary_init();
 
     /* Arm the hardware watchdog. Must be kicked at least every
      * WATCHDOG_TIMEOUT_MS or the chip resets. The main loop
@@ -197,6 +199,13 @@ int main(void) {
         /* Poll the arm key. Edge events go out over IPC. Bumps tx
          * seq only if a frame was actually emitted. */
         s_tx_seq = input_arm_poll(now, s_tx_seq);
+
+        /* Poll the momentary button (the SH-equivalent in the EdgeTX
+         * arming workflow). Press edges emit MSG_INPUT_EVENT with
+         * input_id=ZTX_INPUT_MOMENTARY; release edges are silently
+         * absorbed. The daemon translates each press into a call to
+         * armMachine.Confirm(). */
+        s_tx_seq = input_momentary_poll(now, s_tx_seq);
 
         state_tick(now);
 

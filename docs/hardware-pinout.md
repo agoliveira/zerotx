@@ -19,6 +19,7 @@ onboard WS2812 RGB LED on GP16, USB-C.
 
 - `rp2040/src/crsf.c` (lines 10-11): `CRSF_UART_TX`, `CRSF_UART_RX`
 - `rp2040/src/input_arm.h` (line 32): `INPUT_ARM_PIN`
+- `rp2040/src/input_momentary.h` (line 36): `INPUT_MOMENTARY_PIN`
 - `rp2040/src/status_led.h` (line 8): `STATUS_LED_PIN`
 
 Pin numbers are compile-time `#define` values. Changing them requires
@@ -28,10 +29,11 @@ a firmware reflash.
 |------|-----------|----------|-------|
 | GP0  | output | UART0 TX to ELRS module (CRSF) | Hardware UART. Series resistor at the end of cable, see hardware-bom |
 | GP1  | input  | UART0 RX from ELRS module (CRSF) | Hardware UART, telemetry path |
-| GP14 | input  | Aviator-style arm key | Internal pull-up. Switch to GND. Far from UART and LED, no timing-sensitive neighbors |
+| GP14 | input  | Aviator-style arm key (SF-equivalent) | Internal pull-up. Switch to GND. Far from UART and LED, no timing-sensitive neighbours |
+| GP15 | input  | Momentary push-button (SH-equivalent, arm confirm) | Internal pull-up. Switch to GND. Adjacent to GP14 so a single panel cable can carry both inputs plus shared GND |
 | GP16 | output | Onboard WS2812 status LED | Hardwired on the Waveshare board, driven by PIO0 |
 
-**Free GPIO** for future expansion: GP2-GP13, GP15, GP17-GP29 (subject
+**Free GPIO** for future expansion: GP2-GP13, GP17-GP29 (subject
 to which pads are accessible on the Zero footprint; GP17-GP25 are on
 the bottom solder pads, not the edge headers).
 

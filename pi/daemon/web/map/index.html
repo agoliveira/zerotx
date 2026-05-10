@@ -1482,6 +1482,20 @@
   setTimeout(pollWxChip, 5000);
   setInterval(pollWxChip, 60000);
 
+  // Ctrl+Alt+A POSTs /api/v1/arm/confirm, mirroring the physical
+  // momentary button on the panel. Provided as a software fallback
+  // for benches or rigs without the physical button. Same shortcut
+  // as the HUD page so the operator can trigger from whichever
+  // kiosk has focus.
+  document.addEventListener('keydown', evt => {
+    if (!evt.ctrlKey || !evt.altKey) return;
+    if (evt.key !== 'a' && evt.key !== 'A') return;
+    evt.preventDefault();
+    fetch('/api/v1/arm/confirm', {method: 'POST'}).catch(err => {
+      console.warn('arm/confirm failed:', err);
+    });
+  });
+
   init();
   </script>
 </body>

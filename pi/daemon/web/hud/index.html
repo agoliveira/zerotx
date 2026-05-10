@@ -2619,11 +2619,31 @@ const NetClass = (() => {
   return {bind};
 })();
 
+// ---- Arm-confirm keyboard shortcut ----
+//
+// Ctrl+Alt+A POSTs /api/v1/arm/confirm, mirroring the physical
+// momentary button on the panel (the SH-equivalent in the EdgeTX
+// arming workflow). Provided as a software fallback for benches or
+// rigs without the physical button installed; in normal field use
+// the operator presses the panel button. Both paths land on the
+// same daemon-side armMachine.Confirm().
+function bindArmConfirmShortcut() {
+  document.addEventListener('keydown', evt => {
+    if (!evt.ctrlKey || !evt.altKey) return;
+    if (evt.key !== 'a' && evt.key !== 'A') return;
+    evt.preventDefault();
+    fetch('/api/v1/arm/confirm', {method: 'POST'}).catch(err => {
+      console.warn('arm/confirm failed:', err);
+    });
+  });
+}
+
 // ---- Init ----
 function init() {
   showDaemonVersion();
   WX.bind();
   NetClass.bind();
+  bindArmConfirmShortcut();
   const params = new URLSearchParams(location.search);
   if (params.get('simulate') === '1') startSimulator();
   else                                 connectWS();

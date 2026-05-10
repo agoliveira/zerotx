@@ -306,6 +306,13 @@ func main() {
 				if !fired {
 					armMachine.KeyChanged(keyUp)
 				}
+			case ipc.InputMomentary:
+				// Firmware emits press-only (state=1). Defensive: if
+				// a future firmware change adds release events, ignore
+				// them here so semantics stay press-triggered.
+				if state != 0 {
+					armMachine.Confirm()
+				}
 			default:
 				log.Printf("ipc: unknown input id %#02x state=%d", inputID, state)
 			}

@@ -46,8 +46,9 @@ const (
 // 0x00 is reserved as "invalid / probe". Future controls-area inputs
 // (additional safety-critical hardware only) take subsequent values.
 const (
-	InputInvalid byte = 0x00
-	InputArmKey  byte = 0x01
+	InputInvalid   byte = 0x00
+	InputArmKey    byte = 0x01
+	InputMomentary byte = 0x02
 )
 
 // ProtoVersion is the wire-format protocol version. Bumped only when the

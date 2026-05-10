@@ -72,8 +72,9 @@
  * 0x00 is reserved as "invalid / probe". Future controls-area inputs
  * (additional safety-critical hardware only — see project's control
  * panel design philosophy) take subsequent values. */
-#define ZTX_INPUT_INVALID   0x00
-#define ZTX_INPUT_ARM_KEY   0x01
+#define ZTX_INPUT_INVALID    0x00
+#define ZTX_INPUT_ARM_KEY    0x01
+#define ZTX_INPUT_MOMENTARY  0x02
 
 /* Wire-format protocol version. Bumped only when frame format or
  * message semantics change in an incompatible way. Both sides must

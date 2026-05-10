@@ -136,9 +136,13 @@ Project-wide convention: active-HIGH default, per-pin HAL flag opts into active-
 |---|---|---|---|
 | USB-CDC + 5V | Pi USB port B (direct, not hub) | RP2040 USB port | data and power; isolated from hub |
 | CRSF UART | RP2040 GP0 (TX) and GP1 (RX) | Case bulkhead, then case-to-pole cable | bidirectional (channel intents out, telemetry in) |
+| Arm key (SF) | RP2040 GP14 | Front-panel guarded arm switch, other terminal to GND | Internal pull-up; switch to GND. Logical UP=switch closed, DOWN=open |
+| Momentary (SH, arm confirm) | RP2040 GP15 | Front-panel momentary push-button, other terminal to GND | Internal pull-up; switch to GND. Press fires armMachine.Confirm() in the daemon. Adjacent to GP14 so a single panel cable can carry GP14, GP15, and shared GND |
 | GND | shared | shared with bulkhead and onward to pole | common ground reference |
 
 In default cable configuration GP0 (TX) is joined to GP1 (RX) at the case end through a 470Ω series resistor on the TX side, and the resulting single-wire signal goes out on the cable to the ELRS module's CRSF pin. In extended configuration GP0 and GP1 connect to the case-end MAX490's DI and RO pins respectively, and the differential pair travels the cable. No firmware change is required to switch modes.
+
+**Software fallback for the momentary**: when the physical button is unavailable (bench rigs, partial builds), pressing **Ctrl+Alt+A** in either kiosk (HUD or Map) POSTs `/api/v1/arm/confirm`, the same call the daemon makes when it receives an IPC press event from the RP2040. Both paths converge on `armMachine.Confirm()`.
 
 ## Case-to-pole cable
 
