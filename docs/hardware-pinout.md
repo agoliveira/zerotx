@@ -44,6 +44,56 @@ the bottom solder pads, not the edge headers).
   the watchdog timeout or the board resets. Relevant if anyone ever
   adds a long-blocking call.
 
+### Device wiring
+
+**Front-panel arm key + momentary** (3-wire panel cable)
+
+Both inputs use internal pull-ups; one terminal of each switch goes
+to its GPIO, the other to a shared GND. A single 3-conductor cable
+from the panel back to the RP2040 is sufficient.
+
+```
+Front panel                       RP2040 Zero
+┌─────────────────┐
+│ Arm key SF      │
+│   common      ──┼──────────► GP14
+│                 │
+│ Momentary SH    │
+│   common      ──┼──────────► GP15
+│                 │
+│ shared GND    ──┼──────────► GND
+└─────────────────┘
+   (other terminal of each switch goes to the panel's GND rail)
+```
+
+Notes:
+- No external resistors. Firmware sets `gpio_pull_up()` on both pins.
+- Switch closed pulls the pin LOW; firmware translates to "logical
+  ON" in the protocol.
+- Arm key is a guarded ON/OFF (latching) switch. Momentary is a
+  push-button (returns to open when released).
+- Pins are adjacent on the Zero's edge header, so a Dupont 3-pin
+  shell or a JST-XH-3 connector covers both signals plus GND.
+
+**ELRS module** (CRSF, see `CONNECTIONS.md` for the full case-to-pole cable)
+
+```
+RP2040 Zero                       Bulkhead -> pole cable
+   GP0 (TX) ──┐
+              ├── (joined via 470Ω at the case end) ──► CRSF signal
+   GP1 (RX) ──┘
+   GND        ──────────────────────────────────────► CRSF GND
+```
+
+Notes:
+- Default cable mode is single-wire half-duplex CRSF: TX and RX are
+  joined at the case end with a 470Ω series resistor on the TX line
+  to protect against bus contention. The single signal then runs the
+  pole cable to the ELRS module's CRSF pin.
+- Extended cable mode (RS-422 over longer runs) is documented in
+  `CONNECTIONS.md`; GP0 and GP1 connect to a MAX490 transceiver
+  instead. No firmware change required.
+
 ## Arduino Mega 2560 (IO board)
 
 **Board:** Standard Arduino Mega 2560 (Rev3 or pin-compatible clone),
@@ -144,6 +194,260 @@ inputs).
   pin maps from a previous version are lost; re-issue any custom
   `SET hal pin ...` commands as needed.
 
+### Device wiring
+
+Pin numbers below are the HAL **defaults**. If you've remapped any
+pin via the HAL config tool, use the value in EEPROM instead.
+
+Power note: the Mega's onboard 5V regulator can supply the logic-level
+inputs and a few mA of LED current, but anything that draws meaningful
+current (servos, WS2813 strip, multi-LED bars, the VFDs at full
+brightness) needs an external 5V rail. "5V (ext)" below means the
+case 5V hub-rail, not the Mega's regulator.
+
+**KY-040 rotary encoder** (5 wires)
+
+```
+KY-040                            Mega
+┌───────────┐
+│ CLK     ──┼──────────────────► Pin 2   (enc0_a, INT0)
+│ DT      ──┼──────────────────► Pin 3   (enc0_b, INT1)
+│ SW      ──┼──────────────────► Pin 4   (enc0_sw)
+│ +       ──┼──────────────────► 5V
+│ GND     ──┼──────────────────► GND
+└───────────┘
+```
+
+Notes: hardware-interrupt pins for the quadrature pair (INT0/INT1).
+Onboard pull-ups on the KY-040 module; firmware also enables internal
+pull-ups defensively. Push-button on shaft press goes to pin 4.
+
+**Passive piezo buzzer** (2 wires)
+
+```
+Buzzer                            Mega
+┌──────┐
+│ +  ──┼──────────────────────► Pin 5   (buzzer)
+│ -  ──┼──────────────────────► GND
+└──────┘
+```
+
+Notes: passive only. Active buzzers (with internal oscillator) won't
+work — firmware uses Arduino's `tone()` to drive the frequency.
+
+**Servos** (×4, generic; one block per servo)
+
+```
+Servo                             Mega
+┌──────────┐
+│ Signal ──┼──────────────────► Pin 6..9  (servo_0..servo_3, see lookup)
+│ +      ──┼──────────────────► 5V (ext)
+│ GND    ──┼──────────────────► GND (shared with Mega GND)
+└──────────┘
+
+Lookup: servo_N → Mega pin (6+N)
+  servo_0 → 6     servo_2 → 8
+  servo_1 → 7     servo_3 → 9
+```
+
+Notes: servos pull a lot of current (~150mA idle, peaks of 1A+ on
+load). Power them from the case 5V rail, NOT from the Mega's
+regulator. GND must be shared between the servo's external supply
+and the Mega.
+
+**Trackball ring LEDs** (red + green, 4 wires)
+
+This drives the LED ring around the trackball housing. Two PWM
+channels for color mixing; common cathode tied to GND.
+
+```
+LED ring                          Mega
+┌─────────────────┐
+│ Red anode     ──┼──────────► Pin 12 + series resistor (led_trackball_red)
+│ Green anode   ──┼──────────► Pin 11 + series resistor (led_trackball_green)
+│ Common cathode┼─┼──────────► GND
+└─────────────────┘
+```
+
+Notes: pins 11 and 12 are Timer 1 PWM. Series resistor value depends
+on the LED's forward voltage and your desired current; ~220Ω per
+channel for typical 20mA-rated indicators. If your ring is a
+self-driving module with onboard resistors, omit the external ones.
+
+**I2C LCD** (4 wires)
+
+The Mega supports an HD44780-on-I2C-backpack character LCD on the
+hardware I2C bus. Address is auto-detected by the I2cLcd subsystem.
+
+```
+LCD I2C backpack                  Mega
+┌────────────┐
+│ VCC      ──┼──────────────► 5V
+│ GND      ──┼──────────────► GND
+│ SDA      ──┼──────────────► Pin 20  (hardware I2C SDA)
+│ SCL      ──┼──────────────► Pin 21  (hardware I2C SCL)
+└────────────┘
+```
+
+Notes: pins 20/21 are hardware I2C and not in HAL — you can't remap
+them. The bus is shared, so additional I2C peripherals can hang off
+the same two pins (with their own addresses).
+
+**Relays** (×4, generic)
+
+```
+Relay module input                Mega
+┌──────────┐
+│ IN     ──┼──────────────► Pin 22..25  (relay_0..relay_3, see lookup)
+│ VCC    ──┼──────────────► 5V (ext, if multi-channel module)
+│ GND    ──┼──────────────► GND
+└──────────┘
+
+Lookup: relay_N → Mega pin (22+N)
+  relay_0 → 22    relay_2 → 24
+  relay_1 → 23    relay_3 → 25
+```
+
+Notes: default polarity is active-HIGH (drive HIGH to energize). If
+your relay board needs active-LOW (some optocoupler-isolated boards
+do), flip the `ACTIVE_LOW` HAL flag for the slot rather than
+rewiring. Multi-channel relay boards have their own VCC pin to power
+the coils; don't draw that current from the Mega.
+
+**Panel buttons** (×10, generic)
+
+```
+Push-button                       Mega
+┌────────┐
+│ A    ──┼──────────────► Pin 26..35  (button_0..button_9, see lookup)
+│ B    ──┼──────────────► GND
+└────────┘
+
+Lookup: button_N → Mega pin (26+N)
+  button_0 → 26    button_5 → 31
+  button_1 → 27    button_6 → 32
+  button_2 → 28    button_7 → 33
+  button_3 → 29    button_8 → 34
+  button_4 → 30    button_9 → 35
+```
+
+Notes: firmware enables `INPUT_PULLUP` per pin. No external resistor
+needed. Button closure pulls the pin LOW; HAL converts to logical
+"pressed" with default active-LOW polarity.
+
+**Indicator LEDs** (×4, generic)
+
+```
+LED                               Mega
+┌──────────┐
+│ Anode  ──┼──────────► Pin 36..39 + series resistor (led_0..led_3)
+│ Cathode┼─┼──────────► GND
+└──────────┘
+
+Lookup: led_N → Mega pin (36+N)
+  led_0 → 36    led_2 → 38
+  led_1 → 37    led_3 → 39
+```
+
+Notes: firmware drives these as digital outputs (on/off, no PWM).
+Series resistor sized for ~5-10mA: 470Ω for typical 2V red LEDs from
+5V, 1kΩ for higher-Vf colors. Don't omit; bare LEDs on a digital pin
+will pull more current than the pin can sustain and may damage the
+MCU output.
+
+**WS2813 strip** (3 wires)
+
+```
+WS2813 strip                      Mega
+┌────────────┐
+│ Data in  ──┼────────► Pin 40 (ws_data) + 470Ω series at the strip
+│ +5V      ──┼────────► 5V (ext, see Power distribution)
+│ GND      ──┼────────► GND (shared with Mega GND)
+└────────────┘
+```
+
+Notes: do NOT power the strip from the Mega's regulator beyond
+maybe 4-5 LEDs at low brightness. Each WS2813 LED can pull 60mA at
+full white; even short strips need a dedicated 5V supply. The 470Ω
+series resistor on the data line damps reflections and is good
+practice on any signal run longer than a few cm. The strip's GND
+must be tied to the Mega's GND for the data line to be referenced
+correctly. Power source for the strip is still TODO (see Power
+distribution).
+
+**VFD modules** (×2, Noritake CU20025ECPB-W1J in 4-bit HD44780 mode, 6 signal wires + power)
+
+```
+VFD module (16-pin LCD-compatible header)
+                                  Mega (VFD0 / VFD1)
+┌───────┐
+│ VSS  1┼──────────────────► GND
+│ VDD  2┼──────────────────► 5V (ext; the VFD draws ~150mA at full brightness)
+│ V0   3┼──────────────────► (NC for VFD; LCDs use this for contrast)
+│ RS   4┼──────────────────► Pin 44 (vfd0_rs) / 56 / A2 (vfd1_rs)
+│ R/W  5┼──────────────────► GND (write-only; firmware never reads back)
+│ E    6┼──────────────────► Pin 45 (vfd0_en) / 57 / A3 (vfd1_en)
+│ D0   7┼──────────────────► (NC in 4-bit mode)
+│ D1   8┼──────────────────► (NC)
+│ D2   9┼──────────────────► (NC)
+│ D3  10┼──────────────────► (NC)
+│ D4  11┼──────────────────► Pin 46 (vfd0_d4) / 58 / A4 (vfd1_d4)
+│ D5  12┼──────────────────► Pin 47 (vfd0_d5) / 59 / A5 (vfd1_d5)
+│ D6  13┼──────────────────► Pin 48 (vfd0_d6) / 60 / A6 (vfd1_d6)
+│ D7  14┼──────────────────► Pin 49 (vfd0_d7) / 61 / A7 (vfd1_d7)
+│ A   15┼──────────────────► (NC for VFD; LCDs use this for backlight +)
+│ K   16┼──────────────────► (NC for VFD; LCDs use this for backlight -)
+└───────┘
+```
+
+Notes:
+- 6 signal wires per VFD: RS, E, D4-D7. R/W tied to GND so the chip
+  is write-only.
+- VFDs do not have a backlight or contrast pin. Pins 3, 15, 16 are
+  generally NC. Confirm against the specific module's datasheet
+  before powering up — some Noritake variants reuse pin 3 for a
+  brightness/dimming input.
+- Two VFDs share the data lines? **No.** This wiring is for two
+  *independent* VFDs each on its own 6-pin set (vfd0 vs vfd1). They
+  share VCC + GND only.
+- Power: 150-300mA per VFD depending on brightness and content.
+  Use the case 5V rail.
+
+**LDR ambient-light sensor** (2 wires + divider resistor)
+
+```
+LDR (assuming a raw photoresistor; if you're using a KY-018-style
+module with onboard divider, wire its DO/AO pins per its silkscreen)
+
+                                  Mega
+LDR ── Pin A0 (ldr_0) ── 10kΩ ── GND
+                              ┃
+                              ┗── (other LDR leg) ── 5V
+```
+
+The LDR forms a voltage divider with a 10kΩ pull-down. As ambient
+light rises the LDR resistance falls and pin A0 reads higher.
+
+```
+       5V
+        │
+       LDR (resistance varies with light)
+        │
+        ├──────────────► A0 (ldr_0, analog input)
+        │
+       10k
+        │
+       GND
+```
+
+Notes: A0 is `ldr_0` in HAL and read as a 10-bit ADC value. The
+divider is sized so the swing covers a useful chunk of the 0-1023
+range under indoor lighting; tune the 10k to taste if your conditions
+are unusual (very dim or very bright). KY-018 modules wrap this
+divider into a board with two outputs (digital threshold via
+trim-pot, plus analog); use the analog output (AO) into A0 and ignore
+DO.
+
 ## ESP32 DevKit V1 (HUB75 LED panel driver)
 
 **Board:** ESP32 DevKit V1 (DOIT-style 30-pin), ESP32-WROOM-32 module,
@@ -201,6 +505,81 @@ firmware accounts for this in the pin remap below.
 input-only and lack internal pull-ups, useful for analog or buttons
 with external pull-ups.
 
+### Device wiring
+
+**HUB75 panel chain** (16 signals + power)
+
+Two chained Waveshare P2.5 64×32 panels for a 128×32 logical surface.
+Standard HUB75 16-pin connector at the input of panel 1; panel 1's
+HUB75-OUT cable feeds panel 2's HUB75-IN.
+
+```
+HUB75 connector (16-pin IDC, viewed at the panel-1 input)
+
+         ┌──────┬──────┐
+   R1    │  1   │   2  │  G1   ← Waveshare swap: see notes
+   B1    │  3   │   4  │  GND
+   R2    │  5   │   6  │  G2   ← Waveshare swap
+   B2    │  7   │   8  │  GND
+    A    │  9   │  10  │   B
+    C    │ 11   │  12  │   D
+   CLK   │ 13   │  14  │  LAT
+   OE    │ 15   │  16  │  GND
+         └──────┴──────┘
+
+Signal              ESP32 GPIO        Source
+  R1 (top red)      → GPIO 25         explicit
+  G1 (top green)    → GPIO 27         explicit (wired to library "B1")
+  B1 (top blue)     → GPIO 26         explicit (wired to library "G1")
+  R2 (bottom red)   → GPIO 14         explicit
+  G2 (bottom green) → GPIO 13         explicit (wired to library "B2")
+  B2 (bottom blue)  → GPIO 12         explicit (wired to library "G2")
+  A  (addr 0)       → GPIO 23         library default
+  B  (addr 1)       → GPIO 19         library default
+  C  (addr 2)       → GPIO 5          library default
+  D  (addr 3)       → GPIO 17         library default
+  CLK               → GPIO 16         library default
+  LAT               → GPIO 4          library default
+  OE                → GPIO 15         library default
+  GND (×3)          → ESP32 GND
+  E (addr 4)        → not connected   1/16 scan; not used
+```
+
+Notes:
+- **Waveshare G/B swap**. Waveshare 2.5mm-pitch panels swap GREEN
+  and BLUE channels relative to standard HUB75. The firmware
+  compensates: GPIO 27 carries G1 even though the library names that
+  slot "B1", and similarly for the bottom half. **If you ever
+  substitute non-Waveshare panels, remove this swap in
+  `firmware/display/src/main.cpp:606-607`** or the colors will
+  be wrong.
+- **Strapping pins**. GPIO 5, 12, 15 are ESP32 boot strappers. GPIO
+  12 must read LOW at boot or the chip selects the wrong flash
+  voltage; the panel's idle HUB75 lines have been measured stable
+  at boot for the current build, but if you see boot loops after
+  rewiring, check 12 and 15 first.
+- **Panel power**. Each Waveshare P2.5 panel pulls 1-2A at 5V at
+  full white. Two panels in series = 4A peak from a dedicated 5V
+  rail, NOT from the ESP32's USB power. Most panel kits include a
+  spade-terminal pigtail for the 5V/GND power input — wire that to
+  the case 5V hub-rail with appropriately-gauged wire (16AWG or
+  larger for short runs).
+- **HUB75-OUT to panel 2**: a second 16-pin IDC ribbon goes from
+  panel 1's HUB75-OUT to panel 2's HUB75-IN. Order matters: panel 1
+  is the "left half" of the logical 128×32 surface, panel 2 is the
+  "right half". If they're swapped, the image displays mirrored;
+  swap the cable rather than reconfiguring firmware.
+
+**ESP32 USB** (1 cable)
+
+```
+ESP32 DevKit V1                   USB hub port (case)
+   USB mini-B  ◄═══════════════════════►  hub port 1
+```
+
+Notes: provides both data (line protocol to the daemon at
+115200 8N1) and 5V to the ESP32 board. NOT used to power the panels.
+
 ## Pi 400 GPIO breakout
 
 The Pi 400 exposes the standard 40-pin Raspberry Pi GPIO header on the
@@ -223,7 +602,7 @@ does not match the physical pin numbers on the header).
 | 29 | GPIO 5 (UART3 RXD) | GPS module TX -> Pi |
 | 14, 20, 25, 30, 34, 39 | GND | Additional ground points; use whichever is closest |
 
-### Module wiring summary
+### Device wiring
 
 Per-module view of the same allocation, organized for wiring rather
 than for reference. The 40-pin header is two rows of 20; pin 1 is at
@@ -252,28 +631,55 @@ Row of even pins:   2  4  6  8  10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40
 
 **DS3231 RTC module** (4 wires)
 
-| RTC module pin | Header pin |
-|----------------|------------|
-| VCC | 1 (3V3) |
-| GND | 6 |
-| SDA | 3 (GPIO 2) |
-| SCL | 5 (GPIO 3) |
+```
+DS3231 module                     Pi 400 GPIO header
+┌──────────┐
+│ VCC    ──┼────────────────► Pin 1   (3V3)
+│ GND    ──┼────────────────► Pin 6   (GND)
+│ SDA    ──┼────────────────► Pin 3   (GPIO 2, I2C1 SDA)
+│ SCL    ──┼────────────────► Pin 5   (GPIO 3, I2C1 SCL)
+└──────────┘
+```
+
+Notes: typical "DS3231 for Raspberry Pi" modules also expose SQW and
+32K pins; both are unused. The CR2032 backup battery is on the module
+itself; insert before first power-up so the RTC retains time across
+reboots.
 
 **GPS module** (4 wires)
 
-| GPS module pin | Header pin |
-|----------------|------------|
-| VCC | 1 (3V3) or 4 (5V), per module spec |
-| GND | 6 |
-| TX | 29 (GPIO 5, UART3 RXD) |
-| RX | 7 (GPIO 4, UART3 TXD) |
+```
+u-blox-style GPS module           Pi 400 GPIO header
+┌──────────┐
+│ VCC    ──┼────────────────► Pin 1 (3V3) or Pin 4 (5V), per the module's spec
+│ GND    ──┼────────────────► Pin 6   (GND)
+│ TX     ──┼────────────────► Pin 29  (GPIO 5, UART3 RXD into the Pi)
+│ RX     ──┼────────────────► Pin 7   (GPIO 4, UART3 TXD from the Pi)
+└──────────┘
+```
 
-**Heartbeat LED** (2 wires)
+Notes: most u-blox M-series boards (NEO-6M, NEO-7M, NEO-M8N) accept
+either 3V3 or 5V on VCC and have an onboard regulator. Check the
+specific board before connecting. TX/RX are crossed (the GPS's TX
+goes to the Pi's RX and vice versa). UART3 must be enabled in
+`/boot/firmware/config.txt` with `dtoverlay=uart3` for the Pi to see
+the GPS at `/dev/ttyAMA1`.
 
-| LED | Header pin |
-|-----|------------|
-| Anode (long lead, +) | 11 (GPIO 17) via 1k resistor |
-| Cathode (short lead, -) | 9 (any GND will do) |
+**Heartbeat LED** (2 wires + series resistor)
+
+```
+LED                               Pi 400 GPIO header
+┌────────────┐
+│ Anode (+)──┼─── 1kΩ ────────► Pin 11  (GPIO 17, daemon heartbeat output)
+│ Cathode(-)─┼────────────────► Pin 9   (GND, any GND would work)
+└────────────┘
+```
+
+Notes: 1kΩ is conservative for typical 2V red LEDs from 3.3V — gives
+~1mA, dim but visible in indoor light. Drop to 470Ω or 220Ω if you
+need a brighter indicator. The daemon drives this active-HIGH at 1Hz
+while the 50Hz channel-mapper goroutine is alive; absence of blinking
+means the daemon's not running or the mapper is wedged.
 
 ### Software notes
 
