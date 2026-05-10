@@ -375,15 +375,15 @@ must be tied to the Mega's GND for the data line to be referenced
 correctly. Power source for the strip is still TODO (see Power
 distribution).
 
-**VFD modules** (×2, Noritake CU20025ECPB-W1J in 4-bit HD44780 mode, 6 signal wires + power)
+**VFD modules** (×2, Noritake CU20025ECPB-W1J in 4-bit M68 mode, 6 signal wires + power)
 
 ```
-VFD module (16-pin LCD-compatible header)
+VFD module (14-pin header; not the standard 16-pin LCD layout)
                                   Mega (VFD0 / VFD1)
 ┌───────┐
-│ VSS  1┼──────────────────► GND
-│ VDD  2┼──────────────────► 5V (ext; the VFD draws ~150mA at full brightness)
-│ V0   3┼──────────────────► (NC for VFD; LCDs use this for contrast)
+│ GND  1┼──────────────────► GND
+│ VCC  2┼──────────────────► 5V (ext; ICC ~130mA typ, 2x at power-on inrush)
+│ FNC  3┼──────────────────► (leave open; see notes)
 │ RS   4┼──────────────────► Pin 44 (vfd0_rs) / 56 / A2 (vfd1_rs)
 │ R/W  5┼──────────────────► GND (write-only; firmware never reads back)
 │ E    6┼──────────────────► Pin 45 (vfd0_en) / 57 / A3 (vfd1_en)
@@ -395,23 +395,29 @@ VFD module (16-pin LCD-compatible header)
 │ D5  12┼──────────────────► Pin 47 (vfd0_d5) / 59 / A5 (vfd1_d5)
 │ D6  13┼──────────────────► Pin 48 (vfd0_d6) / 60 / A6 (vfd1_d6)
 │ D7  14┼──────────────────► Pin 49 (vfd0_d7) / 61 / A7 (vfd1_d7)
-│ A   15┼──────────────────► (NC for VFD; LCDs use this for backlight +)
-│ K   16┼──────────────────► (NC for VFD; LCDs use this for backlight -)
 └───────┘
 ```
 
 Notes:
+- **14-pin header, not 16.** The CU20025ECPB-W1J has no LED backlight
+  (it's a self-luminous VFD), so pins 15 and 16 — the A and K
+  backlight pins on a standard HD44780 LCD — are not present.
+- **Pin 3 is `FNC`, not contrast.** Per datasheet: "normally open
+  circuit. If pads JP1.1 and JP1.2 are linked, Pin 3 = /Reset". So
+  leave it unwired unless you've explicitly bridged the JP1 jumper
+  on the back of the module to expose external reset.
+- **JP2 jumper selects the bus protocol.** Default (no jumper) is
+  M68-style: pin 5 = R/W, pin 6 = E. Bridged is i80-style: pin 5 =
+  /WR, pin 6 = /RD. **Leave JP2 open**; the firmware uses the
+  duinoWitchery `hd44780_NTCU20025ECPB_pinIO` class which speaks M68.
 - 6 signal wires per VFD: RS, E, D4-D7. R/W tied to GND so the chip
   is write-only.
-- VFDs do not have a backlight or contrast pin. Pins 3, 15, 16 are
-  generally NC. Confirm against the specific module's datasheet
-  before powering up — some Noritake variants reuse pin 3 for a
-  brightness/dimming input.
 - Two VFDs share the data lines? **No.** This wiring is for two
   *independent* VFDs each on its own 6-pin set (vfd0 vs vfd1). They
   share VCC + GND only.
-- Power: 150-300mA per VFD depending on brightness and content.
-  Use the case 5V rail.
+- Power: ICC 130mA typical per VFD, can hit 260mA at power-on
+  inrush. Use the case 5V rail; do not draw from the Mega's
+  regulator.
 
 **LDR ambient-light sensor** (2 wires + divider resistor)
 

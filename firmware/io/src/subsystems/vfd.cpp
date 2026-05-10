@@ -171,9 +171,30 @@ void Vfd::uploadCustomGlyphs(Instance& inst) {
 
 void Vfd::setBrightnessLevel(Instance& inst, uint8_t level) {
   if (level > 3) level = 3;
-  // Noritake brightness via the function-set extension: 0x28 base +
-  // (3 - level) in the low 2 bits gives 0=brightest..3=dimmest as
-  // exposed to the operator.
+  // Brightness via function-set lower bits: 0x28 base + (3 - level) in
+  // the bottom 2 bits gives 0=brightest..3=dimmest as exposed to the
+  // operator.
+  //
+  // Caveat: the CU20025ECPB-W1J datasheet documents a SEPARATE
+  // brightness command at RS=H, RW=L, 0x00..0x03 (see the "Brightness
+  // Set" row in the datasheet's Software Commands table). What we do
+  // here -- send 0x28..0x2B with RS=L, which is the function-set
+  // range -- is the older Noritake convention where brightness lives
+  // in BR1/BR0 of the function-set command.
+  //
+  // It happens to work on this part (probably because the chip
+  // accepts both forms, or because the duinoWitchery
+  // hd44780_NTCU20025ECPB_pinIO driver translates internally), but
+  // it's not the documented path. If a future firmware upgrade adds
+  // a true brightness control surface in the GUI, switch to the
+  // documented command:
+  //
+  //     inst.lcd->setCursor(...); // ensure RS path -- check library
+  //     // Or use the library's setBrightness() if it exposes one.
+  //
+  // Verified working on the CU20025ECPB-W1J in this build. Don't
+  // change without bench testing actual brightness change between
+  // levels 0 and 3.
   uint8_t bits = (3 - level) & 0x03;
   inst.lcd->command(0x28 | bits);
 }
