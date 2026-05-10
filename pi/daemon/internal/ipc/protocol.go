@@ -7,7 +7,7 @@
 //
 // CRC is CRC-16/CCITT-FALSE over [type..payload]. Each frame is COBS-encoded
 // and terminated with a 0x00 byte on the wire. The constants below mirror
-// rp2040/src/protocol.h byte-for-byte and are kept in sync manually.
+// firmware/crsf/src/protocol.h byte-for-byte and are kept in sync manually.
 package ipc
 
 // Message type codes.

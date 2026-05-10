@@ -88,4 +88,4 @@ python3 test_cross.py # Python encoder vs C encoder, byte-exact
 
 ## Wire format
 
-See `../docs/ipc_protocol.md` for the COBS+CRC framing and message catalog.
+See `../../docs/protocols/ipc.md` for the COBS+CRC framing and message catalog.

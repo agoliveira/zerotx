@@ -17,10 +17,10 @@ onboard WS2812 RGB LED on GP16, USB-C.
 
 **Source of truth:**
 
-- `rp2040/src/crsf.c` (lines 10-11): `CRSF_UART_TX`, `CRSF_UART_RX`
-- `rp2040/src/input_arm.h` (line 32): `INPUT_ARM_PIN`
-- `rp2040/src/input_momentary.h` (line 36): `INPUT_MOMENTARY_PIN`
-- `rp2040/src/status_led.h` (line 8): `STATUS_LED_PIN`
+- `firmware/crsf/src/crsf.c` (lines 10-11): `CRSF_UART_TX`, `CRSF_UART_RX`
+- `firmware/crsf/src/input_arm.h` (line 32): `INPUT_ARM_PIN`
+- `firmware/crsf/src/input_momentary.h` (line 36): `INPUT_MOMENTARY_PIN`
+- `firmware/crsf/src/status_led.h` (line 8): `STATUS_LED_PIN`
 
 Pin numbers are compile-time `#define` values. Changing them requires
 a firmware reflash.

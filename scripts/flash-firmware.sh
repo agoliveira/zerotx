@@ -4,8 +4,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
-UF2=$(find "$REPO_ROOT/rp2040/build" -maxdepth 2 -name '*.uf2' 2>/dev/null | head -1)
-[[ -n "$UF2" ]] || die "No .uf2 in rp2040/build/. Run scripts/build-firmware.sh first."
+UF2=$(find "$REPO_ROOT/firmware/crsf/build" -maxdepth 2 -name '*.uf2' 2>/dev/null | head -1)
+[[ -n "$UF2" ]] || die "No .uf2 in firmware/crsf/build/. Run scripts/build-firmware.sh first."
 
 # Try common mount points. /media/$USER/RPI-RP2 covers most desktop distros.
 candidates=(

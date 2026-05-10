@@ -32,7 +32,7 @@ test-daemon:
 clean:
 	@echo "==> Cleaning build artifacts"
 	@rm -rf pi/daemon/bin
-	@rm -rf rp2040/build
+	@rm -rf firmware/crsf/build
 	@cd pi/daemon && go clean ./... 2>/dev/null || true
 
 help:

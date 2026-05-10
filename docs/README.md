@@ -36,7 +36,7 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 - `firmware/display/README.md`: ESP32 HUB75 panel driver
 - `firmware/io/README.md`: Mega 2560 IO board firmware, canonical pin table, HAL flags
 - `firmware/tracker/README.md`: ESP32-S3 antenna tracker firmware (optional pole-end add-on)
-- `rp2040/README.md`: RP2040 CRSF generator firmware
+- `firmware/crsf/README.md`: RP2040 CRSF generator firmware
 
 ## Tools
 

@@ -93,7 +93,7 @@ func TestAllZerosCOBSEdgeCase(t *testing.T) {
 
 func TestMatchesFirmwareTestVectors(t *testing.T) {
 	// These hex strings are the byte-exact output produced by
-	// rp2040/tests/test_ipc.c when fed identical inputs. Keeping this in sync
+	// firmware/crsf/tests/test_ipc.c when fed identical inputs. Keeping this in sync
 	// is the contract that proves the C and Go encoders agree.
 	cases := []struct {
 		name    string

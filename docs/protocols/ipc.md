@@ -160,6 +160,6 @@ don't enforce ordering or detect drops via SEQ.
   - `protocol.go` — constants, message types, version
   - `framing.go` — COBS, CRC, BuildFrame, ParseFrame
   - `link.go` — Link type, callbacks, Run loop
-- Firmware: `rp2040/src/`
+- Firmware: `firmware/crsf/src/`
   - `proto.c` — frame composition + parsing
   - `state.c` — state machine driving HOLD/FAILSAFE

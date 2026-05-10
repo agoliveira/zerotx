@@ -257,5 +257,5 @@ Case-side connectors. **TODO**: confirm final list and locations after assembly.
 - `firmware/display/README.md`: ESP32 panel driver, GPIO pinout, panel chain detail
 - `firmware/io/README.md`: Mega IO firmware, canonical pin table, HAL flags
 - `firmware/tracker/README.md`: ESP32-S3 antenna tracker firmware
-- `rp2040/README.md`: CRSF endpoint firmware
+- `firmware/crsf/README.md`: CRSF endpoint firmware
 - `tools/zerotx-iohal-config/`: HAL configuration CLI for Mega pin mapping

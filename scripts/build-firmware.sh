@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build the RP2040 firmware. Output: rp2040/build/zerotx-fw.uf2
+# Build the RP2040 firmware. Output: firmware/crsf/build/zerotx-fw.uf2
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
 PICO_SDK_PATH="$(resolve_pico_sdk)"
 say "Using Pico SDK at: $PICO_SDK_PATH"
 
-cd "$REPO_ROOT/rp2040"
+cd "$REPO_ROOT/firmware/crsf"
 mkdir -p build
 cd build
 
@@ -54,7 +54,7 @@ if [[ -z "$UF2" && -n "$ELF" ]]; then
 fi
 
 if [[ -n "$UF2" ]]; then
-  say "Built: $REPO_ROOT/rp2040/build/$(basename "$UF2")"
+  say "Built: $REPO_ROOT/firmware/crsf/build/$(basename "$UF2")"
 else
   warn "Build finished but no .uf2 found"
 fi

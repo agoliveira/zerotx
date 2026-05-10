@@ -53,7 +53,7 @@ make test-fast     # skips joystick (cgo); covers ipc, model, mapper
 ```
 
 `internal/ipc` includes a byte-exact cross-validation against
-`rp2040/tests/test_ipc.c` test vectors. The same wire frames produced by the
+`firmware/crsf/tests/test_ipc.c` test vectors. The same wire frames produced by the
 firmware unit test must match what the Go encoder produces.
 
 ## Running the daemon
@@ -117,7 +117,7 @@ What it does **not** do yet:
 ## Wire protocol
 
 See `../../docs/ipc_protocol.md`. The Go side in `internal/ipc` and the C
-side in `rp2040/src/protocol.h` share constants byte-for-byte; a Go test
+side in `firmware/crsf/src/protocol.h` share constants byte-for-byte; a Go test
 verifies the encoders agree. Any change to either side is a coordinated
 change to both.
 

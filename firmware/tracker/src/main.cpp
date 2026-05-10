@@ -80,7 +80,7 @@ constexpr int UART2_TX = 5;   // ELRS module side (to module RX)
 // CRSF parameters
 // =====================================================================
 //
-// 420 kbaud matches the rp2040 CRSF generator (rp2040/src/crsf.c).
+// 420 kbaud matches the rp2040 CRSF generator (firmware/crsf/src/crsf.c).
 constexpr int CRSF_BAUD = 420000;
 
 // =====================================================================

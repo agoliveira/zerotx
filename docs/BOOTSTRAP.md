@@ -609,4 +609,4 @@ This is the canonical baseline for cloning to a fresh SSD. Re-image after any ma
 - `docs/OPERATIONS.md`: daemon launch flags, recovery procedures
 - `docs/DECISIONS.md`: locked decisions
 - `docs/ROADMAP.md`: pinned items including Pi 400 CPU optimization
-- `firmware/display/README.md`, `firmware/io/README.md`, `rp2040/README.md`: firmware build and flash procedures
+- `firmware/display/README.md`, `firmware/io/README.md`, `firmware/crsf/README.md`: firmware build and flash procedures

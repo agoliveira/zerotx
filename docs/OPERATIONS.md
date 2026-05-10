@@ -177,7 +177,7 @@ Symptom: RP2040 device path keeps disappearing and reappearing every few seconds
 
 Diagnose: hardware watchdog (firmware m1.8-wdt) resets on internal stall. Common causes: USB-CDC starvation, firmware bug, brown-out on 5V.
 
-Fix: check 5V rail under load; replug USB at the dedicated Pi port. If persistent, reflash via BOOTSEL mode (see `rp2040/README.md`).
+Fix: check 5V rail under load; replug USB at the dedicated Pi port. If persistent, reflash via BOOTSEL mode (see `firmware/crsf/README.md`).
 
 ### LCD shows no signal
 
@@ -315,7 +315,7 @@ See `firmware/io/README.md`. Same `pio run -t upload` pattern in `firmware/io/`.
 
 ### RP2040 CRSF firmware
 
-See `rp2040/README.md`. Build the .uf2 with Pico SDK and CMake, then put the RP2040 into BOOTSEL mode and copy the file.
+See `firmware/crsf/README.md`. Build the .uf2 with Pico SDK and CMake, then put the RP2040 into BOOTSEL mode and copy the file.
 
 ### Tracker firmware (ESP32-S3, pole-end, optional)
 
@@ -346,4 +346,4 @@ Verify in Map browser: zoom to a known coordinate, confirm imagery loads.
 - `docs/protocols/display.md`: HUB75 panel command grammar
 - `docs/DECISIONS.md`: locked decisions
 - `docs/ROADMAP.md`: pinned and backlog items
-- `firmware/display/README.md`, `firmware/io/README.md`, `firmware/tracker/README.md`, `rp2040/README.md`: firmware-specific procedures
+- `firmware/display/README.md`, `firmware/io/README.md`, `firmware/tracker/README.md`, `firmware/crsf/README.md`: firmware-specific procedures

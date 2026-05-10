@@ -40,10 +40,10 @@ zerotx/
 │   ├── web/           HUD and Map browser UIs
 │   └── configs/       aircraft profiles, panel YAML
 ├── firmware/
+│   ├── crsf/          Pico SDK firmware on RP2040 (CRSF generator + arm/momentary inputs)
 │   ├── display/       ESP32 HUB75 panel driver
 │   ├── io/            Mega 2560 IO board
 │   └── tracker/       ESP32-S3 inline antenna tracker (optional add-on)
-├── rp2040/            Pico SDK firmware (CRSF generator)
 ├── tools/             Tile builders, replay tools, HAL configurator
 ├── docs/              Architecture, connections, operations, protocols
 ├── SAFETY.md          Safety architecture and decisions
@@ -63,7 +63,7 @@ go build -o bin/zerotxd ./cmd/zerotxd
 
 ### RP2040 firmware
 
-See [`rp2040/README.md`](rp2040/README.md).
+See [`firmware/crsf/README.md`](firmware/crsf/README.md).
 
 ### ESP32 panel and Mega IO firmware
 

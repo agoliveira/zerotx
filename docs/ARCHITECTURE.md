@@ -68,7 +68,7 @@ Drives VFD, trackball ring LEDs (bicolor green/red), 4 buttons, 4 LEDs, 4 relays
 Drives 2x Waveshare P2.5 64x32 panels chained, 128x32 logical resolution. USB-CDC link to Pi. RP2040 was attempted earlier and rejected (3.3V signaling insufficient at panel input shift registers); level shifters explicitly ruled out. See `firmware/display/README.md`.
 
 ### RP2040 (CRSF endpoint)
-Bidirectional CRSF on the wire side, USB-CDC to the Pi on the host side. Outbound: receives joystick-derived channel intents from the daemon, generates CRSF frames. Inbound: receives CRSF telemetry coming back from the link, forwards frames to the daemon. The wire side connects directly to the case-to-pole cable; in default configuration this is a single-wire half-duplex link to the ELRS module (TX merged into RX through a series resistor at the case end). Hardware watchdog enabled (firmware m1.8-wdt). See `rp2040/README.md`.
+Bidirectional CRSF on the wire side, USB-CDC to the Pi on the host side. Outbound: receives joystick-derived channel intents from the daemon, generates CRSF frames. Inbound: receives CRSF telemetry coming back from the link, forwards frames to the daemon. The wire side connects directly to the case-to-pole cable; in default configuration this is a single-wire half-duplex link to the ELRS module (TX merged into RX through a series resistor at the case end). Hardware watchdog enabled (firmware m1.8-wdt). See `firmware/crsf/README.md`.
 
 ### ESP32-S3 (antenna tracker, optional)
 Pole-end add-on. Sits inline on the wired CRSF path between the cable's pole-end MAX490 and the ELRS TX module's CRSF UART, byte-pumps frames transparently in both directions on Core 1 at top priority (the safety floor), parses CRSF GPS telemetry on Core 0, computes az/el to the aircraft, and drives a 2-DOF pan/tilt gimbal autonomously. Daemon-unaware: the case-side stack does not know the tracker exists, and removing it (or hardware-bypassing the cable past it) requires zero daemon changes. Failsafe is hold-last-position by construction. Requires the extended cable configuration described below. See `firmware/tracker/README.md`.
@@ -251,7 +251,7 @@ Wiring detail for both configurations is in `docs/CONNECTIONS.md`.
 - `firmware/display/README.md`: ESP32 panel firmware
 - `firmware/io/README.md`: Mega IO board firmware and HAL
 - `firmware/tracker/README.md`: ESP32-S3 antenna tracker firmware
-- `rp2040/README.md`: CRSF endpoint firmware
+- `firmware/crsf/README.md`: CRSF endpoint firmware
 - `docs/CONNECTIONS.md`: physical wiring and topology
 - `docs/OPERATIONS.md`: launch and recovery procedures
 - `docs/BOOTSTRAP.md`: bare-metal Pi 400 provisioning
