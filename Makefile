@@ -5,7 +5,7 @@
 
 SHELL := /usr/bin/env bash
 
-.PHONY: all daemon firmware run run-idle flash test test-daemon clean help
+.PHONY: all daemon firmware run run-idle flash test test-daemon clean distclean help
 
 all: daemon firmware
 
@@ -29,11 +29,29 @@ test: test-daemon
 test-daemon:
 	@cd pi/daemon && go test -count=1 -race ./...
 
+# Remove build artifacts. Safe to run anytime; next build regenerates.
+# Covers: daemon (Go cache + bin/), CRSF firmware (Pico SDK CMake build),
+# PlatformIO firmware (io, display, tracker), Python bytecode caches.
 clean:
 	@echo "==> Cleaning build artifacts"
 	@rm -rf pi/daemon/bin
+	@rm -f  pi/daemon/zerotxd pi/daemon/*.test pi/daemon/*.out
 	@rm -rf firmware/crsf/build
+	@rm -rf firmware/io/.pio firmware/display/.pio firmware/tracker/.pio
+	@find . -type d -name __pycache__ -prune -exec rm -rf {} +
+	@find . -type f -name '*.pyc' -delete
 	@cd pi/daemon && go clean ./... 2>/dev/null || true
+
+# Remove locally-downloaded and locally-generated assets in addition to
+# build artifacts. DESTRUCTIVE: re-running scripts/fetch-voices.sh,
+# tools/build-geo.sh, and any tile/map build pipeline is required after
+# this. Daemon runtime state (cache/) and operator-private notes
+# (HANDOVER.md, JOURNAL.md) are NOT touched -- those live outside the
+# clean/distclean scope.
+distclean: clean
+	@echo "==> Removing downloaded assets (voices, piper binary, tiles, geo DBs)"
+	@rm -rf voices bin maptiles
+	@rm -f  geo/*.db
 
 help:
 	@echo "Targets:"
@@ -44,7 +62,8 @@ help:
 	@echo "  make run-idle   run daemon in IDLE (no model, no joystick)"
 	@echo "  make flash      copy .uf2 to RPI-RP2 (requires BOOTSEL)"
 	@echo "  make test       run all daemon tests"
-	@echo "  make clean      remove build artifacts"
+	@echo "  make clean      remove build artifacts (safe, regenerable)"
+	@echo "  make distclean  also remove downloaded assets (voices, tiles, geo DBs)"
 	@echo
 	@echo "Pass extra daemon flags via ARGS:"
 	@echo "  make run ARGS='-v'"
