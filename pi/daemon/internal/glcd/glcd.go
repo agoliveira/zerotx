@@ -65,13 +65,13 @@ func (d *Driver) Run(ctx context.Context) {
 			log.Printf("glcd: push loop exiting (pushed=%d skipped=%d)", d.pushed, d.skipped)
 			return
 		case <-t.C:
-			d.pushOnce(time.Now())
+			d.pushOnce()
 		}
 	}
 }
 
-func (d *Driver) pushOnce(now time.Time) {
-	snap := d.tele.Snapshot(now)
+func (d *Driver) pushOnce() {
+	snap := d.tele.Snapshot()
 	if snap.Attitude == nil || snap.Attitude.Stale {
 		d.skipped++
 		return

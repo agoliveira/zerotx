@@ -39,7 +39,7 @@ void Glcd::begin(Stream& out) {
 
   // Pulse /RESET low to cold-start the controller. ST7920 reset
   // pulse min 1us; hold for 10ms to be safe.
-  uint8_t reset_pin = hal::pin(HAL_GLCD_RESET);
+  uint8_t reset_pin = hal::pin(hal::HAL_GLCD_RESET);
   pinMode(reset_pin, OUTPUT);
   digitalWrite(reset_pin, LOW);
   delay(10);
@@ -49,7 +49,7 @@ void Glcd::begin(Stream& out) {
   // Construct on the heap so we can pass HAL-resolved CS pin at
   // begin() rather than at static-init time. ~64 bytes + 1024 byte
   // framebuffer.
-  uint8_t cs_pin = hal::pin(HAL_GLCD_CS);
+  uint8_t cs_pin = hal::pin(hal::HAL_GLCD_CS);
   u8g2 = new U8G2_ST7920_128X64_F_HW_SPI(
       U8G2_R0,            // no rotation
       cs_pin,             // CS (active high; u8g2 handles inversion)
