@@ -6,8 +6,8 @@ pi/daemon/*.out
 go.work
 go.work.sum
 
-# RP2040 build
-rp2040/build/
+# Firmware builds (CRSF on RP2040 via Pico SDK + CMake)
+firmware/crsf/build/
 
 # IDE / editor
 .vscode/
@@ -66,3 +66,10 @@ cache/
 
 # PlatformIO build artifacts (firmware/io, firmware/tracker, etc.)
 .pio/
+
+# Python build artifacts (firmware/crsf/tools/, firmware/crsf/tests/)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
