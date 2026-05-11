@@ -29,6 +29,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/gps"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/glcd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/heartbeat"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
@@ -881,6 +882,17 @@ func main() {
 		tbDrv := trackballled.New(hub, armMachine, alertProvider)
 		go tbDrv.Run(ctx)
 		log.Printf("trackballled: started")
+	}
+
+	// 128x64 graphic LCD on the Mega: cool-factor artificial horizon.
+	// Pushes attitude (pitch, roll, heading) from telemetry at ~10 Hz;
+	// the firmware re-renders an AH widget locally. Hub is shared
+	// with VFD + trackball; NullClient (no -iohub-port) makes the
+	// push goroutine a harmless no-op.
+	{
+		glcdDriver := glcd.New(hub, telemetryState)
+		go glcdDriver.Run(ctx)
+		log.Printf("glcd: started")
 	}
 
 	// Construct the netclass holder. Operator-declared network class

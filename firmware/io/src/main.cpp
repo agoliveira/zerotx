@@ -27,6 +27,7 @@
 #include "subsystems/button.h"
 #include "subsystems/buzzer.h"
 #include "subsystems/encoder.h"
+#include "subsystems/glcd.h"
 #include "subsystems/hal_subsystem.h"
 #include "subsystems/i2c_lcd.h"
 #include "subsystems/ldr.h"
@@ -72,6 +73,7 @@ zerotx::Ldr          g_ldr;
 zerotx::Buzzer       g_buzzer;
 zerotx::Encoder      g_encoder;
 zerotx::ServoSubsys  g_servo;
+zerotx::Glcd         g_glcd;
 
 zerotx::Subsystem* const kSubsystems[] = {
   &g_hal_subsys,
@@ -86,6 +88,7 @@ zerotx::Subsystem* const kSubsystems[] = {
   &g_buzzer,
   &g_encoder,
   &g_servo,
+  &g_glcd,
   // Add more here.
 };
 constexpr size_t kSubsystemCount = sizeof(kSubsystems) / sizeof(kSubsystems[0]);

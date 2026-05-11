@@ -152,11 +152,15 @@ The table below is the **default** map.
 | 40 | WS2813 strip data (`ws_data`) | |
 | 44 | VFD0 RS (`vfd0_rs`) | Noritake CU20025ECPB-W1J in 4-bit HD44780 mode |
 | 45 | VFD0 EN (`vfd0_en`) | |
+| 10 | GLCD /RESET (`glcd_reset`) | Pulsed at boot to cold-start the ST7920 controller |
 | 46 | VFD0 D4 (`vfd0_d4`) | |
 | 47 | VFD0 D5 (`vfd0_d5`) | |
 | 48 | VFD0 D6 (`vfd0_d6`) | |
 | 49 | VFD0 D7 (`vfd0_d7`) | |
-| 50, 51, 52, 53 | SPI MISO, MOSI, SCK, SS | Free for future SPI peripheral (SD card, SPI display, etc.) |
+| 50 | SPI MISO | Reserved free; ST7920 GLCD doesn't read back |
+| 51 | SPI MOSI | GLCD SID (`glcd_*` doesn't list this -- hardware SPI pins are not in HAL) |
+| 52 | SPI SCK | GLCD CLK (same; hardware-fixed) |
+| 53 | SPI SS / GLCD CS (`glcd_cs`) | Default SS used as ST7920 CS; HAL-remappable |
 | 54 (A0) | LDR ambient-light sensor (`ldr_0`) | Analog input |
 | 56 (A2) | VFD1 RS (`vfd1_rs`) | Second VFD via Vfd subsystem (`vfd.1`) |
 | 57 (A3) | VFD1 EN (`vfd1_en`) | |
@@ -165,10 +169,10 @@ The table below is the **default** map.
 | 60 (A6) | VFD1 D6 (`vfd1_d6`) | |
 | 61 (A7) | VFD1 D7 (`vfd1_d7`) | |
 
-**Unused pins** in the default config: 10, 13 (also onboard LED), 41,
-42, 43, and analog A1, A8-A15 (9 free analog channels). Pins 14-19
-(Serial1/2/3) are reserved free for future UART expansion. Pins 50-53
-(SPI bus) are reserved free.
+**Unused pins** in the default config: 13 (also onboard LED), 41,
+42, and analog A1, A8-A15 (9 free analog channels). Pins 14-19
+(Serial1/2/3) are reserved free for future UART expansion. Pin 50
+(SPI MISO) is reserved free since the ST7920 GLCD doesn't read back.
 
 **Per-pin polarity flags** are also EEPROM-stored. The default for all
 outputs is active-high; flip the `ACTIVE_LOW` bit per slot for boards
@@ -453,6 +457,58 @@ are unusual (very dim or very bright). KY-018 modules wrap this
 divider into a board with two outputs (digital threshold via
 trim-pot, plus analog); use the analog output (AO) into A0 and ignore
 DO.
+
+**128x64 graphic LCD** (ST7920 controller, 3-wire serial mode; 8 signals)
+
+```
+ST7920 LCD module (14-pin connector; pins 7-14 are DB0-DB7, unused in serial mode)
+                                  Mega
+┌────────────┐
+│ VSS    1 ──┼─────────────────► GND
+│ VDD    2 ──┼─────────────────► 5V
+│ V0     3 ──┼────┐  contrast divider (10k multi-turn trimpot)
+│            │    │
+│            │    └── 10k pot wiper ──── 5V
+│            │                  │
+│            │                  └─── GND
+│ CS     4 ──┼─────────────────► Pin 53 (glcd_cs, hardware SPI SS)
+│ SID    5 ──┼─────────────────► Pin 51 (MOSI, hardware SPI fixed)
+│ CLK    6 ──┼─────────────────► Pin 52 (SCK, hardware SPI fixed)
+│ PSB   15 ──┼─────────────────► GND  (forces 3-wire serial mode)
+│ /RESET 17──┼─────────────────► Pin 10 (glcd_reset, firmware pulses on init)
+│ A     19 ──┼─── R_bl ──────► 5V  (backlight; R_bl per module datasheet, often built-in)
+│ K     20 ──┼─────────────────► GND (backlight cathode)
+└────────────┘
+
+   (DB0..DB7, NC, Vout — pins 7-14, 16, 18 — left unconnected)
+```
+
+Notes:
+- **Serial mode only.** PSB tied to GND at the panel selects 3-wire
+  mode at power-on. The module also supports parallel mode (PSB=H,
+  8 data wires); we don't use that.
+- **CS is active-HIGH** on the ST7920, unusual for SPI. The u8g2
+  library's ST7920 constructor handles the inversion internally so
+  the firmware just passes the pin number; do not invert in wiring.
+- **Hardware SPI pins are fixed.** SID and CLK must go to Mega
+  pins 51 (MOSI) and 52 (SCK) respectively; these aren't
+  HAL-remappable. CS and /RESET are remappable via HAL (`glcd_cs`,
+  `glcd_reset`).
+- **Contrast trimpot.** The ST7920's V0 pin wants a stable voltage
+  for character contrast. Standard wiring is a 10k multi-turn
+  trimpot from 5V to GND with the wiper to V0. Adjust until the
+  pixel contrast looks right; once dialed in, it doesn't drift.
+  Some modules have an onboard trimpot soldered to the PCB; in
+  that case V0 is internal and you don't wire pin 3.
+- **Backlight current.** Modules vary: many have a built-in
+  current-limit resistor on the A pin so you can wire +5V directly,
+  others want an external 220-330Ω in series. Check the silkscreen
+  or measure A→K resistance on the bare module. WS series modules
+  (most common) have it built in.
+- **Power draw.** ~50-80 mA at 5V depending on backlight type
+  (LED or EL film). Within the Mega's 5V regulator capability for
+  this single device, but if combined with the VFDs on the same
+  rail, prefer the case 5V (ext) hub-rail.
 
 ## ESP32 DevKit V1 (HUB75 LED panel driver)
 

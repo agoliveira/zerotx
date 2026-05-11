@@ -3,7 +3,7 @@
 // EEPROM layout v2:
 //
 //   [0..3]   magic = 0x5A455243 ("ZERC" little-endian)
-//   [4]      version = HAL_EEPROM_VERSION (3)
+//   [4]      version = HAL_EEPROM_VERSION (4)
 //   [5]      stored count (must match compile-time HAL_PIN_COUNT)
 //   [6..6+2N-1]  N entries, 2 bytes each: { pin_number, flags }
 //   [end..end+1] CRC16 over preceding bytes
@@ -33,7 +33,7 @@ namespace hal {
 
 static constexpr uint16_t HAL_EEPROM_BASE    = 0;
 static constexpr uint32_t HAL_EEPROM_MAGIC   = 0x5A455243UL;
-static constexpr uint8_t  HAL_EEPROM_VERSION = 3;
+static constexpr uint8_t  HAL_EEPROM_VERSION = 4;
 
 // Bytes per pin entry in EEPROM v2 (pin_number + flags).
 static constexpr uint8_t HAL_ENTRY_BYTES = 2;
@@ -101,6 +101,8 @@ static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
   /* HAL_SERVO_1             */ 7,
   /* HAL_SERVO_2             */ 8,
   /* HAL_SERVO_3             */ 9,
+  /* HAL_GLCD_CS             */ 53,   // Mega hardware SPI SS (default)
+  /* HAL_GLCD_RESET          */ 10,   // free digital pin; firmware can pulse for cold-reset
 };
 
 // Default flags: 0 across the board (active-high). Operator can flip
@@ -152,6 +154,8 @@ static const char* const kHalPinNames[HAL_PIN_COUNT] = {
   /* HAL_SERVO_1             */ "servo_1",
   /* HAL_SERVO_2             */ "servo_2",
   /* HAL_SERVO_3             */ "servo_3",
+  /* HAL_GLCD_CS             */ "glcd_cs",
+  /* HAL_GLCD_RESET          */ "glcd_reset",
 };
 
 // ----- Module state -----------------------------------------------------

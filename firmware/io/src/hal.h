@@ -95,6 +95,12 @@ enum HalPinId : uint8_t {
   HAL_SERVO_1 = 39,
   HAL_SERVO_2 = 40,
   HAL_SERVO_3 = 41,
+  // 128x64 graphic LCD (ST7920 controller, serial mode). PSB jumper
+  // is tied to GND on the panel side so the module enters 3-wire
+  // serial mode at power-on. SID and CLK are fixed at Mega hardware
+  // SPI MOSI (51) and SCK (52); only CS and /RESET are HAL-remappable.
+  HAL_GLCD_CS    = 42,
+  HAL_GLCD_RESET = 43,
   HAL_PIN_COUNT  // sentinel; must be last
 };
 
