@@ -23,8 +23,8 @@ type Link struct {
 	port serial.Port
 
 	// OnFrame is invoked for every parsed frame except MsgLog (which goes to
-	// OnLog instead), MsgTelemetry (which goes to OnTelemetry instead),
-	// MsgInputEvent (which goes to OnInputEvent instead) and the handshake
+	// OnLog instead), MsgTelemetry (OnTelemetry), MsgInputEvent
+	// (OnInputEvent), MsgHeartbeat (OnHeartbeatRx) and the handshake
 	// messages (which are handled internally). Set before calling Run.
 	OnFrame func(Frame)
 	// OnLog receives MCU log strings. If nil, MCU logs go to stdlib log.
@@ -39,6 +39,13 @@ type Link struct {
 	// arm state machine and any future controls-area consumers. If nil,
 	// input events are silently dropped.
 	OnInputEvent func(inputID, state byte)
+	// OnHeartbeatRx is invoked for every MsgHeartbeat frame received from
+	// the MCU. The argument is the MCU's heartbeat sequence number, useful
+	// for detecting gaps. The MCU emits at ZTX_HEARTBEAT_TX_PERIOD_MS
+	// (200 ms in M1), so the callback fires at roughly 5 Hz when the
+	// link is healthy. Used by devhealth to track RP2040 liveness; nil
+	// is fine if the consumer doesn't care.
+	OnHeartbeatRx func(seq byte)
 
 	// LocalVersion is the daemon's human-readable version string sent in
 	// the MsgHello payload. Optional; if empty, "" is sent.
@@ -165,6 +172,19 @@ func (l *Link) dispatch(f Frame) {
 	case MsgInputEvent:
 		if l.OnInputEvent != nil && len(f.Payload) >= 2 {
 			l.OnInputEvent(f.Payload[0], f.Payload[1])
+		}
+		return
+	case MsgHeartbeat:
+		// MCU-to-Pi heartbeat. The payload is a 1-byte sequence number
+		// from the MCU. We don't currently use the seq for anything,
+		// but pass it through so a future consumer can detect gaps.
+		// Used by devhealth to track RP2040 liveness.
+		if l.OnHeartbeatRx != nil {
+			var seq byte
+			if len(f.Payload) >= 1 {
+				seq = f.Payload[0]
+			}
+			l.OnHeartbeatRx(seq)
 		}
 		return
 	}

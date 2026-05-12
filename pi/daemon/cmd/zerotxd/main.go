@@ -579,12 +579,31 @@ func main() {
 	syscheckGate := syscheck.New()
 
 	// Per-device health registry. Empty at this point; subsequent
-	// commits (2-5) Register the RP2040 IPC link, HDMI kiosk
-	// displays, the Mega IO board + subsystems, and the ESP32
-	// display, and Touch them as liveness signals arrive. With no
-	// devices registered yet, devs.AllBlockingUp() returns true and
-	// the preflight Ready flag is unaffected.
+	// commits (3-5) Register the HDMI kiosk displays, the Mega IO
+	// board + subsystems, and the ESP32 display, and Touch them as
+	// liveness signals arrive. The RP2040 is wired below if we have
+	// a real (non-SITL) link.
 	devs := devhealth.New()
+
+	// Register the RP2040 as a blocking device when not in SITL mode.
+	// The MCU emits a heartbeat back at ZTX_HEARTBEAT_TX_PERIOD_MS
+	// (200 ms in M1). Timeout = 500 ms = 2.5x that period: tolerant
+	// of one missed heartbeat plus scheduler jitter, but well under
+	// the 1-second human-perception threshold for "the link just
+	// dropped". Touch wiring goes on link.OnHeartbeatRx, set here so
+	// the callback is in place before link.Run starts (further below).
+	//
+	// In SITL mode (link == nil), no RP2040 device is registered. The
+	// RP2040 is physically absent in that scenario, and the operator
+	// is running against a TCP-connected FC simulator. AllBlockingUp
+	// remains vacuously true.
+	if link != nil {
+		devs.Register("rp2040", devhealth.KindRP2040, true, 500*time.Millisecond)
+		link.OnHeartbeatRx = func(seq byte) {
+			_ = seq // sequence number not currently used; reserved for gap detection
+			devs.Touch("rp2040", nil)
+		}
+	}
 
 	// Display device (HUB75 LED panel), optional. When -display-port
 	// is set, run a Manager that opens the serial port, talks the
