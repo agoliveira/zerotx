@@ -26,6 +26,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/arm"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/crsftee"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/devhealth"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devices/display"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/gps"
@@ -576,6 +577,14 @@ func main() {
 	// flips this gate. Process-local: the gate resets every daemon
 	// reboot so a Pi restart brings the operator back to the check.
 	syscheckGate := syscheck.New()
+
+	// Per-device health registry. Empty at this point; subsequent
+	// commits (2-5) Register the RP2040 IPC link, HDMI kiosk
+	// displays, the Mega IO board + subsystems, and the ESP32
+	// display, and Touch them as liveness signals arrive. With no
+	// devices registered yet, devs.AllBlockingUp() returns true and
+	// the preflight Ready flag is unaffected.
+	devs := devhealth.New()
 
 	// Display device (HUB75 LED panel), optional. When -display-port
 	// is set, run a Manager that opens the serial port, talks the
@@ -1377,7 +1386,7 @@ func buildAPIProviders(
 			return out
 		},
 		Preflight: func() api.Preflight {
-			return buildPreflight(holder, jsHolder, port, modelDefaultPath)
+			return buildPreflight(holder, jsHolder, devs, port, modelDefaultPath)
 		},
 		LoadModel: func(path string) error {
 			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, lang, path); err != nil {
@@ -1655,7 +1664,7 @@ func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Pane
 
 // buildPreflight returns the aggregate readiness snapshot the GUI's
 // pre-flight tab consumes via /api/v1/preflight.
-func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, port, modelDefaultPath string) api.Preflight {
+func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devhealth.Registry, port, modelDefaultPath string) api.Preflight {
 	out := api.Preflight{
 		GroundStation: api.PreflightGS{
 			LinkPort:  port,
@@ -1690,6 +1699,28 @@ func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, port, modelDe
 		out.State = "idle"
 	}
 
+	// Device health. Devices is the full per-device snapshot;
+	// BlockingDown is the subset of blocking devices that are
+	// currently not up (gates Ready below).
+	if devs != nil {
+		snaps := devs.SnapshotAll()
+		out.Devices = make([]api.PreflightDevice, len(snaps))
+		for i, sn := range snaps {
+			out.Devices[i] = api.PreflightDevice{
+				Name:       sn.Name,
+				Kind:       string(sn.Kind),
+				Blocking:   sn.Blocking,
+				Status:     string(sn.Status),
+				LastSeen:   sn.LastSeen,
+				FirstError: sn.FirstError,
+			}
+		}
+		out.BlockingDown = devs.BlockingDown()
+	} else {
+		out.Devices = []api.PreflightDevice{}
+		out.BlockingDown = []string{}
+	}
+
 	// Blockers: the things stopping us from being ready to fly.
 	if out.Model.Loaded == nil {
 		out.Blockers = append(out.Blockers, "no model loaded")
@@ -1697,6 +1728,12 @@ func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, port, modelDe
 	// Joystick is currently optional in the daemon; the operator's
 	// "I confirm" step in the GUI checklist enforces the real-world
 	// requirement. We don't list its absence as a blocker here.
+	// Device-level blockers (RP2040 + HDMI kiosks; commits 2 and 3)
+	// surface via BlockingDown above. Each is added to Blockers
+	// here so a single shared field captures all reasons not ready.
+	for _, name := range out.BlockingDown {
+		out.Blockers = append(out.Blockers, "device down: "+name)
+	}
 	out.Ready = len(out.Blockers) == 0
 
 	return out

@@ -245,6 +245,29 @@ type Preflight struct {
 	GroundStation PreflightGS        `json:"groundStation"`
 	Joystick      PreflightJoystickG `json:"joystick"`
 	Model         PreflightModelG    `json:"model"`
+	// Devices is the per-device health snapshot. Includes every
+	// device the daemon currently tracks via the devhealth registry:
+	// the RP2040 CRSF link, HDMI kiosk displays, the Mega IO board
+	// and its subsystems, and the ESP32 HUB75 display. Devices with
+	// Blocking=true gate the overall Ready flag.
+	Devices []PreflightDevice `json:"devices"`
+	// BlockingDown is the subset of device Names with Blocking=true
+	// that are currently NOT up. Empty (non-nil) when everything is
+	// up. The status page consumes this directly to label which
+	// devices are gating the Proceed-to-flight button.
+	BlockingDown []string `json:"blockingDown"`
+}
+
+// PreflightDevice is one row in the per-device health table. Mirrors
+// devhealth.Snapshot but lives in the api package so callers don't
+// import devhealth.
+type PreflightDevice struct {
+	Name       string    `json:"name"`
+	Kind       string    `json:"kind"`
+	Blocking   bool      `json:"blocking"`
+	Status     string    `json:"status"`
+	LastSeen   time.Time `json:"lastSeen,omitempty"`
+	FirstError string    `json:"firstError,omitempty"`
 }
 
 // PreflightGS holds always-available daemon facts.
