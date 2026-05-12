@@ -122,10 +122,10 @@ pip install --user --break-system-packages platformio
 
 ## Go toolchain
 
-Use upstream Go, not the apt version (apt is typically a major release behind).
+Use upstream Go, not the apt version (apt is typically a major release behind, and on some Ubuntu derivatives 'apt install golang-go' silently installs gccgo which doesn't parse modern go.mod files).
 
 ```
-GO_VERSION=1.22.0
+GO_VERSION=1.25.10
 cd /tmp
 curl -L -O https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz
 sudo rm -rf /usr/local/go
@@ -136,7 +136,7 @@ source /etc/profile.d/go.sh
 go version
 ```
 
-**TODO**: track current Go stable version. Pin via `GO_VERSION` above.
+Pinned to 1.25.10 here as a known-good. The daemon's `go.mod` carries both a `go 1.25.0` floor (minimum required) and a `toolchain go1.25.10` directive (the version the toolchain mechanism will auto-fetch if your installed Go is older). So if you install any Go >= 1.21 above, the first `go build` will transparently download 1.25.10 to satisfy the project — but installing the right version up front saves the round trip.
 
 ## Piper TTS
 
