@@ -31,6 +31,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/geo"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/gps"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/glcd"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/hdmihealth"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/heartbeat"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/iohub"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
@@ -604,6 +605,56 @@ func main() {
 			devs.Touch("rp2040", nil)
 		}
 	}
+
+	// HDMI kiosk displays. The Pi has two micro-HDMI outputs driving
+	// the HUD and Map kiosks; flight is blocked unless BOTH report
+	// "connected" in the Linux DRM subsystem. Polling-based: HDMI
+	// hotplug events happen at human speed (someone unplugs a cable),
+	// so 5 s polling is responsive enough and avoids tying into the
+	// kernel's drm event interface.
+	//
+	// Timeout = 12 s = 2.4x scan period, tolerating one missed scan
+	// (e.g. a hung filesystem call) before demoting to "down".
+	//
+	// When fewer than two are connected, Touch with an error: the
+	// error string is preserved in FirstError for the status page,
+	// LastSeen stays at zero so the device shows "unknown" (which
+	// the blocker logic treats the same as "down"), and the operator
+	// reads the error string to learn why.
+	const (
+		hdmiScanPeriod = 5 * time.Second
+		hdmiTimeout    = 12 * time.Second
+	)
+	devs.Register("hdmi-displays", devhealth.KindHDMIDisplay, true, hdmiTimeout)
+	scanHDMI := func() {
+		r, err := hdmihealth.Scan(hdmihealth.DefaultPattern)
+		if err != nil {
+			devs.Touch("hdmi-displays", err)
+			return
+		}
+		if r.Connected >= 2 {
+			devs.Touch("hdmi-displays", nil)
+			return
+		}
+		detail := strings.Join(r.Detail, "; ")
+		if detail == "" {
+			detail = "no HDMI connectors found in /sys/class/drm"
+		}
+		devs.Touch("hdmi-displays", fmt.Errorf("%d of 2 connected (%s)", r.Connected, detail))
+	}
+	scanHDMI() // immediate first check so the status page never shows "unknown" longer than necessary
+	go func() {
+		t := time.NewTicker(hdmiScanPeriod)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				scanHDMI()
+			}
+		}
+	}()
 
 	// Display device (HUB75 LED panel), optional. When -display-port
 	// is set, run a Manager that opens the serial port, talks the

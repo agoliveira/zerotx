@@ -563,6 +563,16 @@ setInterval(updateUptime, 1000);
 
 let syscheckBaseline = null; // null until first message; bool after
 let hasNavigated = false;
+// Latest /api/v1/preflight snapshot. Refreshed by pollPreflight()
+// every 2s while the page is visible. updateProceedGate() reads it
+// alongside the WS-driven syscheck state to decide whether the
+// Proceed button is enabled. Starts as null; until the first poll
+// completes the button stays disabled (safe default).
+let lastPreflight = null;
+// Last syscheck.dismissed value seen via WS. Cached so the preflight
+// poller can re-evaluate the proceed gate without waiting for the
+// next WS state message.
+let lastSyscheckDismissed = false;
 
 function destFromQuery() {
   const p = new URLSearchParams(location.search).get('dest');
@@ -571,27 +581,69 @@ function destFromQuery() {
   return null;
 }
 
+// updateProceedGate is the single source of truth for the Proceed
+// button's enabled state and hint text. Called from both applySyscheck
+// (when a WS state message arrives) and pollPreflight (every 2s).
+// Three branches:
+//   * Already dismissed: button shows "Proceeded", footer green,
+//     hint reads "System check dismissed". Click is a no-op.
+//   * Not dismissed AND preflight.ready: button enabled, hint
+//     reads the original "verify checks above" text.
+//   * Not dismissed AND preflight not ready (or unknown): button
+//     DISABLED, hint reads the blocker list so the operator
+//     understands what's gating flight.
+function updateProceedGate() {
+  const footer = document.querySelector('footer.proceed');
+  const btn = document.getElementById('btn-proceed');
+  const hint = document.getElementById('proceed-hint');
+  if (!btn || !hint) return;
+
+  if (lastSyscheckDismissed) {
+    footer?.classList.add('dismissed');
+    btn.textContent = 'Proceeded';
+    btn.disabled = true; // already dismissed; nothing to do
+    hint.textContent = 'System check dismissed.';
+    return;
+  }
+
+  footer?.classList.remove('dismissed');
+  btn.textContent = 'Proceed to flight';
+
+  // Until the first preflight response arrives, keep the button
+  // disabled. Avoids a flash of "enabled then immediately disabled"
+  // if the daemon has a blocking device down at boot.
+  if (lastPreflight === null) {
+    btn.disabled = true;
+    hint.textContent = 'Checking system readiness…';
+    return;
+  }
+
+  if (lastPreflight.ready) {
+    btn.disabled = false;
+    hint.textContent = 'Verify checks above, then proceed. The kiosks will switch to HUD and Map.';
+    return;
+  }
+
+  btn.disabled = true;
+  const blockers = lastPreflight.blockers || [];
+  if (blockers.length === 0) {
+    hint.textContent = 'Daemon not ready (no specific blocker reported).';
+  } else {
+    hint.textContent = 'Blocked by: ' + blockers.join('; ');
+  }
+}
+
 function applySyscheck(state) {
   const sc = state?.syscheck;
   const dismissed = !!(sc && sc.dismissed);
+  lastSyscheckDismissed = dismissed;
 
   // Establish baseline on the first state message after page load.
   if (syscheckBaseline === null) {
     syscheckBaseline = dismissed;
   }
 
-  const footer = document.querySelector('footer.proceed');
-  const btn = document.getElementById('btn-proceed');
-  const hint = document.getElementById('proceed-hint');
-
-  if (dismissed) {
-    footer?.classList.add('dismissed');
-    if (btn) btn.textContent = 'Proceeded';
-    if (hint) hint.textContent = 'System check dismissed.';
-  } else {
-    footer?.classList.remove('dismissed');
-    if (btn) btn.textContent = 'Proceed to flight';
-  }
+  updateProceedGate();
 
   // Auto-navigate only when:
   //   - we have a ?dest=hud|map in the URL (i.e. we are a kiosk),
@@ -611,12 +663,44 @@ function applySyscheck(state) {
   }
 }
 
+// Poll /api/v1/preflight every 2s. Re-evaluates the Proceed gate on
+// each response. The 2s cadence is responsive enough that an operator
+// plugging in a missing HDMI cable sees the button enable within a
+// few seconds; the daemon's own 5s HDMI scan period dominates.
+async function pollPreflight() {
+  try {
+    const r = await fetch('/api/v1/preflight');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    lastPreflight = await r.json();
+  } catch (e) {
+    // Network error or daemon hiccup. Treat as unknown -- safest
+    // is to keep the button disabled until we get a fresh answer.
+    lastPreflight = null;
+  }
+  updateProceedGate();
+}
+
 async function dismissSyscheck() {
   const btn = document.getElementById('btn-proceed');
   if (btn) btn.disabled = true;
   try {
     const r = await fetch('/api/v1/syscheck/dismiss', { method: 'POST' });
-    if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok && r.status !== 204) {
+      // 409 Conflict means the daemon says preflight isn't ready
+      // (server-side backstop; the UI button-disable should normally
+      // catch this first, but a stale page state can race). Surface
+      // the daemon's blocker list so the operator can correct.
+      if (r.status === 409) {
+        try {
+          const body = await r.json();
+          const bs = body.blockers || [];
+          throw new Error(bs.length ? bs.join('; ') : 'preflight not ready');
+        } catch (parseErr) {
+          throw new Error('preflight not ready');
+        }
+      }
+      throw new Error(`HTTP ${r.status}`);
+    }
     // Don't navigate or update UI here — wait for the WS roundtrip
     // so both kiosks transition in lockstep. The next state message
     // applySyscheck will see dismissed=true and act.
@@ -624,8 +708,11 @@ async function dismissSyscheck() {
     if (btn) {
       btn.textContent = 'Failed: ' + e.message;
       setTimeout(() => {
+        // Reset textContent; updateProceedGate (called on next poll
+        // or WS message, and also right here for immediacy) decides
+        // whether the button should be re-enabled.
         btn.textContent = 'Proceed to flight';
-        btn.disabled = false;
+        updateProceedGate();
       }, 2500);
     }
   }
@@ -708,6 +795,8 @@ document.getElementById('btn-proceed').addEventListener('click', dismissSyscheck
 loadHealth();
 loadModelInfo();
 connectWS();
+pollPreflight();
+setInterval(pollPreflight, 2000);
 </script>
 </body>
 </html>

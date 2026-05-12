@@ -502,3 +502,76 @@ func TestHandleWeather_OutOfRange_400(t *testing.T) {
 		t.Errorf("status = %d, want 400 for lat=200", rr.Code)
 	}
 }
+
+// TestHandleSyscheckDismiss_ReadyAllowsDismiss: when preflight is
+// Ready, dismiss succeeds (204) and SyscheckDismiss is invoked.
+func TestHandleSyscheckDismiss_ReadyAllowsDismiss(t *testing.T) {
+	dismissed := false
+	providers := &Providers{
+		Preflight: func() Preflight {
+			return Preflight{Ready: true}
+		},
+		SyscheckDismiss: func() { dismissed = true },
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/syscheck/dismiss", nil)
+	srv.handleSyscheckDismiss(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status: got %d, want 204", rr.Code)
+	}
+	if !dismissed {
+		t.Errorf("SyscheckDismiss provider was not invoked")
+	}
+}
+
+// TestHandleSyscheckDismiss_NotReadyReturns409: when preflight is
+// NOT Ready, dismiss returns 409 Conflict, does NOT invoke the
+// provider, and surfaces the blockers list in the response.
+func TestHandleSyscheckDismiss_NotReadyReturns409(t *testing.T) {
+	dismissed := false
+	providers := &Providers{
+		Preflight: func() Preflight {
+			return Preflight{
+				Ready:    false,
+				Blockers: []string{"device down: rp2040", "device down: hdmi-displays"},
+			}
+		},
+		SyscheckDismiss: func() { dismissed = true },
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/syscheck/dismiss", nil)
+	srv.handleSyscheckDismiss(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status: got %d, want 409", rr.Code)
+	}
+	if dismissed {
+		t.Errorf("SyscheckDismiss invoked despite not-ready preflight")
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "rp2040") || !strings.Contains(body, "hdmi-displays") {
+		t.Errorf("response body should contain blocker names, got: %s", body)
+	}
+}
+
+// TestHandleSyscheckDismiss_NoPreflightProviderFallsThrough: backwards-
+// compat path. If no Preflight provider is wired (mock servers, old
+// tests), the dismiss should succeed unconditionally as before.
+func TestHandleSyscheckDismiss_NoPreflightProviderFallsThrough(t *testing.T) {
+	dismissed := false
+	providers := &Providers{
+		// Preflight intentionally nil
+		SyscheckDismiss: func() { dismissed = true },
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/syscheck/dismiss", nil)
+	srv.handleSyscheckDismiss(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status: got %d, want 204", rr.Code)
+	}
+	if !dismissed {
+		t.Errorf("dismiss did not invoke provider in no-Preflight mode")
+	}
+}

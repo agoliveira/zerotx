@@ -259,6 +259,13 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 // POST-only; no body required. Returns 204 on success. Idempotent
 // at the daemon level (a second dismiss after the first is a no-op
 // and does not change the dismissedAt timestamp).
+//
+// Returns 409 Conflict if the daemon's preflight check is not yet
+// Ready (e.g. a blocking device is down). This is the server-side
+// backstop for the status page's button-disabling behavior: even if
+// a stale browser somehow sends a dismiss when the page should have
+// the button greyed out, the daemon refuses. The 409 body contains
+// the same blockers list the page would have shown.
 func (s *Server) handleSyscheckDismiss(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -268,6 +275,24 @@ func (s *Server) handleSyscheckDismiss(w http.ResponseWriter, r *http.Request) {
 	if s.providers.SyscheckDismiss == nil {
 		http.Error(w, "syscheck not configured", http.StatusNotImplemented)
 		return
+	}
+	// Preflight check. If the daemon publishes a Preflight provider,
+	// consult it before allowing the dismiss. The previous behavior
+	// was unconditional dismiss; this gate adds the device-down
+	// rejection while preserving the no-Preflight-provider case
+	// (mock servers, tests) which falls through to dismiss as before.
+	if s.providers.Preflight != nil {
+		pf := s.providers.Preflight()
+		if !pf.Ready {
+			writeJSON(w, http.StatusConflict, struct {
+				Error    string   `json:"error"`
+				Blockers []string `json:"blockers"`
+			}{
+				Error:    "preflight not ready",
+				Blockers: pf.Blockers,
+			})
+			return
+		}
 	}
 	s.providers.SyscheckDismiss()
 	w.WriteHeader(http.StatusNoContent)
