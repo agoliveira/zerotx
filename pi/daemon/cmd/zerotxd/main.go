@@ -892,25 +892,33 @@ func main() {
 	//
 	// Special targets (firmware-level, not real subsystems):
 	//   - "boot": the firmware's overall boot sequence event stream
-	//   - "hal":  HAL config events
+	//   - "hal":  HAL config events AND the periodic 5 s heartbeat
+	//             emitted by the firmware specifically to keep
+	//             'mega' alive during quiet periods
 	//   - "protocol": protocol-level errors
 	// These keep 'mega' alive but don't create a subsystem entry.
 	//
-	// Timeout is generous (5 min) because most Mega subsystems are
-	// passive after boot: VFDs accept commands but don't talk back,
-	// LEDs/relays/WS don't emit events, etc. The only continuous
-	// event streams are buttons (only when pressed) and encoder
-	// (only when rotated). With a strict timeout, a quiet ground
-	// station would falsely show every subsystem as down a minute
-	// after boot. 5 min is long enough that operators interacting
-	// with the panel at all keep things up; idle for 5 min, the
-	// status correctly demotes to 'down'.
+	// Two timeouts:
+	//   - megaOverallTimeout (30 s) on the 'mega' device. The
+	//     firmware emits 'EVENT hal heartbeat' every 5 s, so a
+	//     missed heartbeat shows up within 30 s. 6x the heartbeat
+	//     period absorbs a single dropped pulse.
+	//   - megaSubsysTimeout (5 min) on each auto-discovered
+	//     subsystem. Most subsystems are passive after boot --
+	//     VFDs accept commands but don't talk back, LEDs/relays/WS
+	//     don't emit events, the LDR just reports when polled.
+	//     Only buttons (on press) and the encoder (on rotation)
+	//     emit continuously. A 30 s timeout would falsely demote
+	//     idle subsystems; 5 min is long enough that any operator
+	//     interaction keeps things alive, and truly idle for 5 min
+	//     the demotion is informative rather than misleading.
 	//
 	// All entries are Blocking=false (per the operator's call:
 	// only RP2040 and HDMI block flight; Mega subsystems are
 	// informational).
-	const megaTimeout = 5 * time.Minute
-	devs.Register("mega", devhealth.KindMega, false, megaTimeout)
+	const megaOverallTimeout = 30 * time.Second
+	const megaSubsysTimeout = 5 * time.Minute
+	devs.Register("mega", devhealth.KindMega, false, megaOverallTimeout)
 	specialTargets := map[string]bool{
 		"boot":     true,
 		"hal":      true,
@@ -922,7 +930,7 @@ func main() {
 		if specialTargets[target] {
 			return
 		}
-		devs.EnsureDevice(target, devhealth.KindMegaSubsys, false, megaTimeout)
+		devs.EnsureDevice(target, devhealth.KindMegaSubsys, false, megaSubsysTimeout)
 		devs.Touch(target, nil)
 	})
 	go func() {

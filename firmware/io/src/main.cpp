@@ -239,4 +239,19 @@ void loop() {
   for (size_t i = 0; i < kSubsystemCount; ++i) {
     kSubsystems[i]->tick(now, Serial);
   }
+
+  // Periodic heartbeat for the daemon's devhealth registry. Target
+  // is "hal" because the daemon filters that name as a special
+  // (non-subsystem) target: it keeps the 'mega' device entry alive
+  // without creating a spurious 'hal' subsystem entry. Without this
+  // emission, a quiet ground session (no operator input, no
+  // encoder/button activity) would silently demote 'mega' to down
+  // after its devhealth timeout, even though the firmware is fine.
+  // 5 s is well under the daemon's 30 s 'mega' timeout, giving 6x
+  // tolerance to a single missed pulse.
+  static uint32_t lastHeartbeat = 0;
+  if (now - lastHeartbeat >= 5000) {
+    proto::writeEvent(Serial, "hal", "heartbeat");
+    lastHeartbeat = now;
+  }
 }
