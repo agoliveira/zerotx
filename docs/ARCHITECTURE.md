@@ -36,7 +36,8 @@ flowchart LR
         HUDL["HUD LCD"]
         MAPL["Map LCD"]
         PANEL["HUB75 128x32"]
-        VFD["VFD 20x2"]
+        VFD["VFD 20x2 (x2)"]
+        GLCD["GLCD 128x64<br/>(artificial horizon)"]
         TB["Trackball + buttons"]
         JS["USB joystick"]
     end
@@ -50,6 +51,7 @@ flowchart LR
     DAEMON <-->|USB-CDC| RP
     RP <-->|"single-wire CRSF<br/>(manga 5m)"| ELRS
     MEGA --> VFD
+    MEGA --> GLCD
     MEGA -->|"LED ring"| TB
     ESP32 --> PANEL
     JS -->|USB HID| DAEMON
@@ -83,7 +85,10 @@ Two HDMI panels driven by the Pi's two HDMI ports. Each runs a Chromium kiosk po
 At-a-glance state display: arm state, mode, alarms, big numerics. 2x Waveshare P2.5 64x32 chained. Wire protocol in `docs/protocols/display.md`.
 
 ### VFD (Noritake CU20025ECPB-W1J)
-20x2 blue/white VFD. Driven by Mega via the vfd.0 subsystem (HD44780 4-bit interface). Originally specced for an RP2040 driver, moved to Mega to consolidate IO.
+20x2 blue/white VFD. Driven by Mega via the vfd.0 and vfd.1 subsystems (HD44780 4-bit interface). Two instances coexist on the panel; originally specced for an RP2040 driver, moved to Mega to consolidate IO.
+
+### 128x64 graphic LCD (ST7920)
+Small monochrome graphic LCD next to the VFDs on the front panel. Driven by the Mega via 3-wire serial (hardware SPI), the `glcd` Mega subsystem renders a cool-factor artificial horizon (pitch ladder, roll scale, numeric readout) from attitude telemetry the daemon pushes at ~10 Hz. Falls back to a "NO LINK" screen when attitude is stale. Not on the safety path; loss of the GLCD doesn't block flight.
 
 ### Trackball + buttons
 Arcade trackball plus 2 USB buttons. USB HID to Pi. Ring LEDs (green and red) driven by Mega via the led.trackball subsystem.
@@ -169,27 +174,38 @@ Mega events (button presses, encoder ticks, LDR readings, etc.) flow over a sing
 
 - `api`: HTTP plus WebSocket API for web UIs and external clients
 - `arm`: arm state machine, gates flight-critical actions
+- `astro`: sun/moon position helpers (golden hour, civil twilight)
 - `audio`: ALSA playback engine for samples and Piper output
+- `cf`: control-flow helpers (debouncing, edge detection)
 - `crsftee`: CRSF passthrough (ground-side splitter)
+- `devhealth`: per-device liveness registry; gates preflight Ready on RP2040 + HDMI displays
 - `devices/display`: HUB75 panel mode/alarm orchestration
 - `geo`: geographic helpers (great circle, bearing, distance)
+- `glcd`: 128x64 ST7920 graphic LCD driver (artificial horizon HUD on Mega)
+- `gps`: optional Pi-attached NMEA receiver for station position
+- `hdmihealth`: scans `/sys/class/drm` for connected HDMI displays
+- `heartbeat`: drives a Pi GPIO LED as a daemon-alive indicator
 - `iohub`: shared serial client multiplexing access to the Mega IO board
-- `ipc`: inter-process plumbing for binaries that talk to the daemon
+- `ipc`: COBS+CRC framed link to the RP2040 over USB-CDC
 - `joystick`: USB HID joystick reader
+- `lcd`: 20x4 character LCD on Mega via I2C PCF8574 backpack
 - `logbuf`: ring buffer for log lines, exposed via API
 - `logic`: cross-cutting orchestration glue
+- `mapper`: channel intent computation from joystick + model + arm state
 - `model`: aircraft profile loader (yaml in `configs/`)
 - `narrator`: Piper TTS scheduler and playback queue
 - `netclass`: network classification (link health, etc.)
 - `panel`: HUB75 panel wire protocol writer
 - `phrasebook`: catalog of pre-baked samples and TTS templates
 - `recorder`: flight recording (telemetry plus events)
+- `servo`: servo subsystem (driven via iohub, Mega-hosted)
 - `sitl`: Software In The Loop integration for bench testing
 - `source`: telemetry source abstraction (real ELRS, SITL, replay)
+- `syscheck`: operator-acknowledgement pre-flight gate (kiosks land here on boot)
 - `telemetry`: telemetry frame parser and state model
 - `tilewarm`: map tile prefetcher around current position
 - `trackballled`: bicolor ring LED driver (consumes `iohub`)
-- `vfd`: VFD driver (consumes `iohub`)
+- `vfd`: VFD driver supporting two instances vfd.0, vfd.1 (consumes `iohub`)
 - `weather`: weather data fetcher
 - `wxalert`: weather-derived alerts
 
@@ -203,7 +219,26 @@ Auxiliary binaries in `pi/daemon/cmd/`:
 
 ## Arm subsystem
 
-The `arm` subsystem in `pi/daemon/internal/arm/` is the gatekeeper for flight-critical actions. Transitions are driven by telemetry, user input, and timeouts. The source is the source of truth and changes more often than this doc; refer to it for the canonical state list and transition rules.
+The `arm` subsystem in `pi/daemon/internal/arm/` is the gatekeeper for flight-critical actions. The state machine itself is the source of truth and changes more often than this doc — see the source for the canonical state list. What's worth pinning here is the **three-input arming workflow**, which is settled and won't change without a re-design:
+
+- **Throttle low** (T-low): the throttle stick must be at minimum. Read from the joystick by the `logic` package, derived against the model's TAER channel layout (the throttle channel index is read from the EdgeTX model file, not hardcoded).
+- **Arm key** (SF switch on the joystick or panel): the operator-held two-position switch that gates the arm sequence. Down position is the "arm requested" signal.
+- **Confirm** (SH momentary, panel-mounted): a momentary press emitted by the RP2040 over IPC `MsgInputEvent` (input id `0x02`), wired to GPIO 15 on the RP2040 (internal pull-up, switch to GND).
+
+All three must be present to transition to ARMED. The momentary is a **press-only** signal — releasing doesn't matter; once consumed, the arm key must be cycled to re-arm. Disarm is the inverse handshake: SF-down combined with T-low brings the state back to DISARMED.
+
+## Pre-flight readiness
+
+The daemon gates flight on two pre-flight signals before the operator can leave the boot-time `/status` page:
+
+- **Operator acknowledgement** (`syscheck` subsystem): both kiosks land on `/status?dest=hud` and `/status?dest=map` at boot. The operator reviews the checklist and clicks "Proceed to flight"; both kiosks then navigate to `/hud` and `/map`. Process-local: the gate resets on every daemon restart so a Pi reboot brings the operator back to the check.
+- **Device health** (`devhealth` subsystem): tracks per-device liveness via `LastSeen` timestamps. Two device classes block flight:
+  - **RP2040 CRSF link**: refreshed on every `MsgHeartbeat` (~200 ms). 500 ms timeout.
+  - **HDMI kiosk displays**: polled every 5 s against `/sys/class/drm/card*-HDMI-*/status`. Both must report `connected`. The `hdmihealth` package owns the scan; `devhealth` owns the registry.
+
+Everything else (Mega + its subsystems including GLCD, VFDs, buttons, encoder, LEDs, trackball ring, WS strip, LDR, relays; ESP32 HUB75 display) is tracked but **informational only** — surfaced on the status page so the operator sees what's connected, never gating flight. A dead VFD is annoying but flyable.
+
+Server-side enforcement: even if the UI's button-disable misses a race, the `POST /api/v1/syscheck/dismiss` endpoint returns HTTP 409 when preflight is not ready, with the blockers list in the response body.
 
 ## Audio architecture
 
