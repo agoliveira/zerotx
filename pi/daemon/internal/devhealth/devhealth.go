@@ -105,6 +105,9 @@ func New() *Registry {
 // (LastSeen is reset to zero). Register is idempotent in the
 // configuration sense — call it at startup for each blocking
 // device, and let Touch fill in liveness later.
+//
+// For auto-discovery use cases where Register would clobber a
+// previously-touched liveness state, use EnsureDevice instead.
 func (r *Registry) Register(name string, kind Kind, blocking bool, timeout time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -114,6 +117,30 @@ func (r *Registry) Register(name string, kind Kind, blocking bool, timeout time.
 		Blocking: blocking,
 		Timeout:  timeout,
 	}
+}
+
+// EnsureDevice registers a device only if one with the given name
+// is not already present. Returns true if a new entry was created,
+// false if the existing entry was kept.
+//
+// Used by auto-discovery flows: e.g. the Mega IO board emits
+// EVENT lines that name subsystems the daemon hasn't been told
+// about explicitly. The first event creates the entry; subsequent
+// events Touch it without clobbering its accumulated state. Unlike
+// Register, calling EnsureDevice on every event is safe and cheap.
+func (r *Registry) EnsureDevice(name string, kind Kind, blocking bool, timeout time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.devices[name]; ok {
+		return false
+	}
+	r.devices[name] = &Device{
+		Name:     name,
+		Kind:     kind,
+		Blocking: blocking,
+		Timeout:  timeout,
+	}
+	return true
 }
 
 // Touch updates LastSeen for the named device to now. If the device

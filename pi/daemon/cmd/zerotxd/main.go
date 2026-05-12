@@ -883,6 +883,48 @@ func main() {
 			log.Printf("iohub: EVENT %s %s", target, payload)
 		}
 	})
+
+	// devhealth wiring for the Mega IO board (overall) and each of
+	// its subsystems. Every incoming EVENT line is evidence that
+	// the Mega is alive and the named subsystem responded; we
+	// Touch the 'mega' device on every event regardless of target,
+	// and auto-discover per-subsystem entries on first sight.
+	//
+	// Special targets (firmware-level, not real subsystems):
+	//   - "boot": the firmware's overall boot sequence event stream
+	//   - "hal":  HAL config events
+	//   - "protocol": protocol-level errors
+	// These keep 'mega' alive but don't create a subsystem entry.
+	//
+	// Timeout is generous (5 min) because most Mega subsystems are
+	// passive after boot: VFDs accept commands but don't talk back,
+	// LEDs/relays/WS don't emit events, etc. The only continuous
+	// event streams are buttons (only when pressed) and encoder
+	// (only when rotated). With a strict timeout, a quiet ground
+	// station would falsely show every subsystem as down a minute
+	// after boot. 5 min is long enough that operators interacting
+	// with the panel at all keep things up; idle for 5 min, the
+	// status correctly demotes to 'down'.
+	//
+	// All entries are Blocking=false (per the operator's call:
+	// only RP2040 and HDMI block flight; Mega subsystems are
+	// informational).
+	const megaTimeout = 5 * time.Minute
+	devs.Register("mega", devhealth.KindMega, false, megaTimeout)
+	specialTargets := map[string]bool{
+		"boot":     true,
+		"hal":      true,
+		"protocol": true,
+	}
+	hub.OnEvent(func(target, payload string) {
+		_ = payload
+		devs.Touch("mega", nil)
+		if specialTargets[target] {
+			return
+		}
+		devs.EnsureDevice(target, devhealth.KindMegaSubsys, false, megaTimeout)
+		devs.Touch(target, nil)
+	})
 	go func() {
 		if err := hub.Run(ctx); err != nil {
 			log.Printf("iohub: run: %v", err)

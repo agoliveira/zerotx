@@ -242,3 +242,58 @@ func equalStringSlices(a, b []string) bool {
 	}
 	return true
 }
+
+// TestEnsureDevice_CreatesWhenAbsent: first call with a new name
+// creates an entry, returns true.
+func TestEnsureDevice_CreatesWhenAbsent(t *testing.T) {
+	r := New()
+	created := r.EnsureDevice("vfd.0", KindMegaSubsys, false, 5*time.Minute)
+	if !created {
+		t.Errorf("first EnsureDevice should return true")
+	}
+	if len(r.SnapshotAll()) != 1 {
+		t.Errorf("entry was not created")
+	}
+}
+
+// TestEnsureDevice_NoopWhenPresent: second call with the same name
+// returns false and does NOT clobber the existing entry. Critical
+// for the auto-discovery use case where every event triggers an
+// EnsureDevice — replacing on each one would reset LastSeen and
+// permanently demote the device to unknown.
+func TestEnsureDevice_NoopWhenPresent(t *testing.T) {
+	r := New()
+	r.EnsureDevice("vfd.0", KindMegaSubsys, false, 5*time.Minute)
+	r.Touch("vfd.0", nil)
+	// Existing entry is up.
+	if r.SnapshotAll()[0].Status != StatusUp {
+		t.Fatalf("setup: device should be up")
+	}
+
+	created := r.EnsureDevice("vfd.0", KindMegaSubsys, false, 5*time.Minute)
+	if created {
+		t.Errorf("EnsureDevice on existing entry should return false")
+	}
+	// LastSeen must be preserved.
+	if r.SnapshotAll()[0].Status != StatusUp {
+		t.Errorf("EnsureDevice clobbered existing liveness state")
+	}
+}
+
+// TestEnsureDevice_DifferentKindLeavesOriginal: if a caller invokes
+// EnsureDevice with parameters that differ from what's already
+// registered (e.g. different Kind), the original is preserved.
+// This avoids inconsistencies if two code paths race to register
+// the same device with slightly different intent.
+func TestEnsureDevice_DifferentKindLeavesOriginal(t *testing.T) {
+	r := New()
+	r.EnsureDevice("dual", KindMegaSubsys, false, 5*time.Minute)
+	r.EnsureDevice("dual", KindRP2040, true, 1*time.Second) // bogus second call
+	snap := r.SnapshotAll()[0]
+	if snap.Kind != KindMegaSubsys {
+		t.Errorf("Kind was clobbered by second EnsureDevice: got %q", snap.Kind)
+	}
+	if snap.Blocking {
+		t.Errorf("Blocking was clobbered by second EnsureDevice")
+	}
+}
