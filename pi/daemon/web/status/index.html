@@ -281,6 +281,13 @@ footer.proceed.dismissed button.primary {
   </div>
 </section>
 
+<section class="group" id="group-hardware">
+  <h2>Hardware inventory <span style="color: var(--text-dim); font-weight: 400; letter-spacing: normal; text-transform: none;">/ devhealth registry</span></h2>
+  <div id="hardware-inventory">
+    <div class="row"><div class="led idle"></div><div class="label">—</div><div class="value"><span class="dim">waiting for first /api/v1/preflight response</span></div></div>
+  </div>
+</section>
+
 <div class="toolbar">
   <button class="test" id="btn-speak">Test audio (TTS)</button>
   <span style="color: var(--text-muted); font-size: 12px; align-self: center;">
@@ -678,6 +685,104 @@ async function pollPreflight() {
     lastPreflight = null;
   }
   updateProceedGate();
+  renderHardwareInventory();
+}
+
+// renderHardwareInventory paints the Hardware inventory section
+// from the latest /api/v1/preflight.devices array. Driven from
+// pollPreflight on every 2 s tick, so the section always reflects
+// the daemon's current devhealth registry.
+//
+// Sort: blocking devices first (alphabetical within), then
+// non-blocking alphabetical. Blocking devices carry a small pill
+// so the operator can tell at a glance which entries can gate
+// flight.
+//
+// Status mapping: up=ok (green), down=err (red), unknown=idle
+// (grey). 'unknown' covers both "never observed" and "observed
+// failure with LastSeen=0" -- the daemon's status enum is
+// three-valued and the page mirrors it directly.
+//
+// LastSeen rendering: relative time ('3s ago', '47m ago', '2h
+// ago', 'never') so the operator can spot stale data without
+// reading absolute timestamps. FirstError shown below the status
+// line when present, in dim red so it draws the eye without
+// being shouty.
+function renderHardwareInventory() {
+  const root = document.getElementById('hardware-inventory');
+  if (!root) return;
+  if (!lastPreflight) {
+    root.innerHTML = '<div class="row"><div class="led idle"></div><div class="label">—</div><div class="value"><span class="dim">no /api/v1/preflight response yet</span></div></div>';
+    return;
+  }
+  const devices = lastPreflight.devices || [];
+  if (devices.length === 0) {
+    root.innerHTML = '<div class="row"><div class="led idle"></div><div class="label">—</div><div class="value"><span class="dim">no devices registered</span></div></div>';
+    return;
+  }
+
+  const sorted = devices.slice().sort((a, b) => {
+    if (a.blocking !== b.blocking) return a.blocking ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  const now = Date.now();
+  const html = sorted.map(d => {
+    const status = d.status || 'unknown';
+    const ledClass =
+      status === 'up'   ? 'ok'   :
+      status === 'down' ? 'err'  : 'idle';
+
+    let lastSeenText = 'never';
+    if (d.lastSeen) {
+      const t = Date.parse(d.lastSeen);
+      if (!isNaN(t)) {
+        const ageMs = now - t;
+        if (ageMs < 0) lastSeenText = 'just now';
+        else if (ageMs < 60000) lastSeenText = Math.floor(ageMs / 1000) + 's ago';
+        else if (ageMs < 3600000) lastSeenText = Math.floor(ageMs / 60000) + 'm ago';
+        else if (ageMs < 86400000) lastSeenText = Math.floor(ageMs / 3600000) + 'h ago';
+        else lastSeenText = Math.floor(ageMs / 86400000) + 'd ago';
+      }
+    }
+
+    const blockingPill = d.blocking
+      ? '<span style="display:inline-block;margin-left:8px;padding:1px 6px;border-radius:2px;background:var(--bg-elevated);border:1px solid var(--border-light);font-size:10px;letter-spacing:0.08em;color:var(--text-muted);">BLOCKING</span>'
+      : '';
+
+    const errorLine = d.firstError
+      ? '<div class="value" style="grid-column:3;margin-top:2px;color:#ff6b6b;font-size:11px;">' + escapeHTML(d.firstError) + '</div>'
+      : '';
+
+    return ''
+      + '<div class="row">'
+      +   '<div class="led ' + ledClass + '"></div>'
+      +   '<div class="label">' + escapeHTML(d.name || '?') + blockingPill + '</div>'
+      +   '<div class="value">'
+      +     '<span class="dim">' + escapeHTML(d.kind || '?') + '</span> · '
+      +     '<span class="strong">' + status + '</span> · '
+      +     '<span class="dim">last seen ' + escapeHTML(lastSeenText) + '</span>'
+      +   '</div>'
+      +   errorLine
+      + '</div>';
+  }).join('');
+
+  root.innerHTML = html;
+}
+
+// escapeHTML is a tiny helper for safely inserting daemon strings
+// (device names, kinds, error messages) into innerHTML. The API
+// response is locally-produced and unlikely to contain HTML, but
+// firstError can carry arbitrary error text from devhealth.Touch
+// callers -- treat it as untrusted to keep the page robust.
+function escapeHTML(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function dismissSyscheck() {
