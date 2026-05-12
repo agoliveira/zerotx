@@ -57,6 +57,7 @@ Rotaries:
 
 Buttons:
 - 1x large momentary push, 16-22 mm, distinctive color **buy**
+  - Wired to RP2040 GPIO 15 (internal pull-up, switch to GND); emits `MsgInputEvent` input id `0x02` on press. This is the arm-confirm momentary in the three-input arming workflow (see DECISIONS.md). Press-only signal; the firmware does not emit a release event. A kiosk-browser shortcut (Ctrl+Alt+A on `/hud` or `/map`) covers the same role for bench testing.
 - 1x keylock master power switch, 19-22 mm panel hole **buy**
 - 1x emergency stop, mushroom-head, latching, NC contacts inline on
   module DC feed **buy**
@@ -74,9 +75,14 @@ for a simple "system on" indication. No commitment until parts arrive.
 
 ## Section 2 - Status surfaces
 
-- 1x Noritake CU20025ECPB-W1J 2x20 VFD **have**
-  - HD44780 parallel, 4-bit mode (6 GPIO + 2 power = 8 conductors)
+- 2x Noritake CU20025ECPB-W1J 2x20 VFD **have**
+  - HD44780 parallel, 4-bit mode (6 GPIO + 2 power = 8 conductors per unit)
+  - Two instances on the panel: `vfd.0` and `vfd.1`, different status categories on each
   - Initialized at full brightness
+  - Japanese-ROM (A00) variant; ASCII works directly but bytes with bit 7 set render as katakana — a useful diagnostic for floating D7 (a bit-pattern symptom of a broken D7 wire)
+- 1x 128x64 ST7920 graphic LCD **have**
+  - 3-wire serial mode (CS, SID, CLK) over Mega hardware SPI (pins 51 MOSI / 52 SCK / 53 SS), PSB tied to GND for serial-mode selection. 14-pin header; pins 7-14 unused
+  - Hosts the artificial-horizon "cool factor" HUD (`glcd` Mega subsystem) — supplementary, never on the safety path
 - 1x 5V 8-channel level shifter (74AHCT125 or similar) for VFD
   data/control lines **have**
 - 1x self-contained 7-segment LED voltmeter, direct to 13.8V rail **buy**
@@ -186,7 +192,7 @@ Case:
 Panels:
 - 1x black acrylic, 3 mm, lid panel: cutouts for both displays + mounting
   holes + (optional) engraved labels **buy / fabricate**
-- 1x black acrylic, 3 mm, body panel: cutouts for VFD, voltmeter,
+- 1x black acrylic, 3 mm, body panel: cutouts for VFDs (x2), 128x64 GLCD, voltmeter,
   every switch / encoder / button, the keyboard well, speaker grilles +
   laser-engraved labels **buy / fabricate**
 - 1x cardboard or 1 mm acrylic test piece for fit-check before committing
