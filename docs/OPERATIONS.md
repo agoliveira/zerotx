@@ -51,8 +51,13 @@ Flags:
 | `-piper-binary` | path to Piper TTS binary |
 | `-web-dir` | static web assets root |
 | `-port` | RP2040 USB-CDC device path |
-| `-iohub-port` | Mega IO board USB-CDC device (VFD, trackball LEDs, buttons, etc.) |
-| `-site-lat`, `-site-lon` | static fallback coordinates for the weather resolver chain (`station GPS → telemetry home → site flag`). Used only when no station GPS lock and no in-flight home position are available |
+| `-fc-tcp-addr` | INAV SITL CRSF endpoint as `host:port` (e.g. `127.0.0.1:5762`). Bench-test mode: daemon talks raw CRSF over TCP instead of opening the RP2040 link. Mutually exclusive with `-port`. |
+| `-iohub-port` | Mega IO board USB-CDC device (VFD, trackball LEDs, buttons, GLCD, etc.) |
+| `-display-port` | ESP32 HUB75 panel driver USB-CDC device. Empty disables the panel; daemon runs fine without it. |
+| `-maptiles-dir` | directory of PMTiles archives for offline map tile serving. Empty = online proxy mode. |
+| `-no-online-tiles` | disable online tile proxy fallback (for field operation without uplink) |
+| `-sounds-dir`, `-sounds-lang` | audio sample tree (EdgeTX-compatible layout) and language subdirectory |
+| `-site-lat`, `-site-lon` | static fallback coordinates for the position resolver chain (`station GPS → telemetry home → site flag`). Used only when no station GPS lock and no in-flight home position are available |
 | `-tilewarm-rate` | tile prefetch rate (tiles/sec) |
 | `-heartbeat-gpio` | Pi GPIO line driving the daemon heartbeat LED (BCM numbering). -1 disables (default) |
 | `-heartbeat-chip` | GPIO chip device for the heartbeat LED. Default `gpiochip0` |
@@ -72,11 +77,29 @@ Before each flight:
 
 1. ELRS TX module powered on and paired with aircraft.
 2. Aircraft powered on, GPS lock acquired (check satellite count on HUD).
-3. Telemetry stream visible: HUD shows live values, panel transitions to PREFLIGHT.
-4. Joystick centered, no stuck axes: verify with `bin/zerotx-axes` if needed.
-5. Audio output verified: any non-silent event or panel test.
-6. Map shows current position (home or aircraft, depending on aircraft GPS state).
-7. Arm subsystem pre-arm gate clear: check arm state in HUD or via `bin/zerotx-inspect`.
+3. **System check** (`/status` page on both kiosks at boot): all rows green, no blockers listed beneath the Proceed button. The two devices the daemon *enforces* are:
+   - **RP2040 link**: heartbeats every ~200 ms over USB-CDC. Down means the CRSF generator is silent and the aircraft will failsafe.
+   - **HDMI kiosk displays**: both micro-HDMI ports must report `connected` in `/sys/class/drm`. Down means one of the operator displays is unplugged.
+   If either is down, "Proceed to flight" is disabled and the hint reads `Blocked by: device down: <name>`. Plug it back in, wait ~2 s for the page to re-poll, button enables.
+4. **Proceed**: click "Proceed to flight" on either kiosk. Both kiosks transition to `/hud` and `/map`.
+5. Telemetry stream visible: HUD shows live values, panel transitions to PREFLIGHT.
+6. Joystick centered, no stuck axes: verify with `bin/zerotx-axes` if needed.
+7. Audio output verified: any non-silent event or panel test.
+8. Map shows current position (home or aircraft, depending on aircraft GPS state).
+
+After the syscheck gate, the daemon doesn't gate flight further -- arm/disarm is the operator's responsibility via the joystick.
+
+## Arming the aircraft
+
+The arm state machine requires three simultaneous inputs to transition to ARMED:
+
+1. **Throttle low** (T-low): joystick throttle stick at minimum. The daemon reads the throttle channel from the active model file (TAER layout for Big Talon and friends, so channel 1; the model declares which).
+2. **Arm key** (SF switch, joystick or panel-mounted): two-position switch held in the down ("arm requested") position.
+3. **Confirm** (SH momentary): a press of the panel-mounted momentary button (RP2040 GPIO 15) OR Ctrl+Alt+A in either kiosk browser. Press-only; releasing doesn't matter.
+
+All three must be present at the same time. Once armed, releasing any input doesn't disarm. To disarm: bring the arm key back UP combined with T-low -- the inverse handshake.
+
+If arming fails, the audio narrator announces the specific failure ("throttle not low", "arm key not down", "not ready"). The HUD shows the current arm state.
 
 ## In-flight workflow
 
@@ -142,6 +165,19 @@ The tracker reports `tracking` when receiving fresh GPS frames, `hold` when it h
 Order matters: stop the daemon before pulling power so recordings finalize and USB serial flushes complete.
 
 ## Common failures and recovery
+
+### "Proceed to flight" stays disabled
+
+Symptom: both kiosks sit on `/status` after boot; the Proceed button is greyed out; the hint under it reads `Blocked by: device down: <name>`.
+
+Diagnose: read the blocker name. Two devices block flight today:
+
+- `device down: rp2040` — the RP2040 isn't sending heartbeats. Either the USB-CDC link to the Pi is wedged, or the RP2040 itself is in a reset loop. Check `ls /dev/serial/by-id/ | grep -i pico` and `journalctl -u zerotxd | grep ipc`. If the device path is present but heartbeats aren't arriving, suspect firmware (see "RP2040 CRSF watchdog reset loop" below).
+- `device down: hdmi-displays` — one or both HDMI cables aren't reporting `connected` in `/sys/class/drm`. The daemon needs **both** kiosk displays attached. `for f in /sys/class/drm/card*-HDMI-*/status; do echo $f $(cat $f); done` shows the truth.
+
+Fix: address the named blocker. The status page re-polls every 2 s, so a fresh `connected` state propagates within a couple of seconds. If everything looks right but the button stays disabled, `curl http://127.0.0.1:8080/api/v1/preflight | jq '.blockers, .devices'` shows what the daemon actually thinks.
+
+The page enforces the gate visually; the daemon also enforces server-side: `POST /api/v1/syscheck/dismiss` returns HTTP 409 with the blocker list when not ready, so a stale page that somehow lets you click will still be refused.
 
 ### Mega didn't enumerate
 
