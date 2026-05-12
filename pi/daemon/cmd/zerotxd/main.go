@@ -1822,7 +1822,13 @@ func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Pane
 func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devhealth.Registry, port, modelDefaultPath string) api.Preflight {
 	out := api.Preflight{
 		GroundStation: api.PreflightGS{
-			LinkPort:  port,
+			LinkPort: port,
+			// LinkState is filled in below from the devhealth rp2040
+			// entry when available. In SITL mode (no rp2040 registered)
+			// it falls back to "active" since the TCP link to the
+			// flight controller carries the role the RP2040 normally
+			// would. Field is deprecated; consumers should read
+			// Preflight.devices instead. See note on PreflightGS.
 			LinkState: "active",
 		},
 	}
@@ -1868,6 +1874,24 @@ func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devheal
 				Status:     string(sn.Status),
 				LastSeen:   sn.LastSeen,
 				FirstError: sn.FirstError,
+			}
+			// Derive the deprecated GroundStation.LinkState from the
+			// rp2040 entry. Maps devhealth's three-valued status to
+			// the LinkState string the legacy web UI checks against
+			// (any non-"active" value triggers a not-ready badge).
+			//
+			// In SITL mode rp2040 isn't registered and this loop
+			// won't match, so LinkState retains its "active" default
+			// set above -- which is correct, because the daemon is
+			// running and pumping CRSF over TCP, just not via the
+			// RP2040.
+			if sn.Name == "rp2040" {
+				switch sn.Status {
+				case devhealth.StatusUp:
+					out.GroundStation.LinkState = "active"
+				default:
+					out.GroundStation.LinkState = "down"
+				}
 			}
 		}
 		out.BlockingDown = devs.BlockingDown()
