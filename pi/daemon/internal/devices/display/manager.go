@@ -252,6 +252,20 @@ func (m *Manager) detach() {
 	m.mu.Unlock()
 }
 
+// Connected reports whether a Driver is currently attached to the
+// Manager. True between attach() (after a successful Open) and the
+// next detach() (after Driver.Run returns). Used by devhealth to
+// track ESP32 HUB75 panel liveness without exposing the internal
+// reconnect-loop state.
+//
+// This is a sampling check, not a stream: callers poll. The
+// underlying lock is held only briefly.
+func (m *Manager) Connected() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.current != nil
+}
+
 // sleep blocks for d or until ctx is cancelled. Returns true if the
 // sleep completed normally, false if ctx fired (Manager should exit).
 func (m *Manager) sleep(ctx context.Context, d time.Duration) bool {

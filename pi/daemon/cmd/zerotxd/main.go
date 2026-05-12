@@ -690,6 +690,40 @@ func main() {
 			dispMgr.SetMode(display.ModePreflight)
 			dispMgr.SetThresholds(modelThresholdsToDisplay(ztxModel.ZeroTX.Thresholds))
 		}
+
+		// devhealth: track ESP32 HUB75 display liveness. Non-blocking
+		// (the operator's HUD on the Pi displays is the authoritative
+		// view; the panel is supplementary). Poll Connected() every
+		// 2 s; the Manager's own reconnect loop attempts to re-open
+		// every retryDelay (~1 s by default) so a 2 s poll captures
+		// transitions within one cycle. Timeout = 5 s = 2.5x poll
+		// period, generous enough to absorb a poll falling during a
+		// reconnect.
+		const dispPollPeriod = 2 * time.Second
+		const dispTimeout = 5 * time.Second
+		devs.Register("esp32-display", devhealth.KindESP32Display, false, dispTimeout)
+		go func() {
+			t := time.NewTicker(dispPollPeriod)
+			defer t.Stop()
+			// Immediate poll so the initial state isn't 'unknown'
+			// for the first 2 seconds after boot.
+			if dispMgr.Connected() {
+				devs.Touch("esp32-display", nil)
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if dispMgr.Connected() {
+						devs.Touch("esp32-display", nil)
+					}
+					// On not-connected, do nothing: the device's
+					// LastSeen ages out of the timeout window and
+					// status demotes to 'down' organically.
+				}
+			}
+		}()
 	}
 
 	// flightArmedHandler runs the daemon-side side effects of an arm
