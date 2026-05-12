@@ -17,6 +17,11 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 - Audio split: pre-baked samples for safety-critical alarms (auto-launch faults, link loss, failsafe), Piper TTS (en_US-amy-medium) for everything else.
 - Spectator SoftAP removed from display firmware: if revived, lives on Pi 400 or a dedicated ESP32 with no panel duties.
 - RP2040 CRSF firmware m1.8-wdt: hardware watchdog enabled, no exceptions.
+- TAER stick layout is the default and the model file is the source of truth: the daemon reads the throttle channel from the active EdgeTX model file (input names + mix data), it is never hardcoded. AETR is supported too but only via the model file. A hardcoded `ch[2] <= 200` check (legacy AETR assumption) was removed.
+- Three-input arming workflow: ARMED requires throttle-low + SF arm key down + SH momentary press, all three concurrent. The momentary is press-only (release doesn't matter); to disarm, SF goes up combined with T-low.
+- Pre-flight gate is two-part: operator acknowledgement on the `/status` page (syscheck) plus device-health blockers (devhealth). The only blocking devices are the RP2040 CRSF link and both HDMI kiosk displays; everything else (Mega + subsystems, ESP32 HUB75 panel) is informational and never gates flight. Server-side enforced via `POST /api/v1/syscheck/dismiss` returning 409 when not ready.
+- Two VFDs (`vfd.0` and `vfd.1`) on the front panel: both Noritake CU20025ECPB-W1J, both driven by the Mega via HD44780 4-bit. Originally specced as one; doubled for status density (different categories on each).
+- 128x64 ST7920 graphic LCD on the Mega panel (alongside the VFDs) renders an artificial horizon HUD. Cool-factor display only: telemetry is already complete on the kiosk HUDs. Loss of the GLCD never blocks flight.
 
 ## Mechanical and case
 

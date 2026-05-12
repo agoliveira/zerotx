@@ -10,7 +10,7 @@ Items deferred to a specific later moment, not abandoned.
 
 - **Pi 400 CPU optimization**: currently 70-80% load with two browsers. Profile per-component, evaluate the optimization flags listed in `docs/BOOTSTRAP.md`, measure each in isolation. Goal: comfortable headroom for telemetry and TTS bursts.
 - **Stan-as-datahub V2**: replay tool architecture pinned for later. Stan would host replay sessions for offline analysis and bench testing without involving the live daemon.
-- **Auto-launch and pre-flight gate**: arm-state-machine extension that interlocks against pre-flight checks (GPS lock, link health, telemetry sanity) before allowing arm. Deferred.
+- **Auto-launch**: arm-state-machine extension that auto-arms once pre-flight checks pass (telemetry sanity, link health, model arming policy). The pre-flight checks themselves landed (syscheck operator gate + devhealth blocking on RP2040 and HDMI displays; see DECISIONS.md); the auto-launch logic on top is still pinned for later.
 - **Daemon-side semantic consumers for IO board events**: LDR-driven auto-brightness, buzzer alarm pattern engine, encoder UI binding, button event semantics. Plumbing exists in `iohub`; consumers don't yet.
 - **`PRAGMA busy_timeout=5000`** in `tools/maps/sat-download/main.go`. SQLite write contention during long downloads.
 
@@ -24,6 +24,9 @@ Smaller items, off the critical path. Append as they surface.
 - ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into `docs/BOOTSTRAP.md`.
 - VFD brightness control: if CU20025ECPB-W1J exposes a software-readable contrast or brightness line, wire it to ambient light (LDR) alongside the planned panel auto-brightness.
 - Backup MCU recovery procedures: Mega via ICSP if bootloader corrupted, RP2040 via SWD if BOOTSEL inaccessible.
+- Status page: render the `/api/v1/preflight.devices` list as a generic Hardware Inventory section. Today the JSON is fully populated by `devhealth` but the page only shows hand-coded rows for some subsystems.
+- Deprecate `Preflight.GroundStation.LinkState` (still hardcoded `"active"`) in favor of the `rp2040` entry in `Preflight.devices` from `devhealth`.
+- Firmware-side periodic heartbeat from the Mega (e.g. `EVENT hal heartbeat` every 5 s) so the `devhealth` Mega timeout can drop from the current 5 min to ~30 s. Improves false-negative rate during quiet ground sessions.
 
 ## Open questions
 
