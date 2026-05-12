@@ -926,7 +926,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1316,6 +1316,7 @@ func buildAPIProviders(
 	tileWarmStatsHolder *tileWarmStats,
 	gpsRdr *gps.Reader,
 	syscheckGate *syscheck.Gate,
+	devs *devhealth.Registry,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
