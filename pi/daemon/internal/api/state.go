@@ -491,8 +491,38 @@ type Providers struct {
 	// /api/v1/syscheck/dismiss endpoint.
 	SyscheckDismiss func()
 
+	// RecordingDetail loads the full data (events + telemetry) for
+	// the named recording, suitable for driving the replay UI.
+	// Returned as opaque interface{} (the api package treats it as
+	// JSON) to avoid an import cycle on the recorder package.
+	// Returns an error if the file is missing or unreadable.
+	RecordingDetail func(name string) (interface{}, error)
+
+	// ReplaySnapshot returns the current replay session state.
+	// Active=true means a replay is running in the kiosks; the api
+	// package surfaces this via /api/v1/replay/status.
+	ReplaySnapshot func() ReplayInfo
+	// ReplayStart marks a replay session active, flips the HUB75
+	// panel to ModeReplay, and is refused (returns error) if the
+	// aircraft is armed (safety gate). The name parameter is the
+	// recording filename (basename).
+	ReplayStart func(name string) error
+	// ReplayStop clears the replay session, restoring the previous
+	// HUB75 panel mode. No-op if not currently active.
+	ReplayStop func()
+
 	Version string
 	Uptime  func() time.Duration
+}
+
+// ReplayInfo is the wire shape for GET /api/v1/replay/status.
+// Mirrors replay.Snapshot but lives in the api package so callers
+// don't import replay (same isolation pattern as devhealth's
+// PreflightDevice).
+type ReplayInfo struct {
+	Active    bool      `json:"active"`
+	Name      string    `json:"name,omitempty"`
+	StartedAt time.Time `json:"startedAt,omitempty"`
 }
 
 // TileWarmStatsSnapshot is the API-facing shape of the daemon's

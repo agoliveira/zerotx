@@ -108,6 +108,7 @@ func TestModeIsValid(t *testing.T) {
 		{ModeAlarm, true},
 		{ModeRTH, true},
 		{ModePostflight, true},
+		{ModeReplay, true},
 		{Mode("BOGUS"), false},
 		{Mode(""), false},
 	}

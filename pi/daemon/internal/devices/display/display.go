@@ -52,12 +52,18 @@ const (
 	ModeAlarm      Mode = "ALARM"
 	ModeRTH        Mode = "RTH"
 	ModePostflight Mode = "POSTFLIGHT"
+	// ModeReplay indicates the kiosks are replaying a saved recording.
+	// Distinct from any flight-time mode so the HUB75 panel can show
+	// an unambiguous "REPLAY" indicator that won't be confused with a
+	// real flight state. Set by the daemon when /api/v1/replay/start
+	// is called; cleared on /stop or when replay sessions end.
+	ModeReplay Mode = "REPLAY"
 )
 
 // IsValid reports whether m is one of the defined modes.
 func (m Mode) IsValid() bool {
 	switch m {
-	case ModeIdle, ModePreflight, ModeFlight, ModeAlarm, ModeRTH, ModePostflight:
+	case ModeIdle, ModePreflight, ModeFlight, ModeAlarm, ModeRTH, ModePostflight, ModeReplay:
 		return true
 	}
 	return false

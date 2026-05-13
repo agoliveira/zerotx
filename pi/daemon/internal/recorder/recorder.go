@@ -749,6 +749,258 @@ func Summarize(path string) (*Summary, error) {
 	return s, nil
 }
 
+// Detail is the full content of a saved recording, suitable for
+// driving the replay UI. Includes session metadata, every event,
+// and every telemetry sample. Sizes for a typical 10-minute flight
+// at the 5 Hz telemetry throttle: ~3000 telemetry rows + tens of
+// events, totaling roughly 150-200 KB JSON. Small enough to ship
+// in one response without pagination.
+type Detail struct {
+	Name      string             `json:"name"`
+	Session   SessionMeta        `json:"session"`
+	Events    []DetailEvent      `json:"events"`
+	Telemetry []DetailTelemetry  `json:"telemetry"`
+}
+
+// SessionMeta is the session row's user-facing fields. Times are
+// ISO8601 (RFC3339Nano) strings, matching what's stored in SQLite.
+type SessionMeta struct {
+	ModelName string `json:"modelName,omitempty"`
+	ModelPath string `json:"modelPath,omitempty"`
+	StartedAt string `json:"startedAt,omitempty"`
+	EndedAt   string `json:"endedAt,omitempty"`
+	Notes     string `json:"notes,omitempty"`
+}
+
+// DetailEvent is one events row. TsMs is milliseconds from session
+// start (matches the resolution the replay clock needs). Detail is
+// the raw JSON blob stored in SQLite, passed through verbatim --
+// the client parses it.
+type DetailEvent struct {
+	TsMs   int64  `json:"tsMs"`
+	Kind   string `json:"kind"`
+	Name   string `json:"name,omitempty"`
+	Level  string `json:"level,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// DetailTelemetry is one telemetry row, in the same units as the
+// original TelemetrySample but with optional pointers replaced by
+// JSON 'omitempty' so missing values are absent in the wire JSON
+// rather than serialized as null. Replay clients iterate these
+// rows in ts order and synthesize state messages for the renderer.
+type DetailTelemetry struct {
+	TsMs int64 `json:"tsMs"`
+
+	BatVolts *float64 `json:"batVolts,omitempty"`
+	BatAmps  *float64 `json:"batAmps,omitempty"`
+	BatPct   *int     `json:"batPct,omitempty"`
+	BatMAh   *int     `json:"batMah,omitempty"`
+
+	GpsLat  *float64 `json:"gpsLat,omitempty"`
+	GpsLon  *float64 `json:"gpsLon,omitempty"`
+	GpsAlt  *int     `json:"gpsAlt,omitempty"`
+	GpsKmh  *float64 `json:"gpsKmh,omitempty"`
+	GpsHdg  *float64 `json:"gpsHdg,omitempty"`
+	GpsSats *int     `json:"gpsSats,omitempty"`
+
+	LinkRSSI *int `json:"linkRssi,omitempty"`
+	LinkLQ   *int `json:"linkLq,omitempty"`
+	LinkSNR  *int `json:"linkSnr,omitempty"`
+
+	FlightMode *string `json:"flightMode,omitempty"`
+
+	AttitudeRoll  *float64 `json:"attitudeRoll,omitempty"`
+	AttitudePitch *float64 `json:"attitudePitch,omitempty"`
+	AttitudeYaw   *float64 `json:"attitudeYaw,omitempty"`
+}
+
+// LoadDetail opens the saved recording at path read-only and reads
+// the entire session + events + telemetry into a Detail. Used by
+// the /api/v1/recordings/detail endpoint for replay playback.
+//
+// Missing columns in older recordings (notably the attitude_* columns
+// added later) are tolerated: the function uses defensive SQL with
+// a pragma_table_info introspection to skip absent columns. Pointer
+// fields stay nil for those rows; the replay client renders the
+// horizon as level when attitude is absent.
+//
+// All rows are read into memory. For a 10-minute flight this is
+// ~150-200 KB; not a concern. For substantially longer recordings
+// (an hour+), a streaming approach would be more appropriate -- but
+// the recorder caps retained recordings at 10 by default and a
+// typical flight is well under 20 minutes.
+func LoadDetail(path string) (*Detail, error) {
+	db, err := sql.Open("sqlite", path+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	defer db.Close()
+
+	out := &Detail{Name: filepath.Base(path)}
+
+	// Session metadata. One row; if no session exists the recording
+	// is empty (pre-arm save?), return the shell with empty slices.
+	var modelName, modelPath, startedAt sql.NullString
+	var endedAt, notes sql.NullString
+	if err := db.QueryRow(
+		`SELECT model_name, model_path, started_at, COALESCE(ended_at, ''), COALESCE(notes, '')
+		 FROM sessions LIMIT 1`,
+	).Scan(&modelName, &modelPath, &startedAt, &endedAt, &notes); err != nil {
+		// No session row: empty file. Caller gets an empty Detail.
+		return out, nil
+	}
+	out.Session = SessionMeta{
+		ModelName: modelName.String,
+		ModelPath: modelPath.String,
+		StartedAt: startedAt.String,
+		EndedAt:   endedAt.String,
+		Notes:     notes.String,
+	}
+
+	// Events. Order by ts so the client can iterate linearly.
+	eventRows, err := db.Query(
+		`SELECT ts_us, kind, COALESCE(name, ''), COALESCE(level, ''), COALESCE(detail, '')
+		 FROM events ORDER BY ts_us ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("events query: %w", err)
+	}
+	for eventRows.Next() {
+		var tsUs int64
+		var kind, name, level, detail string
+		if err := eventRows.Scan(&tsUs, &kind, &name, &level, &detail); err != nil {
+			eventRows.Close()
+			return nil, fmt.Errorf("events scan: %w", err)
+		}
+		out.Events = append(out.Events, DetailEvent{
+			TsMs: tsUs / 1000, Kind: kind, Name: name, Level: level, Detail: detail,
+		})
+	}
+	eventRows.Close()
+
+	// Telemetry. Detect attitude column presence for forward-compat
+	// with old recordings that pre-date the attitude schema change.
+	hasAttitude := tableHasColumn(db, "telemetry", "attitude_roll")
+
+	telemetryQuery := `SELECT ts_us,
+		bat_volts, bat_amps, bat_pct, bat_mah,
+		gps_lat, gps_lon, gps_alt, gps_kmh, gps_hdg, gps_sats,
+		link_rssi, link_lq, link_snr,
+		fm_mode`
+	if hasAttitude {
+		telemetryQuery += `, attitude_roll, attitude_pitch, attitude_yaw`
+	}
+	telemetryQuery += ` FROM telemetry ORDER BY ts_us ASC`
+
+	telRows, err := db.Query(telemetryQuery)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry query: %w", err)
+	}
+	defer telRows.Close()
+	for telRows.Next() {
+		var tsUs int64
+		var bv, ba sql.NullFloat64
+		var bp, bm sql.NullInt64
+		var glat, glon sql.NullFloat64
+		var galt sql.NullInt64
+		var gkmh, ghdg sql.NullFloat64
+		var gsats sql.NullInt64
+		var lrssi, llq, lsnr sql.NullInt64
+		var fmMode sql.NullString
+		var aRoll, aPitch, aYaw sql.NullFloat64
+
+		var scanErr error
+		if hasAttitude {
+			scanErr = telRows.Scan(&tsUs,
+				&bv, &ba, &bp, &bm,
+				&glat, &glon, &galt, &gkmh, &ghdg, &gsats,
+				&lrssi, &llq, &lsnr,
+				&fmMode,
+				&aRoll, &aPitch, &aYaw)
+		} else {
+			scanErr = telRows.Scan(&tsUs,
+				&bv, &ba, &bp, &bm,
+				&glat, &glon, &galt, &gkmh, &ghdg, &gsats,
+				&lrssi, &llq, &lsnr,
+				&fmMode)
+		}
+		if scanErr != nil {
+			return nil, fmt.Errorf("telemetry scan: %w", scanErr)
+		}
+
+		row := DetailTelemetry{TsMs: tsUs / 1000}
+		if bv.Valid {
+			v := bv.Float64; row.BatVolts = &v
+		}
+		if ba.Valid {
+			v := ba.Float64; row.BatAmps = &v
+		}
+		if bp.Valid {
+			v := int(bp.Int64); row.BatPct = &v
+		}
+		if bm.Valid {
+			v := int(bm.Int64); row.BatMAh = &v
+		}
+		if glat.Valid {
+			v := glat.Float64; row.GpsLat = &v
+		}
+		if glon.Valid {
+			v := glon.Float64; row.GpsLon = &v
+		}
+		if galt.Valid {
+			v := int(galt.Int64); row.GpsAlt = &v
+		}
+		if gkmh.Valid {
+			v := gkmh.Float64; row.GpsKmh = &v
+		}
+		if ghdg.Valid {
+			v := ghdg.Float64; row.GpsHdg = &v
+		}
+		if gsats.Valid {
+			v := int(gsats.Int64); row.GpsSats = &v
+		}
+		if lrssi.Valid {
+			v := int(lrssi.Int64); row.LinkRSSI = &v
+		}
+		if llq.Valid {
+			v := int(llq.Int64); row.LinkLQ = &v
+		}
+		if lsnr.Valid {
+			v := int(lsnr.Int64); row.LinkSNR = &v
+		}
+		if fmMode.Valid {
+			v := fmMode.String; row.FlightMode = &v
+		}
+		if aRoll.Valid {
+			v := aRoll.Float64; row.AttitudeRoll = &v
+		}
+		if aPitch.Valid {
+			v := aPitch.Float64; row.AttitudePitch = &v
+		}
+		if aYaw.Valid {
+			v := aYaw.Float64; row.AttitudeYaw = &v
+		}
+		out.Telemetry = append(out.Telemetry, row)
+	}
+
+	return out, nil
+}
+
+// tableHasColumn reports whether a column exists on a table. Uses
+// SQLite's pragma_table_info which is the canonical way to introspect.
+// Returns false on any error (broken file, missing table, etc.) which
+// is the safe default for the caller's downgrade path.
+func tableHasColumn(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(
+		`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	return rows.Next()
+}
+
 // nullableFloat runs a single-column query and returns the float
 // value plus ok=true if non-null, or (0, false) on null/error.
 func nullableFloat(db *sql.DB, query string) (float64, bool) {

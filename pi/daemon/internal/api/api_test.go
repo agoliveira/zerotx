@@ -575,3 +575,125 @@ func TestHandleSyscheckDismiss_NoPreflightProviderFallsThrough(t *testing.T) {
 		t.Errorf("dismiss did not invoke provider in no-Preflight mode")
 	}
 }
+
+// === Replay endpoints ===
+
+// TestHandleReplayStatus_Idle: with no replay active, returns
+// Active=false. Default state on a freshly-started daemon.
+func TestHandleReplayStatus_Idle(t *testing.T) {
+	providers := &Providers{
+		ReplaySnapshot: func() ReplayInfo {
+			return ReplayInfo{Active: false}
+		},
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/replay/status", nil)
+	srv.handleReplayStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"active":false`) {
+		t.Errorf("expected active:false in body, got: %s", body)
+	}
+}
+
+// TestHandleReplayStatus_NoProviderGracefulDefault: when no
+// ReplaySnapshot provider is wired (e.g. legacy callers, tests),
+// the endpoint still returns a valid Idle response rather than
+// 500ing or 503ing.
+func TestHandleReplayStatus_NoProviderGracefulDefault(t *testing.T) {
+	srv := NewServer("", &Providers{}) // no ReplaySnapshot
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/replay/status", nil)
+	srv.handleReplayStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200", rr.Code)
+	}
+}
+
+// TestHandleReplayStart_HappyPath: name is valid, provider succeeds,
+// 200 with the new snapshot.
+func TestHandleReplayStart_HappyPath(t *testing.T) {
+	started := ""
+	providers := &Providers{
+		ReplayStart: func(name string) error {
+			started = name
+			return nil
+		},
+		ReplaySnapshot: func() ReplayInfo {
+			return ReplayInfo{Active: true, Name: started}
+		},
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/replay/start",
+		strings.NewReader(`{"name": "flight-42.db"}`))
+	srv.handleReplayStart(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if started != "flight-42.db" {
+		t.Errorf("provider received name=%q, want flight-42.db", started)
+	}
+}
+
+// TestHandleReplayStart_ArmedReturns409: the provider's safety gate
+// (armed-state check) bubbles up as 409. Critical test: this is the
+// flight-safety backstop that should never silently fail.
+func TestHandleReplayStart_ArmedReturns409(t *testing.T) {
+	providers := &Providers{
+		ReplayStart: func(name string) error {
+			return fmt.Errorf("cannot start replay while armed")
+		},
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/replay/start",
+		strings.NewReader(`{"name": "flight-42.db"}`))
+	srv.handleReplayStart(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status: got %d, want 409", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "armed") {
+		t.Errorf("body should mention 'armed', got: %s", rr.Body.String())
+	}
+}
+
+// TestHandleReplayStart_EmptyName: 400 on empty name. Path-traversal
+// defenses live in the provider, not the handler; we don't test
+// those here, but the empty-name check is at the handler layer.
+func TestHandleReplayStart_EmptyName(t *testing.T) {
+	providers := &Providers{
+		ReplayStart: func(name string) error { return nil },
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/replay/start",
+		strings.NewReader(`{"name": ""}`))
+	srv.handleReplayStart(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400", rr.Code)
+	}
+}
+
+// TestHandleReplayStop_HappyPath: returns 204 and the provider is
+// called. Idempotent at the daemon level so we don't bother
+// asserting the provider returned anything.
+func TestHandleReplayStop_HappyPath(t *testing.T) {
+	stopped := false
+	providers := &Providers{
+		ReplayStop: func() { stopped = true },
+	}
+	srv := NewServer("", providers)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/replay/stop", nil)
+	srv.handleReplayStop(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status: got %d, want 204", rr.Code)
+	}
+	if !stopped {
+		t.Errorf("ReplayStop provider was not invoked")
+	}
+}

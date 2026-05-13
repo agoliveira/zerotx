@@ -87,6 +87,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/narrate", s.handleNarrate)
 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
 	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
+	mux.HandleFunc("/api/v1/recordings/detail", s.handleRecordingDetail)
+	mux.HandleFunc("/api/v1/replay/status", s.handleReplayStatus)
+	mux.HandleFunc("/api/v1/replay/start", s.handleReplayStart)
+	mux.HandleFunc("/api/v1/replay/stop", s.handleReplayStop)
 	mux.HandleFunc("/api/v1/model/load", s.handleModelLoad)
 	mux.HandleFunc("/api/v1/model/unload", s.handleModelUnload)
 	mux.HandleFunc("/api/v1/models", s.handleModels)
@@ -514,6 +518,97 @@ func (s *Server) handleRecordingSummary(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleRecordingDetail returns the full content of a saved
+// recording: session metadata, every event, every telemetry sample.
+// Replay UI's data source. Query parameter ?name=<basename>.
+// Response sizes are typically 150-200 KB for a 10-minute flight;
+// the daemon ships the whole thing in one response (no pagination).
+func (s *Server) handleRecordingDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if s.providers.RecordingDetail == nil {
+		http.Error(w, "recording detail not configured", http.StatusServiceUnavailable)
+		return
+	}
+	out, err := s.providers.RecordingDetail(name)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleReplayStatus returns the current replay session state.
+// GET only. Always returns 200; check the Active field for truthiness.
+func (s *Server) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
+	if s.providers.ReplaySnapshot == nil {
+		writeJSON(w, http.StatusOK, ReplayInfo{Active: false})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.providers.ReplaySnapshot())
+}
+
+// handleReplayStart marks a replay session active. Body JSON: {name}.
+// Refuses (409 Conflict) if the aircraft is armed -- replay must
+// never run during a real flight. Refuses (409) if a different
+// replay session is already active (the same name is idempotent).
+// Returns 200 with the new snapshot on success.
+func (s *Server) handleReplayStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.ReplayStart == nil {
+		http.Error(w, "replay not configured", http.StatusNotImplemented)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := s.providers.ReplayStart(req.Name); err != nil {
+		// The provider distinguishes armed-conflict and
+		// already-active-different-name conflicts via the error;
+		// the wire format is JSON with an 'error' field either way.
+		// Status 409 because both are conflicts with current state.
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if s.providers.ReplaySnapshot != nil {
+		writeJSON(w, http.StatusOK, s.providers.ReplaySnapshot())
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleReplayStop clears the replay session. POST-only. Idempotent
+// at the daemon level; calling stop with no active session is a
+// no-op and returns 204.
+func (s *Server) handleReplayStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.providers.ReplayStop == nil {
+		http.Error(w, "replay not configured", http.StatusNotImplemented)
+		return
+	}
+	s.providers.ReplayStop()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleModelLoad parses a JSON body {"path": "..."} and asks the

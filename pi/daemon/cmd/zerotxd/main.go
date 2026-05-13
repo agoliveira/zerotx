@@ -44,6 +44,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/phrasebook"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/replay"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/syscheck"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
@@ -1077,10 +1078,15 @@ func main() {
 	// (it will report zero runs). The goroutine that updates it
 	// is started later after the API server is up.
 	tileWarmStatsHolder := &tileWarmStats{}
+	// Replay session state. Process-local: cleared on daemon restart,
+	// which is fine because the kiosk tabs running the replay are
+	// independent. Tracks whether we should be showing ModeReplay on
+	// the HUB75 panel and which recording is current.
+	replayState := replay.New()
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, replayState, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1471,6 +1477,7 @@ func buildAPIProviders(
 	gpsRdr *gps.Reader,
 	syscheckGate *syscheck.Gate,
 	devs *devhealth.Registry,
+	replayState *replay.State,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1789,6 +1796,64 @@ func buildAPIProviders(
 			}
 			path := filepath.Join(recordingsDir, name)
 			return recorder.Summarize(path)
+		},
+		RecordingDetail: func(name string) (interface{}, error) {
+			if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+				return nil, fmt.Errorf("invalid recording name")
+			}
+			path := filepath.Join(recordingsDir, name)
+			return recorder.LoadDetail(path)
+		},
+
+		ReplaySnapshot: func() api.ReplayInfo {
+			snap := replayState.Snapshot()
+			return api.ReplayInfo{
+				Active:    snap.Active,
+				Name:      snap.Name,
+				StartedAt: snap.StartedAt,
+			}
+		},
+		ReplayStart: func(name string) error {
+			// Safety gate: refuse if armed. Replay must never run
+			// during a real flight -- it would replace the HUB75
+			// panel's flight indicator with REPLAY and confuse the
+			// operator's situational awareness.
+			if armMachine != nil && armMachine.State() != arm.StateDisarmed {
+				return fmt.Errorf("cannot start replay while armed")
+			}
+			// Validate the name. Same path-traversal defense as the
+			// detail/summary providers.
+			if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+				return fmt.Errorf("invalid recording name")
+			}
+			if !replayState.Start(name) {
+				return fmt.Errorf("a different replay is already active; stop it first")
+			}
+			// Side effect: flip the HUB75 panel to ModeReplay. The
+			// panel firmware renders 'REPLAY' (or whatever the
+			// firmware decides for this mode); the daemon just
+			// publishes the mode change.
+			if dispMgr != nil {
+				dispMgr.SetMode(display.ModeReplay)
+			}
+			return nil
+		},
+		ReplayStop: func() {
+			if !replayState.Stop() {
+				return // wasn't active
+			}
+			// Restore the panel mode the daemon would have been in
+			// at ground/idle. ModeReplay only ever happens while
+			// disarmed (the start gate guarantees this), so the
+			// post-replay mode is whichever boot-time idle/preflight
+			// mode applies based on model load state.
+			if dispMgr != nil {
+				if holder.Load() == nil {
+					dispMgr.SetMode(display.ModeIdle)
+				} else {
+					dispMgr.SetMode(display.ModePreflight)
+				}
+			}
 		},
 
 		Version: version,
