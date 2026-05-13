@@ -443,6 +443,10 @@ constexpr const char* FW_VERSION = "0.19.0";
 #define COLOR_OK          0x07E0  // bright green
 #define COLOR_SEPARATOR   0x2104  // dim grey for tile boundaries
 #define COLOR_GAUGE_BG    0x18C3  // very dim grey for gauge background
+// Replay mode color: medium blue-purple. Deliberately outside the
+// green/amber/red range used for live flight states so 'REPLAY'
+// can never be visually mistaken for an in-flight indicator.
+#define COLOR_REPLAY      0x8118  // RGB565: ~(128, 32, 192)
 
 // ===== Library setup =====
 
@@ -457,7 +461,8 @@ enum class Mode {
   FLIGHT,
   ALARM,
   RTH,
-  POSTFLIGHT
+  POSTFLIGHT,
+  REPLAY,       // daemon is playing back a saved recording on the kiosks
 };
 
 struct State {
@@ -576,6 +581,7 @@ void render_flight();
 void render_alarm();
 void render_rth();
 void render_postflight();
+void render_replay();
 void show_boot_banner();
 
 // ===== Setup =====
@@ -789,6 +795,7 @@ void handle_line(const char* line) {
     else if (strcmp(tokens[2], "ALARM") == 0) set_mode(Mode::ALARM);
     else if (strcmp(tokens[2], "RTH") == 0) set_mode(Mode::RTH);
     else if (strcmp(tokens[2], "POSTFLIGHT") == 0) set_mode(Mode::POSTFLIGHT);
+    else if (strcmp(tokens[2], "REPLAY") == 0) set_mode(Mode::REPLAY);
     else send_error("unknown mode");
   }
   else if (strcmp(cmd, "STATE") == 0) {
@@ -1056,6 +1063,7 @@ void render() {
     case Mode::ALARM:      render_alarm(); break;
     case Mode::RTH:        render_rth(); break;
     case Mode::POSTFLIGHT: render_postflight(); break;
+    case Mode::REPLAY:     render_replay(); break;
   }
 }
 
@@ -1595,4 +1603,30 @@ void render_postflight() {
     u8g2.setForegroundColor(COLOR_VALUE);
     u8g2.print(buf);
   }
+}
+
+// REPLAY: kiosks are playing back a saved recording. Reached only
+// while disarmed (the daemon refuses to start a replay if armed).
+// Two centered lines, both in COLOR_REPLAY's blue-purple palette
+// so this mode is visually unambiguous -- it can't be mistaken
+// for any live flight indicator (green / amber / red).
+//
+// Deliberately minimal: no playback time, no recording name. The
+// kiosks (/hud and /map) carry the rich replay UI; the HUB75
+// panel's only job here is to say 'we are NOT showing live state
+// right now'.
+void render_replay() {
+  u8g2.setFont(FONT_TEXT);
+  u8g2.setForegroundColor(COLOR_REPLAY);
+  const char* title = "REPLAY";
+  int tw = u8g2.getUTF8Width(title);
+  u8g2.setCursor((LOGICAL_WIDTH - tw) / 2, 14);
+  u8g2.print(title);
+
+  u8g2.setFont(FONT_SMALL);
+  u8g2.setForegroundColor(COLOR_LABEL);
+  const char* sub = "REVIEWING";
+  int sw = u8g2.getUTF8Width(sub);
+  u8g2.setCursor((LOGICAL_WIDTH - sw) / 2, 26);
+  u8g2.print(sub);
 }
