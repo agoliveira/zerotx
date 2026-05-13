@@ -1552,11 +1552,11 @@ h2.warn { color: var(--warn); }
   </header>
 
   <nav class="tabs">
-    <button data-tab="preflight" class="active">Pre-flight</button>
-    <button data-tab="diagnostics">Diagnostics</button>
-    <button data-tab="model">Model</button>
-    <button data-tab="recordings">Recordings</button>
-    <button data-tab="logs">Logs</button>
+    <button data-tab="preflight" class="active" title="Shortcut: 1">Pre-flight</button>
+    <button data-tab="diagnostics" title="Shortcut: 2">Diagnostics</button>
+    <button data-tab="model" title="Shortcut: 3">Model</button>
+    <button data-tab="recordings" title="Shortcut: 4">Recordings</button>
+    <button data-tab="logs" title="Shortcut: 5">Logs</button>
     <div class="app-footer">ZeroTX GUI</div>
   </nav>
 
@@ -2239,6 +2239,7 @@ const App = {
     // tab when the arm window opens. The daemon ignores confirm
     // outside ARMING_REQUESTED so accidental presses are no-ops.
     this.installArmConfirmKeybind();
+    this.installTabSwitchKeybind();
 
     // Modal: clicking the backdrop dismisses (cancels). The window
     // itself doesn't bubble click, so clicks inside don't dismiss.
@@ -2964,6 +2965,36 @@ const App = {
     // Reflect the configured shortcut in the hero hint on init.
     const display = document.getElementById('arm-shortcut-display');
     if (display) display.textContent = formatShortcut(this.armConfirmShortcut());
+  },
+
+  // installTabSwitchKeybind: digit keys 1..N switch to the
+  // corresponding tab in document order. Tab list is read from the
+  // DOM so adding/removing a tab automatically updates the
+  // shortcut set -- no parallel hard-coded list to drift out of
+  // sync with the HTML.
+  //
+  // No modifier required (the operator UI has no competing use for
+  // bare digits on the page chrome). Skipped when a modal is open
+  // or when an input/textarea/select has focus -- matches the
+  // arm-confirm keybind's guard.
+  installTabSwitchKeybind() {
+    document.addEventListener('keydown', (e) => {
+      if (this.modal && this.modal.isOpen()) return;
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+
+      // Only act on bare digit keys 1..9. e.key gives the printed
+      // character regardless of keyboard layout, which is what we
+      // want (Brazilian ABNT2 layout still produces '1' for the
+      // '1' key, the layer changes only the shifted output).
+      if (!/^[1-9]$/.test(e.key)) return;
+      const idx = parseInt(e.key, 10) - 1;
+      const tabs = document.querySelectorAll('nav.tabs button[data-tab]');
+      if (idx >= tabs.length) return;
+      e.preventDefault();
+      this.switchTab(tabs[idx].dataset.tab);
+    });
   },
 
   armConfirmShortcut() {
