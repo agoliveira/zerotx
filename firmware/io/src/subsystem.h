@@ -1,6 +1,6 @@
 // subsystem.h - abstract base for all IO subsystems.
 //
-// Every peripheral (VFD, trackball LED, WS2813 strip, LDR, button,
+// Every peripheral (VFD, indicator LEDs, WS2813 strip, LDR, button,
 // buzzer, ...) implements this interface. The main dispatcher walks
 // a global registry of subsystems and dispatches Commands to the one
 // whose name() prefix matches the Command's target.

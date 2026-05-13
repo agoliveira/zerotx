@@ -7,10 +7,10 @@
 //   EVENT <subsystem>[.<instance>] [args...]   (firmware -> daemon only)
 //
 // Examples:
-//   SET led.trackball red-blink
 //   SET vfd.0 mode armed
 //   SET vfd.0 brightness 2
 //   SET buzzer beep 1000 200
+//   SET led.0 on
 //   GET caps
 //   GET version
 //   EVENT button.0 down
@@ -18,12 +18,12 @@
 //   EVENT boot watchdog
 //
 // Responses to GET commands look like the request echoed with values:
-//   GET caps                -> > caps vfd.0 led.trackball ws.0 sensor.ldr ...
+//   GET caps                -> > caps vfd.0 led.0 ws.0 sensor.ldr ...
 //   GET sensor.ldr          -> > sensor.ldr 423
 //
 // Errors are emitted as "! <subsystem> <message>":
 //   SET vfd.99 mode armed   -> ! vfd.99 unknown-instance
-//   SET led.trackball wat   -> ! led.trackball invalid-state
+//   SET led.99 on           -> ! led.99 unknown-instance
 //
 // Lines starting with '#' are comments and ignored.
 

@@ -100,7 +100,7 @@ type Driver interface {
 //
 // New constructs a private iohub.Client owned by the returned
 // driver. The daemon's main wiring should use NewWithHub instead so
-// the Mega connection is shared with other subsystems (trackball
+// the Mega connection is shared with other subsystems (indicator
 // LED, indicator LEDs, etc.). Close on a New-constructed driver
 // also closes its private hub.
 func New(addr string) Driver {
@@ -206,7 +206,7 @@ func (d *LogDriver) Event(kind string, args ...string) error {
 // for backward compatibility (callers that don't know about iohub
 // can keep using the old API). NewWithHub(client) takes a shared
 // client so the same Mega connection can be used for VFD and other
-// subsystems (trackball LED, indicator LEDs, etc).
+// subsystems (indicator LEDs, etc).
 //
 // The Mega firmware exposes two VFD instances (vfd.0 and vfd.1).
 // NewWithHub selects vfd.0 by default; NewInstanceWithHub addresses

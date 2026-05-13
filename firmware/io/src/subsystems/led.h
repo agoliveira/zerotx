@@ -1,8 +1,7 @@
 // led.h - generic indicator-LED subsystem.
 //
-// Four panel LEDs as pure on/off outputs. The trackball LEDs have
-// their own subsystem because they have multi-state animation;
-// these are dumber.
+// Four panel LEDs as pure on/off outputs. Multi-state / animated
+// LEDs live in their own subsystems; these are dumber.
 //
 // Default polarity is active-HIGH (HIGH = LED lit). Per-pin
 // ACTIVE_LOW flag in HAL flips this for boards wired through an

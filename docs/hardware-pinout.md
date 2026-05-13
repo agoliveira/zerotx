@@ -125,8 +125,7 @@ The table below is the **default** map.
 | 7  | Servo 1 (`servo_1`) | `servo.1` |
 | 8  | Servo 2 (`servo_2`) | `servo.2` |
 | 9  | Servo 3 (`servo_3`) | `servo.3` |
-| 11 | Trackball ring LED, green (`led_trackball_green`) | Timer 1 PWM, off Timer 2 (which `tone()` uses) |
-| 12 | Trackball ring LED, red (`led_trackball_red`) | Timer 1 PWM |
+| 11, 12 | Free | Previously trackball ring LEDs; freed when the trackball was removed (see DECISIONS) |
 | 14, 15 | Serial3 TX/RX | Free for future use |
 | 16, 17 | Serial2 TX/RX | Free for future use |
 | 18, 19 | Serial1 TX/RX (also INT3, INT2) | Free for future use |
@@ -258,25 +257,6 @@ Notes: servos pull a lot of current (~150mA idle, peaks of 1A+ on
 load). Power them from the case 5V rail, NOT from the Mega's
 regulator. GND must be shared between the servo's external supply
 and the Mega.
-
-**Trackball ring LEDs** (red + green, 4 wires)
-
-This drives the LED ring around the trackball housing. Two PWM
-channels for color mixing; common cathode tied to GND.
-
-```
-LED ring                          Mega
-┌─────────────────┐
-│ Red anode     ──┼──────────► Pin 12 + series resistor (led_trackball_red)
-│ Green anode   ──┼──────────► Pin 11 + series resistor (led_trackball_green)
-│ Common cathode┼─┼──────────► GND
-└─────────────────┘
-```
-
-Notes: pins 11 and 12 are Timer 1 PWM. Series resistor value depends
-on the LED's forward voltage and your desired current; ~220Ω per
-channel for typical 20mA-rated indicators. If your ring is a
-self-driving module with onboard resistors, omit the external ones.
 
 **I2C LCD** (4 wires)
 
@@ -787,7 +767,7 @@ The Pi 400 has 3 USB ports total. Allocation:
 | Hub port | Device | Notes |
 |----------|--------|-------|
 | 1 | ESP32 DevKit V1 | HUB75 LED panel driver |
-| 2 | Mega 2560 | IO board (VFD, trackball LEDs, buttons, relays, encoder, buzzer, LDR, WS2813 strip) |
+| 2 | Mega 2560 | IO board (VFD, buttons, indicator LEDs, relays, encoder, buzzer, LDR, WS2813 strip) |
 | 3 | USB joystick passthrough | Routes via an internal USB-A extension cable to a panel-mount USB-A on the front of the case. Operator plugs in their X-HOTAS (or any class-compliant USB joystick) |
 | 4 | Trackball | USB HID |
 | 5 | USB audio interface | Generic class-compliant USB audio board, drives the case speakers |

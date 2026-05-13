@@ -3,7 +3,7 @@
 // EEPROM layout v2:
 //
 //   [0..3]   magic = 0x5A455243 ("ZERC" little-endian)
-//   [4]      version = HAL_EEPROM_VERSION (4)
+//   [4]      version = HAL_EEPROM_VERSION (5)
 //   [5]      stored count (must match compile-time HAL_PIN_COUNT)
 //   [6..6+2N-1]  N entries, 2 bytes each: { pin_number, flags }
 //   [end..end+1] CRC16 over preceding bytes
@@ -33,7 +33,7 @@ namespace hal {
 
 static constexpr uint16_t HAL_EEPROM_BASE    = 0;
 static constexpr uint32_t HAL_EEPROM_MAGIC   = 0x5A455243UL;
-static constexpr uint8_t  HAL_EEPROM_VERSION = 4;
+static constexpr uint8_t  HAL_EEPROM_VERSION = 5;
 
 // Bytes per pin entry in EEPROM v2 (pin_number + flags).
 static constexpr uint8_t HAL_ENTRY_BYTES = 2;
@@ -59,8 +59,6 @@ static constexpr uint8_t HAL_PIN_MAX = 69;
 // via SET hal flag for boards that wire their inputs through an
 // inverting transistor stage.
 static const uint8_t kHalPinDefaults[HAL_PIN_COUNT] = {
-  /* HAL_LED_TRACKBALL_GREEN */ 11,  // Timer 1 PWM, off Timer 2 (which tone() takes)
-  /* HAL_LED_TRACKBALL_RED   */ 12,  // Timer 1 PWM
   /* HAL_VFD0_RS             */ 44,
   /* HAL_VFD0_EN             */ 45,
   /* HAL_VFD0_D4             */ 46,
@@ -112,8 +110,6 @@ static const uint8_t kHalFlagDefaults[HAL_PIN_COUNT] = {0};
 
 // Stable string names for the protocol surface. Indexed by HalPinId.
 static const char* const kHalPinNames[HAL_PIN_COUNT] = {
-  /* HAL_LED_TRACKBALL_GREEN */ "led_trackball_green",
-  /* HAL_LED_TRACKBALL_RED   */ "led_trackball_red",
   /* HAL_VFD0_RS             */ "vfd0_rs",
   /* HAL_VFD0_EN             */ "vfd0_en",
   /* HAL_VFD0_D4             */ "vfd0_d4",

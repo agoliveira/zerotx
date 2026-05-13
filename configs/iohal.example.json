@@ -1,8 +1,5 @@
 {
   "pins": {
-    "led_trackball_green": { "pin": 8 },
-    "led_trackball_red":   { "pin": 9 },
-
     "vfd0_rs": { "pin": 30 },
     "vfd0_en": { "pin": 31 },
     "vfd0_d4": { "pin": 32 },

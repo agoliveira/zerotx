@@ -48,7 +48,6 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/syscheck"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
-	"github.com/agoliveira/zerotx/pi/daemon/internal/trackballled"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/vfd"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/netclass"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/tilewarm"
@@ -862,7 +861,7 @@ func main() {
 	//      battery, alarm flashes).
 	//
 	// Mega IO board connection. One iohub.Client serves multiple
-	// subsystems on the device: VFD, trackball LEDs, indicator LEDs,
+	// subsystems on the device: VFD, indicator LEDs,
 	// buttons, WS2813 strip, future LDR/buzzer. The iohub-port flag
 	// names the Mega's USB-CDC device.
 	//
@@ -1036,23 +1035,11 @@ func main() {
 			*wxNearSunsetMin, *wxShearDirDeg, *wxShearSpeedRatio)
 	}
 
-	// Trackball status LED. Pure operator-feedback indicator: green
-	// when system is healthy, red when an alert needs attention. The
-	// driver shares the Mega iohub.Client; if -iohub-port is empty/log
-	// the LED simply doesn't drive a real device but the goroutine
-	// runs harmlessly.
-	{
-		alertProvider := wxAlertProviderAdapter{wxAlerts}
-		tbDrv := trackballled.New(hub, armMachine, alertProvider)
-		go tbDrv.Run(ctx)
-		log.Printf("trackballled: started")
-	}
-
 	// 128x64 graphic LCD on the Mega: cool-factor artificial horizon.
 	// Pushes attitude (pitch, roll, heading) from telemetry at ~10 Hz;
 	// the firmware re-renders an AH widget locally. Hub is shared
-	// with VFD + trackball; NullClient (no -iohub-port) makes the
-	// push goroutine a harmless no-op.
+	// with VFD; NullClient (no -iohub-port) makes the push goroutine
+	// a harmless no-op.
 	{
 		glcdDriver := glcd.New(hub, telemetryState)
 		go glcdDriver.Run(ctx)

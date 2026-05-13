@@ -8,7 +8,7 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 - Mega 2560 is the IO hub, daemon is the brain: keeps Pi GPIO free, isolates real-time IO from Linux scheduling.
 - VFD on Mega (vfd.0 subsystem, HD44780 4-bit): originally specced for an RP2040 driver, moved to Mega to consolidate IO.
 - Joystick is USB HID to Pi: forwarded to RP2040 over USB-CDC for CRSF generation. Not connected to Mega.
-- Trackball is USB HID to Pi: arcade ball plus 2 USB buttons. LEDs (green/red) driven by Mega via led.trackball subsystem.
+- Trackball removed from the system: the arcade trackball used for GUI manipulation was found to have a busted encoder with no economical repair path. The legacy GUI is fully operable from the Pi 400 keyboard, and the kiosk pages (HUD, map, replay) never required pointer input — they were always WS-stream-driven or keyboard-driven. Removed rather than replaced. Mega pins 11/12 (formerly the ring LEDs) are now free. HAL_EEPROM_VERSION bumped accordingly.
 - ELRS TX modules (HappyModel ES900TX, RadioMaster Ranger 2.4GHz) mount externally on poles, cable-connected to the case via bulkheads.
 
 ## Firmware and software

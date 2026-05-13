@@ -32,7 +32,6 @@
 #include "subsystems/i2c_lcd.h"
 #include "subsystems/ldr.h"
 #include "subsystems/led.h"
-#include "subsystems/led_trackball.h"
 #include "subsystems/relay.h"
 #include "subsystems/servo.h"
 #include "subsystems/vfd.h"
@@ -62,7 +61,6 @@ constexpr uint8_t kWatchdogTimeout = WDTO_500MS;
 // the HAL during begin().
 // ---------------------------------------------------------------------
 zerotx::HalSubsystem g_hal_subsys;
-zerotx::LedTrackball g_led_trackball;
 zerotx::Vfd          g_vfd;
 zerotx::I2cLcd       g_i2c_lcd;
 zerotx::Button       g_button;
@@ -77,7 +75,6 @@ zerotx::Glcd         g_glcd;
 
 zerotx::Subsystem* const kSubsystems[] = {
   &g_hal_subsys,
-  &g_led_trackball,
   &g_vfd,
   &g_i2c_lcd,
   &g_button,

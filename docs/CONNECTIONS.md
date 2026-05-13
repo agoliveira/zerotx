@@ -124,7 +124,7 @@ Noritake CU20025ECPB-W1J (20x2, blue/white) is driven by Mega via HD44780 4-bit 
 
 ## Mega IO connections
 
-Pin assignments for all Mega-attached peripherals (VFD, trackball ring LEDs, 4 buttons, 4 LEDs, 4 relays, WS2813 strip, LDR, passive piezo buzzer, KY-040 rotary encoder) are managed via the HAL EEPROM v2 system in `firmware/io/`. The active configuration can be read and modified with `tools/zerotx-iohal-config/`.
+Pin assignments for all Mega-attached peripherals (VFD, 4 buttons, 4 LEDs, 4 relays, WS2813 strip, LDR, passive piezo buzzer, KY-040 rotary encoder) are managed via the HAL EEPROM v2 system in `firmware/io/`. The active configuration can be read and modified with `tools/zerotx-iohal-config/`.
 
 The canonical pin table lives in `firmware/io/README.md`. This doc deliberately does not duplicate it.
 

@@ -33,7 +33,7 @@
 //   }
 //
 // pin_name must match a HAL pin id known to the firmware (e.g.
-// "led_trackball_green", "vfd0_rs", "relay_0"). Unknown names are
+// "vfd0_rs", "relay_0"). Unknown names are
 // reported as errors. Pins listed in JSON but not present on the
 // firmware are warnings (the firmware version may be older or newer
 // than the config). Pins on the firmware but missing from the JSON

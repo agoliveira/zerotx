@@ -30,77 +30,75 @@ namespace hal {
 // HAL_EEPROM_VERSION in hal.cpp so previously-saved EEPROM maps
 // invalidate cleanly and the new defaults take over on next boot.
 enum HalPinId : uint8_t {
-  HAL_LED_TRACKBALL_GREEN = 0,
-  HAL_LED_TRACKBALL_RED   = 1,
   // VFD instance 0 (Noritake CU20025ECPB-W1J in 4-bit HD44780 mode).
   // 6 pins: RS, EN, then four data lines D4..D7.
-  HAL_VFD0_RS = 2,
-  HAL_VFD0_EN = 3,
-  HAL_VFD0_D4 = 4,
-  HAL_VFD0_D5 = 5,
-  HAL_VFD0_D6 = 6,
-  HAL_VFD0_D7 = 7,
+  HAL_VFD0_RS = 0,
+  HAL_VFD0_EN = 1,
+  HAL_VFD0_D4 = 2,
+  HAL_VFD0_D5 = 3,
+  HAL_VFD0_D6 = 4,
+  HAL_VFD0_D7 = 5,
   // VFD instance 1: same shape as VFD0. Subsystem support lands in
   // a follow-up; the slots are reserved here so the EEPROM layout
   // stabilizes before code starts using them.
-  HAL_VFD1_RS = 8,
-  HAL_VFD1_EN = 9,
-  HAL_VFD1_D4 = 10,
-  HAL_VFD1_D5 = 11,
-  HAL_VFD1_D6 = 12,
-  HAL_VFD1_D7 = 13,
+  HAL_VFD1_RS = 6,
+  HAL_VFD1_EN = 7,
+  HAL_VFD1_D4 = 8,
+  HAL_VFD1_D5 = 9,
+  HAL_VFD1_D6 = 10,
+  HAL_VFD1_D7 = 11,
   // 10 panel buttons. Active-low to GND with internal pull-up.
-  HAL_BUTTON_0 = 14,
-  HAL_BUTTON_1 = 15,
-  HAL_BUTTON_2 = 16,
-  HAL_BUTTON_3 = 17,
-  HAL_BUTTON_4 = 18,
-  HAL_BUTTON_5 = 19,
-  HAL_BUTTON_6 = 20,
-  HAL_BUTTON_7 = 21,
-  HAL_BUTTON_8 = 22,
-  HAL_BUTTON_9 = 23,
+  HAL_BUTTON_0 = 12,
+  HAL_BUTTON_1 = 13,
+  HAL_BUTTON_2 = 14,
+  HAL_BUTTON_3 = 15,
+  HAL_BUTTON_4 = 16,
+  HAL_BUTTON_5 = 17,
+  HAL_BUTTON_6 = 18,
+  HAL_BUTTON_7 = 19,
+  HAL_BUTTON_8 = 20,
+  HAL_BUTTON_9 = 21,
   // 4 generic indicator LEDs. Pure on/off, daemon controls.
-  HAL_LED_0 = 24,
-  HAL_LED_1 = 25,
-  HAL_LED_2 = 26,
-  HAL_LED_3 = 27,
+  HAL_LED_0 = 22,
+  HAL_LED_1 = 23,
+  HAL_LED_2 = 24,
+  HAL_LED_3 = 25,
   // WS2813 strip data line.
-  HAL_WS_DATA = 28,
+  HAL_WS_DATA = 26,
   // 4 relays. Active-high default like all other outputs; per-pin
   // ACTIVE_LOW flag flips polarity for boards that need it.
-  HAL_RELAY_0 = 29,
-  HAL_RELAY_1 = 30,
-  HAL_RELAY_2 = 31,
-  HAL_RELAY_3 = 32,
+  HAL_RELAY_0 = 27,
+  HAL_RELAY_1 = 28,
+  HAL_RELAY_2 = 29,
+  HAL_RELAY_3 = 30,
   // LDR (light-dependent resistor) analog input. Default A0 which
   // is digital pin 54 on the Mega; analogRead() accepts the digital
   // pin number directly.
-  HAL_LDR_0 = 33,
+  HAL_LDR_0 = 31,
   // Buzzer output. Drives a passive piezo via tone(). Active piezo
   // works too - it just sounds at its native frequency regardless
   // of the requested freq.
-  HAL_BUZZER = 34,
+  HAL_BUZZER = 32,
   // Rotary encoder (KY-040 style): A and B quadrature pins plus a
   // push-button switch. All three idle HIGH via internal pull-ups.
   // Defaults place A and B on hardware-interrupt-capable pins
   // (INT0, INT1) so a future ISR-based decoder can drop in without
   // touching the pin map.
-  HAL_ENC0_A  = 35,
-  HAL_ENC0_B  = 36,
-  HAL_ENC0_SW = 37,
+  HAL_ENC0_A  = 33,
+  HAL_ENC0_B  = 34,
+  HAL_ENC0_SW = 35,
   // 4 servo outputs. Subsystem support lands in a follow-up; slots
   // reserved here.
-  HAL_SERVO_0 = 38,
-  HAL_SERVO_1 = 39,
-  HAL_SERVO_2 = 40,
-  HAL_SERVO_3 = 41,
+  HAL_SERVO_0 = 36,
+  HAL_SERVO_1 = 37,
+  HAL_SERVO_2 = 38,
+  HAL_SERVO_3 = 39,
   // 128x64 graphic LCD (ST7920 controller, serial mode). PSB jumper
   // is tied to GND on the panel side so the module enters 3-wire
   // serial mode at power-on. SID and CLK are fixed at Mega hardware
   // SPI MOSI (51) and SCK (52); only CS and /RESET are HAL-remappable.
-  HAL_GLCD_CS    = 42,
-  HAL_GLCD_RESET = 43,
+  HAL_GLCD_CS    = 40,
+  HAL_GLCD_RESET = 41,
   HAL_PIN_COUNT  // sentinel; must be last
 };
 

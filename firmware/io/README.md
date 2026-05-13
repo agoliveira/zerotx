@@ -1,7 +1,7 @@
 # zerotx-io firmware (Mega 2560)
 
 General IO board firmware. Multi-subsystem design: Noritake VFD,
-trackball status LEDs, indicator LEDs, panel buttons, WS2813 strip,
+indicator LEDs, panel buttons, WS2813 strip,
 relays, LDR ambient-light sensor, piezo buzzer, and rotary encoder
 all share one Mega 2560 connected to the daemon over USB-CDC.
 
@@ -32,7 +32,7 @@ all share one Mega 2560 connected to the daemon over USB-CDC.
 
 ## Polarity convention
 
-Default for every output (LEDs, relays, trackball ring): active-HIGH.
+Default for every output (LEDs, relays): active-HIGH.
 HIGH = active = energized. The HAL ACTIVE_LOW flag flips polarity
 per-pin for boards wired through an inverting transistor stage.
 Inverted logic is opt-in per pin, never assumed.
@@ -57,7 +57,7 @@ GET version
 > version zerotx-io 0.7.0-multi
 
 GET caps
-> caps hal led.trackball vfd.0 vfd.1 lcd button.0..9 led.0..3 relay.0..3 ws.0 ldr.0 buzzer enc.0 servo.0..3
+> caps hal vfd.0 vfd.1 lcd button.0..9 led.0..3 relay.0..3 ws.0 ldr.0 buzzer enc.0 servo.0..3
 
 EVENT ldr.0 raw=412
 EVENT enc.0 cw
@@ -102,12 +102,6 @@ SET servo.<n> angle <0..180>
 SET servo.<n> us <500..2500>
 SET servo.<n> detach
 GET servo.<n>
-```
-
-### `led.trackball` - bicolor trackball ring
-```
-SET led.trackball <off|green-solid|green-pulse|red-solid|red-blink>
-GET led.trackball
 ```
 
 ### `led.<0..3>` - generic on/off indicator LEDs

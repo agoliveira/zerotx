@@ -1,6 +1,6 @@
 // Package iohub is the daemon-side client of the Mega 2560 IO board
 // (firmware/io). The Mega exposes a multi-subsystem structured
-// protocol over USB-CDC: VFD, trackball LEDs, indicator LEDs,
+// protocol over USB-CDC: VFD, indicator LEDs,
 // buttons, WS2813 strip, plus future LDR/buzzer all share one
 // serial connection.
 //
@@ -13,7 +13,7 @@
 //   - Run(ctx): start the read goroutine that parses incoming lines.
 //
 // Subsystem-specific helper packages (internal/vfd,
-// internal/trackballled, etc.) take a *Client and call Send for
+// etc.) take a *Client and call Send for
 // their writes; they don't need to know about the wire syntax or
 // reconnection logic.
 //

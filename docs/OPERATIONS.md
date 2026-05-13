@@ -52,7 +52,7 @@ Flags:
 | `-web-dir` | static web assets root |
 | `-port` | RP2040 USB-CDC device path |
 | `-fc-tcp-addr` | INAV SITL CRSF endpoint as `host:port` (e.g. `127.0.0.1:5762`). Bench-test mode: daemon talks raw CRSF over TCP instead of opening the RP2040 link. Mutually exclusive with `-port`. |
-| `-iohub-port` | Mega IO board USB-CDC device (VFD, trackball LEDs, buttons, GLCD, etc.) |
+| `-iohub-port` | Mega IO board USB-CDC device (VFD, buttons, GLCD, etc.) |
 | `-display-port` | ESP32 HUB75 panel driver USB-CDC device. Empty disables the panel; daemon runs fine without it. |
 | `-maptiles-dir` | directory of PMTiles archives for offline map tile serving. Empty = online proxy mode. |
 | `-no-online-tiles` | disable online tile proxy fallback (for field operation without uplink) |
@@ -181,7 +181,7 @@ The page enforces the gate visually; the daemon also enforces server-side: `POST
 
 ### Mega didn't enumerate
 
-Symptom: daemon log shows `-iohub-port` device not found; VFD dark; trackball ring LEDs unresponsive.
+Symptom: daemon log shows `-iohub-port` device not found; VFD dark; indicator LEDs unresponsive.
 
 Diagnose: `ls -l /dev/serial/by-id/ | grep -i mega` or `dmesg | tail`. If absent, check USB cable to hub, hub power, Mega power LED.
 

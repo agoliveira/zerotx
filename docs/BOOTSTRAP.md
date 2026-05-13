@@ -17,7 +17,7 @@ For first-boot provisioning:
 - Wired Ethernet or known Wi-Fi credentials
 - Another machine running `rpi-imager`
 
-The MCU satellites (Mega, ESP32, RP2040), ELRS modules, joystick, trackball, and HUB75 panel are not required for bootstrap. Connect them after the Pi is online.
+The MCU satellites (Mega, ESP32, RP2040), ELRS modules, joystick, and HUB75 panel are not required for bootstrap. Connect them after the Pi is online.
 
 ## OS image to SSD
 

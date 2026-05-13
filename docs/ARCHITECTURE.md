@@ -61,10 +61,10 @@ flowchart LR
 ## Components
 
 ### Raspberry Pi 400 (brain)
-Runs `zerotxd` and two Chromium kiosk browsers. Owns the joystick, trackball HID, LCDs, and the satellite USB-CDC links. See `pi/daemon/`.
+Runs `zerotxd` and two Chromium kiosk browsers. Owns the joystick, LCDs, and the satellite USB-CDC links. See `pi/daemon/`.
 
 ### Mega 2560 (IO hub)
-Drives VFD, trackball ring LEDs (bicolor green/red), 4 buttons, 4 LEDs, 4 relays, 16-pixel WS2813 strip, LDR, passive piezo buzzer, KY-040 rotary encoder. Active-HIGH default with HAL-flag opt-in for active-LOW per pin. Single shared serial link to daemon. See `firmware/io/README.md`.
+Drives VFD, 4 buttons, 4 LEDs, 4 relays, 16-pixel WS2813 strip, LDR, passive piezo buzzer, KY-040 rotary encoder. Active-HIGH default with HAL-flag opt-in for active-LOW per pin. Single shared serial link to daemon. See `firmware/io/README.md`.
 
 ### ESP32 (HUB75 panel driver)
 Drives 2x Waveshare P2.5 64x32 panels chained, 128x32 logical resolution. USB-CDC link to Pi. RP2040 was attempted earlier and rejected (3.3V signaling insufficient at panel input shift registers); level shifters explicitly ruled out. See `firmware/display/README.md`.
@@ -89,9 +89,6 @@ At-a-glance state display: arm state, mode, alarms, big numerics. 2x Waveshare P
 
 ### 128x64 graphic LCD (ST7920)
 Small monochrome graphic LCD next to the VFDs on the front panel. Driven by the Mega via 3-wire serial (hardware SPI), the `glcd` Mega subsystem renders a cool-factor artificial horizon (pitch ladder, roll scale, numeric readout) from attitude telemetry the daemon pushes at ~10 Hz. Falls back to a "NO LINK" screen when attitude is stale. Not on the safety path; loss of the GLCD doesn't block flight.
-
-### Trackball + buttons
-Arcade trackball plus 2 USB buttons. USB HID to Pi. Ring LEDs (green and red) driven by Mega via the led.trackball subsystem.
 
 ### Joystick
 USB HID to Pi (Thrustmaster). Read by the `joystick` subsystem, forwarded to RP2040 over USB-CDC.
@@ -162,7 +159,7 @@ sequenceDiagram
 
 ### IO events
 
-Mega events (button presses, encoder ticks, LDR readings, etc.) flow over a single shared serial link. The `iohub` subsystem multiplexes the link; downstream subsystems (`vfd`, `trackballled`, future semantic consumers) subscribe to their slice. Outbound effects (LED states, VFD writes, relay commands) go back through `iohub`.
+Mega events (button presses, encoder ticks, LDR readings, etc.) flow over a single shared serial link. The `iohub` subsystem multiplexes the link; downstream subsystems (`vfd`, future semantic consumers) subscribe to their slice. Outbound effects (LED states, VFD writes, relay commands) go back through `iohub`.
 
 ### Panel orchestration
 
@@ -204,7 +201,6 @@ Mega events (button presses, encoder ticks, LDR readings, etc.) flow over a sing
 - `syscheck`: operator-acknowledgement pre-flight gate (kiosks land here on boot)
 - `telemetry`: telemetry frame parser and state model
 - `tilewarm`: map tile prefetcher around current position
-- `trackballled`: bicolor ring LED driver (consumes `iohub`)
 - `vfd`: VFD driver supporting two instances vfd.0, vfd.1 (consumes `iohub`)
 - `weather`: weather data fetcher
 - `wxalert`: weather-derived alerts
@@ -260,7 +256,7 @@ The daemon gates flight on two pre-flight signals before the operator can leave 
   - **RP2040 CRSF link**: refreshed on every `MsgHeartbeat` (~200 ms). 500 ms timeout.
   - **HDMI kiosk displays**: polled every 5 s against `/sys/class/drm/card*-HDMI-*/status`. Both must report `connected`. The `hdmihealth` package owns the scan; `devhealth` owns the registry.
 
-Everything else (Mega + its subsystems including GLCD, VFDs, buttons, encoder, LEDs, trackball ring, WS strip, LDR, relays; ESP32 HUB75 display) is tracked but **informational only** — surfaced on the status page so the operator sees what's connected, never gating flight. A dead VFD is annoying but flyable.
+Everything else (Mega + its subsystems including GLCD, VFDs, buttons, encoder, LEDs, WS strip, LDR, relays; ESP32 HUB75 display) is tracked but **informational only** — surfaced on the status page so the operator sees what's connected, never gating flight. A dead VFD is annoying but flyable.
 
 Server-side enforcement: even if the UI's button-disable misses a race, the `POST /api/v1/syscheck/dismiss` endpoint returns HTTP 409 when preflight is not ready, with the blockers list in the response body.
 
