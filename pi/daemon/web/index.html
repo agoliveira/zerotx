@@ -3421,12 +3421,15 @@ const App = {
     const modelOK = !!(this.state.model?.available);
     this.setCheck('pf-check-model', modelOK);
 
-    // Link check
-    const linkActive = pf?.groundStation?.linkState === 'active';
+    // Link check. Reads the rp2040 entry from pf.devices (devhealth
+    // registry), the canonical source. Status is three-valued
+    // ("up"/"stale"/"down"); only "up" counts as a healthy link.
+    const rp2040 = (pf?.devices || []).find(d => d.name === 'rp2040');
+    const linkActive = rp2040?.status === 'up';
     this.setCheck('pf-check-link', linkActive);
 
     document.getElementById('pf-link-port').textContent = pf?.groundStation?.linkPort || '-';
-    document.getElementById('pf-link-state').textContent = pf?.groundStation?.linkState || '-';
+    document.getElementById('pf-link-state').textContent = rp2040?.status || '-';
     document.getElementById('pf-link-fw').textContent =
       pf?.groundStation?.firmwareVersion || pf?.groundStation?.firmware || '-';
 
@@ -3471,7 +3474,8 @@ const App = {
     if (this.state.connection !== 'connected') reasons.push('not connected');
     if (!pf?.joystick?.selected?.connected) reasons.push('joystick');
     if (!this.state.model?.available) reasons.push('model');
-    if (pf?.groundStation?.linkState !== 'active') reasons.push('link');
+    const rp2040 = (pf?.devices || []).find(d => d.name === 'rp2040');
+    if (rp2040?.status !== 'up') reasons.push('link');
     if (!fcReady && machineState) reasons.push('FC not ready');
 
     let dataState = 'idle';

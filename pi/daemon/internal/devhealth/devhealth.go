@@ -203,6 +203,27 @@ func (r *Registry) SnapshotAll() []Snapshot {
 	return out
 }
 
+// Snapshot returns the current state of a single device by name,
+// with ok=false if the name isn't registered. Cheaper than
+// SnapshotAll when the caller only needs one entry (e.g. the Link
+// provider checks rp2040 status on every /api/v1/state push).
+func (r *Registry) Snapshot(name string) (Snapshot, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, ok := r.devices[name]
+	if !ok {
+		return Snapshot{}, false
+	}
+	return Snapshot{
+		Name:       d.Name,
+		Kind:       d.Kind,
+		Blocking:   d.Blocking,
+		Status:     d.status(time.Now()),
+		LastSeen:   d.LastSeen,
+		FirstError: d.FirstError,
+	}, true
+}
+
 // AllBlockingUp reports whether every device with Blocking=true is
 // currently Status=up. Returns true if there are no blocking devices
 // registered (which is the boot state before commits 2 and 3 wire in

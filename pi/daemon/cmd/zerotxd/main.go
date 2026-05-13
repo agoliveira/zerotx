@@ -1512,7 +1512,28 @@ func buildAPIProviders(
 			}
 		},
 		Link: func() api.LinkSnapshot {
-			return api.LinkSnapshot{State: "active", Port: port}
+			// State is derived from the rp2040 entry in the devhealth
+			// registry -- the canonical source of CRSF link liveness.
+			// devhealth statuses are "up"/"down"/"unknown"; map to
+			// the existing LinkSnapshot vocabulary that
+			// status/index.html and the /health endpoint consume.
+			//
+			// In SITL mode rp2040 isn't registered (the CRSF link is
+			// TCP-to-FC rather than USB-CDC-to-RP2040). Falls back
+			// to "active" so /health doesn't report a hard-down link
+			// when the daemon is actually fine, just running headless.
+			state := "active"
+			if devs != nil {
+				if sn, ok := devs.Snapshot("rp2040"); ok {
+					switch sn.Status {
+					case devhealth.StatusUp:
+						state = "active"
+					default:
+						state = "down"
+					}
+				}
+			}
+			return api.LinkSnapshot{State: state, Port: port}
 		},
 		Model: func() api.ModelSummary {
 			s := holder.Load()
@@ -1888,13 +1909,6 @@ func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devheal
 	out := api.Preflight{
 		GroundStation: api.PreflightGS{
 			LinkPort: port,
-			// LinkState is filled in below from the devhealth rp2040
-			// entry when available. In SITL mode (no rp2040 registered)
-			// it falls back to "active" since the TCP link to the
-			// flight controller carries the role the RP2040 normally
-			// would. Field is deprecated; consumers should read
-			// Preflight.devices instead. See note on PreflightGS.
-			LinkState: "active",
 		},
 	}
 
@@ -1939,24 +1953,6 @@ func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devheal
 				Status:     string(sn.Status),
 				LastSeen:   sn.LastSeen,
 				FirstError: sn.FirstError,
-			}
-			// Derive the deprecated GroundStation.LinkState from the
-			// rp2040 entry. Maps devhealth's three-valued status to
-			// the LinkState string the legacy web UI checks against
-			// (any non-"active" value triggers a not-ready badge).
-			//
-			// In SITL mode rp2040 isn't registered and this loop
-			// won't match, so LinkState retains its "active" default
-			// set above -- which is correct, because the daemon is
-			// running and pumping CRSF over TCP, just not via the
-			// RP2040.
-			if sn.Name == "rp2040" {
-				switch sn.Status {
-				case devhealth.StatusUp:
-					out.GroundStation.LinkState = "active"
-				default:
-					out.GroundStation.LinkState = "down"
-				}
 			}
 		}
 		out.BlockingDown = devs.BlockingDown()

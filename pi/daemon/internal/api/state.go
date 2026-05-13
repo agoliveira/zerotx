@@ -82,7 +82,7 @@ type JoystickSnapshot struct {
 
 // LinkSnapshot describes the RP2040 USB-CDC link state.
 type LinkSnapshot struct {
-	State         string `json:"state"` // "active", "stale", "down"
+	State         string `json:"state"` // "active" | "down" (derived from devhealth rp2040 status)
 	Port          string `json:"port,omitempty"`
 	LastHeartbeat string `json:"lastHeartbeat,omitempty"` // RFC3339 or empty
 }
@@ -288,18 +288,6 @@ type PreflightDevice struct {
 // PreflightGS holds always-available daemon facts.
 type PreflightGS struct {
 	LinkPort string `json:"linkPort"`
-	// LinkState reports the CRSF endpoint link state.
-	//
-	// Deprecated: read Preflight.Devices instead, scanning for the
-	// entry with Name == "rp2040" and reading its Status field
-	// (three-valued: "up"/"down"/"unknown"). LinkState was previously
-	// hardcoded to "active"; as of the devhealth rollout it's
-	// derived from the same rp2040 entry but with the legacy
-	// two-state mapping ("active" when up, "down" otherwise) that
-	// loses information. The field stays for backward compatibility
-	// with existing web UI consumers and will be removed once those
-	// migrate. New consumers: use Devices.
-	LinkState string `json:"linkState"`
 }
 
 // PreflightJoystickG holds joystick selection state. Selected is nil

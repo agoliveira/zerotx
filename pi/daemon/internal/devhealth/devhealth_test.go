@@ -297,3 +297,28 @@ func TestEnsureDevice_DifferentKindLeavesOriginal(t *testing.T) {
 		t.Errorf("Blocking was clobbered by second EnsureDevice")
 	}
 }
+
+// TestSnapshot_ByName: the single-device lookup returns the same
+// data SnapshotAll would for that name, plus ok=false when the name
+// isn't registered. Lets cheap consumers (e.g. the api.Link provider
+// reading rp2040 status per state push) skip the SnapshotAll loop.
+func TestSnapshot_ByName(t *testing.T) {
+	r := NewRegistry()
+	r.Register("rp2040", KindRP2040, true, time.Second)
+	r.Touch("rp2040", nil)
+
+	snap, ok := r.Snapshot("rp2040")
+	if !ok {
+		t.Fatalf("Snapshot(\"rp2040\"): ok=false, want true")
+	}
+	if snap.Status != StatusUp {
+		t.Errorf("Snapshot status: got %q, want %q", snap.Status, StatusUp)
+	}
+	if snap.Kind != KindRP2040 {
+		t.Errorf("Snapshot kind: got %q, want %q", snap.Kind, KindRP2040)
+	}
+
+	if _, ok := r.Snapshot("nonexistent"); ok {
+		t.Errorf("Snapshot(\"nonexistent\"): ok=true, want false")
+	}
+}

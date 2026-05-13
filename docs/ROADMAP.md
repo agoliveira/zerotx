@@ -21,7 +21,6 @@ Smaller items, off the critical path. Append as they surface.
 - ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into `docs/BOOTSTRAP.md`.
 - VFD brightness control: if CU20025ECPB-W1J exposes a software-readable contrast or brightness line, wire it to ambient light (LDR) alongside the planned panel auto-brightness.
 - Backup MCU recovery procedures: Mega via ICSP if bootloader corrupted, RP2040 via SWD if BOOTSEL inaccessible.
-- Finish deprecating `Preflight.GroundStation.LinkState`: the field is now derived from `devhealth`'s `rp2040` entry (no longer hardcoded `"active"`), but the legacy web UI in `pi/daemon/web/index.html` still reads it directly. Migrate those consumers to read `Preflight.Devices[name="rp2040"].status` and then remove the field. The same hardcoded-"active" bug exists in the `/health` endpoint's `LinkSnapshot.State` (separate code path, same root cause); worth a parallel fix later.
 
 ## Open questions
 
