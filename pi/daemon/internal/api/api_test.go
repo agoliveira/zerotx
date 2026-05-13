@@ -700,3 +700,71 @@ func TestHandleReplayStop_HappyPath(t *testing.T) {
 		t.Errorf("ReplayStop provider was not invoked")
 	}
 }
+
+// TestSnapshot_KioskOmittedWhenReplayIdle: a daemon with no replay
+// running emits no Kiosk field in the state stream, keeping the
+// wire format slim. JSON-level check: after marshal, no 'kiosk'
+// key should appear.
+func TestSnapshot_KioskOmittedWhenReplayIdle(t *testing.T) {
+	providers := minimalSnapshotProviders()
+	providers.ReplaySnapshot = func() ReplayInfo {
+		return ReplayInfo{Active: false}
+	}
+	state := providers.snapshot()
+	if state.Kiosk != nil {
+		t.Errorf("Kiosk should be nil when no replay is active, got %+v", *state.Kiosk)
+	}
+	// Round-trip through JSON to confirm omitempty drops the field.
+	blob, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var roundTrip map[string]interface{}
+	json.Unmarshal(blob, &roundTrip)
+	if _, present := roundTrip["kiosk"]; present {
+		t.Errorf("'kiosk' key should be absent from JSON when no replay, got: %s", blob)
+	}
+}
+
+// TestSnapshot_KioskCarriesReplayWhenActive: when a replay is
+// running, the state stream includes Kiosk.Replay with the active
+// recording name. This is the cue that kiosk pages (/hud, /map)
+// use to auto-navigate into replay mode.
+func TestSnapshot_KioskCarriesReplayWhenActive(t *testing.T) {
+	providers := minimalSnapshotProviders()
+	providers.ReplaySnapshot = func() ReplayInfo {
+		return ReplayInfo{Active: true, Name: "flight-42.db"}
+	}
+	state := providers.snapshot()
+	if state.Kiosk == nil || state.Kiosk.Replay == nil {
+		t.Fatalf("Kiosk.Replay should be set when replay active, got Kiosk=%v", state.Kiosk)
+	}
+	if !state.Kiosk.Replay.Active || state.Kiosk.Replay.Name != "flight-42.db" {
+		t.Errorf("Kiosk.Replay mismatch: got %+v", *state.Kiosk.Replay)
+	}
+}
+
+// TestSnapshot_KioskOmittedWhenNoReplayProvider: legacy / test
+// callers with no ReplaySnapshot provider get a Kiosk-free state,
+// not a 500.
+func TestSnapshot_KioskOmittedWhenNoReplayProvider(t *testing.T) {
+	providers := minimalSnapshotProviders()
+	// ReplaySnapshot intentionally nil
+	state := providers.snapshot()
+	if state.Kiosk != nil {
+		t.Errorf("Kiosk should be nil when no ReplaySnapshot provider, got %+v", *state.Kiosk)
+	}
+}
+
+// minimalSnapshotProviders returns a Providers struct with just
+// enough closures defined that snapshot() won't nil-panic. Used by
+// the tests that exercise the snapshot assembly itself.
+func minimalSnapshotProviders() *Providers {
+	return &Providers{
+		Channels: func() [ipc.Channels]uint16 { return [ipc.Channels]uint16{} },
+		Logic:    func() map[string]bool { return nil },
+		Panel:    func() panel.Snapshot { return panel.Snapshot{} },
+		Joystick: func() *JoystickSnapshot { return nil },
+		Link:     func() LinkSnapshot { return LinkSnapshot{} },
+	}
+}

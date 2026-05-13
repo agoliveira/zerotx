@@ -38,6 +38,21 @@ type State struct {
 	Arm       interface{}       `json:"arm,omitempty"`
 	Station   *StationSnapshot  `json:"station,omitempty"`
 	Syscheck  interface{}       `json:"syscheck,omitempty"`
+	// Kiosk carries directives the kiosk pages (/hud, /map) need
+	// to act on -- chiefly the "replay is active for recording X"
+	// signal that auto-navigates them into replay mode. Kept as a
+	// separate top-level field rather than mixed into the existing
+	// blocks so the kiosk-page code has a single, unambiguous
+	// pickup point.
+	Kiosk *KioskDirective `json:"kiosk,omitempty"`
+}
+
+// KioskDirective is the bundle of "things the kiosks should do
+// outside of normal state rendering". Today it only carries replay
+// state; future additions (e.g. force-reload after a daemon
+// upgrade, force-navigate-to-status) belong here.
+type KioskDirective struct {
+	Replay *ReplayInfo `json:"replay,omitempty"`
 }
 
 // AudioInfo summarises the audio subsystem's current state for API
@@ -586,6 +601,17 @@ func (p *Providers) snapshot() State {
 	}
 	if p.Syscheck != nil {
 		out.Syscheck = p.Syscheck()
+	}
+	// Kiosk directives. Only emitted when there's something to say,
+	// keeping the wire format slim during normal flight (when this
+	// field is absent entirely). Today the only directive is the
+	// replay-active hint that triggers /hud and /map to navigate
+	// into the replay variant of their pages.
+	if p.ReplaySnapshot != nil {
+		ri := p.ReplaySnapshot()
+		if ri.Active {
+			out.Kiosk = &KioskDirective{Replay: &ri}
+		}
 	}
 	return out
 }
