@@ -68,10 +68,79 @@
     let anchorClock = 0;
     const speed = 1; // fixed at 1x until 2b-4
 
+    // Helper to read the current playback clock at this instant.
+    // Used by the tick loop AND by the BroadcastChannel handler
+    // when a freshly-loaded peer tab asks "where are you?".
+    function currentClockMs() {
+      return anchorClock + (Date.now() - anchorWall) * speed;
+    }
+
+    // ---- Cross-tab sync via BroadcastChannel ----
+    //
+    // Same-origin tabs (e.g. /hud and /map on the same Pi) keep
+    // their playback clocks aligned via a per-recording channel.
+    // The handshake is symmetric: when a tab joins it broadcasts
+    // 'hello' and any tab that's already playing responds with
+    // 'anchor' carrying its current clock. The joining tab
+    // rebases its own anchor to match, so they all run at the
+    // same playback time within ~1 frame.
+    //
+    // Channel name is scoped to the recording so loading a
+    // different recording in a new tab doesn't accidentally sync
+    // with an unrelated replay session.
+    let synced = false;
+    let bc = null;
+    try {
+      bc = new BroadcastChannel('zerotx-replay-' + name);
+    } catch (e) {
+      // BroadcastChannel is widely available but a degraded
+      // browser shouldn't break replay. Log and continue without
+      // cross-tab sync.
+      console.warn('Replay: BroadcastChannel unavailable, running unsynced:', e);
+    }
+
+    if (bc) {
+      bc.onmessage = (ev) => {
+        const msg = ev.data;
+        if (!msg || typeof msg !== 'object') return;
+        switch (msg.type) {
+          case 'hello':
+            // A peer just joined and is asking where we are.
+            // Respond with our current playback clock. If we
+            // haven't started ticking yet (still in the join
+            // grace period below) currentClockMs() returns 0,
+            // which is the correct answer in that case.
+            bc.postMessage({ type: 'anchor', clockMs: currentClockMs() });
+            break;
+          case 'anchor':
+            // A peer told us where playback is. Only act on the
+            // first such message we see (so a chain of replies
+            // doesn't keep nudging us). Sanity-check: ignore
+            // values that would imply playback is past the end
+            // of the recording.
+            if (synced) break;
+            if (typeof msg.clockMs !== 'number' || msg.clockMs < 0) break;
+            if (msg.clockMs > totalMs + 1000) break;
+            anchorWall = Date.now();
+            anchorClock = msg.clockMs;
+            synced = true;
+            console.log(`[replay] synced to peer at t=${Math.round(msg.clockMs/1000)}s`);
+            break;
+        }
+      };
+      bc.postMessage({ type: 'hello' });
+    }
+
+    // Brief grace period before starting the tick loop so any peer
+    // that's going to respond with an 'anchor' has time to do so.
+    // ~150 ms is generous for an in-browser BroadcastChannel
+    // round-trip (real RTT is sub-millisecond), and the visual
+    // cost of starting 150 ms late is invisible.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
     const tickMs = 100; // 10 Hz, matches live stream cadence
     setInterval(() => {
-      const elapsedWall = Date.now() - anchorWall;
-      const clockMs = anchorClock + elapsedWall * speed;
+      const clockMs = currentClockMs();
       if (clockMs > totalMs) return; // end-of-recording: stop emitting
       const state = synthesize(detail, clockMs);
       options.handleStateMessage(state);
