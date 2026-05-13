@@ -159,8 +159,6 @@ func HumanizeMode(lang, m string) string {
 			return "retorno para casa"
 		case "WP", "MISS":
 			return "missão de waypoints"
-		case "LAUN":
-			return "lançamento"
 		case "PASS":
 			return "passagem direta"
 		case "FS":
@@ -197,8 +195,6 @@ func HumanizeMode(lang, m string) string {
 		return "return to home"
 	case "WP", "MISS":
 		return "waypoint mission"
-	case "LAUN":
-		return "launch"
 	case "PASS":
 		return "passthrough"
 	case "FS":

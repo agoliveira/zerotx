@@ -268,7 +268,7 @@ Server-side enforcement: even if the UI's button-disable misses a race, the `POS
 
 Two tiers, picked at the call site:
 
-1. Pre-baked samples: WAV files for safety-critical alarms (auto-launch faults, link loss, failsafe). Played immediately, no synthesis latency. Catalog managed by `phrasebook`.
+1. Pre-baked samples: WAV files for safety-critical alarms (link loss, failsafe). Played immediately, no synthesis latency. Catalog managed by `phrasebook`.
 2. Piper TTS: `en_US-amy-medium` voice, used for non-critical narration (mode changes, weather alerts, status announcements). Synthesized on demand by `narrator` and queued through `audio`.
 
 Both tiers share the same ALSA output. Sample-tier requests preempt the TTS queue when needed.

@@ -10,7 +10,6 @@ Items deferred to a specific later moment, not abandoned.
 
 - **Pi 400 CPU optimization**: currently 70-80% load with two browsers. Profile per-component, evaluate the optimization flags listed in `docs/BOOTSTRAP.md`, measure each in isolation. Goal: comfortable headroom for telemetry and TTS bursts.
 - **Stan-as-datahub V2**: replay tool architecture pinned for later. Stan would host replay sessions for offline analysis and bench testing without involving the live daemon.
-- **Auto-launch**: arm-state-machine extension that auto-arms once pre-flight checks pass (telemetry sanity, link health, model arming policy). The pre-flight checks themselves landed (syscheck operator gate + devhealth blocking on RP2040 and HDMI displays; see DECISIONS.md); the auto-launch logic on top is still pinned for later.
 - **Daemon-side semantic consumers for IO board events**: LDR-driven auto-brightness, buzzer alarm pattern engine, encoder UI binding, button event semantics. Plumbing exists in `iohub`; consumers don't yet.
 - **`PRAGMA busy_timeout=5000`** in `tools/maps/sat-download/main.go`. SQLite write contention during long downloads.
 
