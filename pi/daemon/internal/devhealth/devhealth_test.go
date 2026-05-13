@@ -303,7 +303,7 @@ func TestEnsureDevice_DifferentKindLeavesOriginal(t *testing.T) {
 // isn't registered. Lets cheap consumers (e.g. the api.Link provider
 // reading rp2040 status per state push) skip the SnapshotAll loop.
 func TestSnapshot_ByName(t *testing.T) {
-	r := NewRegistry()
+	r := New()
 	r.Register("rp2040", KindRP2040, true, time.Second)
 	r.Touch("rp2040", nil)
 
