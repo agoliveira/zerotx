@@ -150,7 +150,7 @@ The tracker reports `tracking` when receiving fresh GPS frames, `hold` when it h
 
 1. Land. Disarm.
 2. Panel transitions to POSTFLIGHT, then IDLE after timeout.
-3. Recordings flush to disk. Location: **TODO** (likely `~/zerotx/recordings/`; confirm against `recorder` subsystem).
+3. Recordings flush to disk. Default location: `$XDG_DATA_HOME/zerotx/recordings/` if set, otherwise `~/.local/share/zerotx/recordings/`. Override with `--recordings-dir <path>` on the daemon command line; disable with `--no-recordings`. Retention is the 10 most-recent recordings by default (`--keep-recordings N`).
 4. Optionally fetch recordings off the Pi for analysis.
 
 ## Shutdown sequence

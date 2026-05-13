@@ -17,8 +17,6 @@ Items deferred to a specific later moment, not abandoned.
 
 Smaller items, off the critical path. Append as they surface.
 
-- Arm state diagram in `docs/ARCHITECTURE.md`: replace prose with a mermaid `stateDiagram-v2` once the canonical state list is reviewed in source.
-- Recordings location confirmation in `docs/OPERATIONS.md`: name the actual path the `recorder` subsystem writes to.
 - Power regulator topology fully documented in `docs/CONNECTIONS.md`: replace TODO sections with measured values once the build is final.
 - ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into `docs/BOOTSTRAP.md`.
 - VFD brightness control: if CU20025ECPB-W1J exposes a software-readable contrast or brightness line, wire it to ambient light (LDR) alongside the planned panel auto-brightness.
