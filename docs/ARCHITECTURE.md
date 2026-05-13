@@ -222,10 +222,34 @@ Auxiliary binaries in `pi/daemon/cmd/`:
 The `arm` subsystem in `pi/daemon/internal/arm/` is the gatekeeper for flight-critical actions. The state machine itself is the source of truth and changes more often than this doc — see the source for the canonical state list. What's worth pinning here is the **three-input arming workflow**, which is settled and won't change without a re-design:
 
 - **Throttle low** (T-low): the throttle stick must be at minimum. Read from the joystick by the `logic` package, derived against the model's TAER channel layout (the throttle channel index is read from the EdgeTX model file, not hardcoded).
-- **Arm key** (SF switch on the joystick or panel): the operator-held two-position switch that gates the arm sequence. Down position is the "arm requested" signal.
+- **Arm key** (SF switch on the joystick or panel): the operator-held two-position switch that gates the arm sequence. **Up** position is the "arm requested" signal (RP2040 firmware emits `state=1` for UP, `state=0` for DOWN, regardless of GPIO wiring polarity — see `firmware/crsf/src/input_arm.h`).
 - **Confirm** (SH momentary, panel-mounted): a momentary press emitted by the RP2040 over IPC `MsgInputEvent` (input id `0x02`), wired to GPIO 15 on the RP2040 (internal pull-up, switch to GND).
 
 All three must be present to transition to ARMED. The momentary is a **press-only** signal — releasing doesn't matter; once consumed, the arm key must be cycled to re-arm. Disarm is the inverse handshake: SF-down combined with T-low brings the state back to DISARMED.
+
+### State diagram
+
+Three states, captured directly from `pi/daemon/internal/arm/arm.go`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> DISARMED
+
+    DISARMED --> ARMING_REQUESTED : SF up<br/>EventArmingRequested
+    ARMING_REQUESTED --> DISARMED : SF down<br/>EventArmingCancelled
+    ARMING_REQUESTED --> DISARMED : 60 s timeout<br/>EventArmingTimeout
+    ARMING_REQUESTED --> ARMED : SH press<br/>+ T-low + FC ready + checklist OK<br/>EventArmed
+    ARMING_REQUESTED --> ARMING_REQUESTED : SH press, gate fails<br/>EventArmDenied{Throttle, NotReady, Checklist}
+    ARMED --> DISARMED : SF down + T-low<br/>EventDisarmed
+    ARMED --> ARMED : SF down + T-non-zero<br/>EventDisarmDeniedInFlight
+```
+
+A few invariants worth pinning, none of which are reflected in the diagram alone:
+
+- **Denial precedence on Confirm** (when in ARMING_REQUESTED): throttle is checked first, then FC-readiness, then checklist. The most visceral safety signal wins the operator's audio cue. The package has explicit tests pinning this ordering — don't reorder casually.
+- **No state change is possible without an explicit transition trigger.** `ThrottleChanged`, `FCReadyChanged`, and `ChecklistOkChanged` are cache updates; they are only consulted at decision points. Telemetry flapping during `ARMING_REQUESTED` does NOT auto-cancel — the operator decides via key flip or by pressing confirm during a flap-low (which yields `EventArmDeniedNotReady` and lets them retry).
+- **Boot-time `Init` with key already UP** does not transition the state to `ARMING_REQUESTED`. The machine stays `DISARMED` and emits `EventBootKeyUp` once as a warning to the operator (and via narrator audio). The arm key must be cycled to actually arm — preventing an "armed at power-on" footgun.
+- **In-flight disarm is intentionally blocked.** From `ARMED` with throttle non-zero, flipping the key down emits `EventDisarmDeniedInFlight` and stays armed. Operators use the FC's failsafe or the mushroom emergency stop for in-flight aborts; the daemon-side gate is for ground handling, not flight termination.
 
 ## Pre-flight readiness
 
