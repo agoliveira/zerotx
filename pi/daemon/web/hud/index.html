@@ -2638,6 +2638,205 @@ function bindArmConfirmShortcut() {
   });
 }
 
+// ---- Replay (?replay=<id>) ----
+//
+// Phase 2b-1: minimum-viable playback. The /hud page in replay mode
+// fetches the named recording, then synthesizes state-stream
+// messages from the stored telemetry rows + events at 10 Hz and
+// passes them to the same handleStateMessage() the live WS path
+// uses. The same widgets render -- the only difference is where
+// the state came from.
+//
+// This commit only does autoplay at 1x. Pause, scrub, speed control,
+// keyboard shortcuts, and BroadcastChannel sync with /map all come
+// in subsequent sub-commits (2b-2 through 2b-5).
+//
+// Sparse-data behavior: telemetry is throttled to 5 Hz at record
+// time, but we tick at 10 Hz. The synthesizer finds the most recent
+// row with tsMs <= replayClockMs and emits it on every tick. Same
+// row going to handleStateMessage twice in a row is idempotent for
+// rendering (the existing live path can also send duplicate
+// states), so no interpolation is needed at this stage.
+
+async function startReplay(name) {
+  console.log('[hud] replay mode:', name);
+
+  let detail;
+  try {
+    const r = await fetch('/api/v1/recordings/detail?name=' + encodeURIComponent(name));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    detail = await r.json();
+  } catch (e) {
+    console.error('replay: failed to load recording:', e);
+    return;
+  }
+
+  if (!detail.telemetry || detail.telemetry.length === 0) {
+    console.warn('replay: recording is empty');
+    return;
+  }
+
+  const totalMs = detail.telemetry[detail.telemetry.length - 1].tsMs;
+  console.log(`[hud] replay: ${detail.telemetry.length} telemetry rows, ${detail.events?.length || 0} events, duration ~${Math.round(totalMs/1000)}s`);
+
+  // Replay clock. Wall-clock anchored so a pause/resume in later
+  // commits is just two timestamp arithmetic operations, not a
+  // restart-from-zero. clockMs is the playback position; we update
+  // it by the wall-clock delta each tick. anchor* track the wall
+  // and clock values at the most recent unpause.
+  let clockMs = 0;
+  let anchorWall = Date.now();
+  let anchorClock = 0;
+  const speed = 1; // 2b-1: fixed 1x; 2b-4 makes this variable
+
+  const tickMs = 100; // 10 Hz, matches live stream cadence
+
+  setInterval(() => {
+    const elapsedWall = Date.now() - anchorWall;
+    clockMs = anchorClock + elapsedWall * speed;
+
+    if (clockMs > totalMs) {
+      // End of recording. For 2b-1 just stop synthesizing; later
+      // commits add an end-of-playback UI affordance.
+      return;
+    }
+
+    const state = synthesizeReplayState(detail, clockMs);
+    handleStateMessage(state);
+  }, tickMs);
+}
+
+// synthesizeReplayState builds a state-stream message from a loaded
+// recording at a given playback time. Shape matches what the live
+// /api/v1/stream WS endpoint produces so handleStateMessage doesn't
+// know whether the state came from a live aircraft or a saved
+// recording.
+//
+// Missing fields are simply absent (omitted, not null) so the
+// existing optional-chaining in handleStateMessage handles them
+// the same way it handles partial live state.
+function synthesizeReplayState(detail, clockMs) {
+  const tel = findLatestTelemetryAt(detail.telemetry, clockMs);
+  const { armState, homePos, currentMode } = deriveStateFromEvents(detail.events, clockMs);
+
+  const out = {
+    ts: new Date(clockMs).toISOString(),
+    arm: { state: armState },
+    telemetry: {},
+  };
+
+  // Flight mode: prefer the per-event mode-change history (so we
+  // see the canonical sequence of mode strings), but fall back to
+  // the telemetry row's fmMode for rows pre-dating mode-change
+  // event logging.
+  const modeStr = currentMode || tel?.flightMode;
+  if (modeStr) {
+    out.telemetry.flightMode = { data: { mode: modeStr } };
+  }
+
+  if (tel?.gpsLat != null && tel?.gpsLon != null) {
+    // gps.fix isn't stored in the recording -- synthesize from sats
+    // count. The HUD's existing renderer reads fix==3 as '3D',
+    // fix==2 as '2D', anything else as 'NO'. Six-plus sats is a
+    // safe 3D proxy; four to five is 2D.
+    let fix = 0;
+    const sats = tel.gpsSats ?? 0;
+    if (sats >= 6) fix = 3;
+    else if (sats >= 4) fix = 2;
+    out.telemetry.gps = {
+      data: {
+        latDeg: tel.gpsLat,
+        lonDeg: tel.gpsLon,
+        altMeters: tel.gpsAlt ?? 0,
+        groundKmh: tel.gpsKmh ?? 0,
+        headingDeg: tel.gpsHdg ?? 0,
+        sats: sats,
+        fix: fix,
+      },
+    };
+  }
+
+  if (homePos) {
+    out.telemetry.home = { data: { latDeg: homePos.lat, lonDeg: homePos.lon } };
+  }
+
+  if (tel?.linkRssi != null) {
+    out.telemetry.link = {
+      data: {
+        uplinkRSSIdBm: tel.linkRssi,
+        uplinkLQ: tel.linkLq ?? 0,
+        uplinkSNR: tel.linkSnr ?? 0,
+      },
+    };
+  }
+
+  if (tel?.attitudeRoll != null) {
+    out.telemetry.attitude = {
+      data: {
+        rollDeg: tel.attitudeRoll,
+        pitchDeg: tel.attitudePitch ?? 0,
+        yawDeg: tel.attitudeYaw ?? 0,
+      },
+    };
+  }
+
+  if (tel?.batVolts != null) {
+    out.telemetry.battery = {
+      data: {
+        volts: tel.batVolts,
+        amps: tel.batAmps ?? 0,
+        percent: tel.batPct ?? 0,
+        usedMAh: tel.batMah ?? 0,
+      },
+    };
+  }
+
+  return out;
+}
+
+// findLatestTelemetryAt returns the row whose tsMs is the largest
+// value still <= clockMs, or undefined if no row qualifies (i.e.
+// the clock is before the first row). Linear scan from the end is
+// O(n) per call but n is small (~3000 for a 10-min flight) and the
+// JIT keeps it cheap. A future optimization could cache the last-
+// returned index since clockMs is monotonic, but profile first.
+function findLatestTelemetryAt(rows, clockMs) {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].tsMs <= clockMs) return rows[i];
+  }
+  return undefined;
+}
+
+// deriveStateFromEvents walks the event stream up to clockMs and
+// derives the arm state, home position, and current flight mode as
+// of that time. O(n) per call; n is small.
+function deriveStateFromEvents(events, clockMs) {
+  let armState = 'DISARMED';
+  let homePos = null;
+  let currentMode = null;
+  for (const ev of events || []) {
+    if (ev.tsMs > clockMs) break;
+    if (ev.kind === 'flight') {
+      if (ev.name === 'armed') armState = 'ARMED';
+      else if (ev.name === 'disarmed') armState = 'DISARMED';
+      else if (ev.name === 'home-set' && ev.detail) {
+        try {
+          const d = JSON.parse(ev.detail);
+          if (Number.isFinite(d.lat) && Number.isFinite(d.lon)) {
+            homePos = { lat: d.lat, lon: d.lon };
+          }
+        } catch (_) {}
+      } else if (ev.name === 'mode-change' && ev.detail) {
+        try {
+          const d = JSON.parse(ev.detail);
+          if (typeof d.mode === 'string') currentMode = d.mode;
+        } catch (_) {}
+      }
+    }
+  }
+  return { armState, homePos, currentMode };
+}
+
 // ---- Init ----
 function init() {
   showDaemonVersion();
@@ -2645,8 +2844,10 @@ function init() {
   NetClass.bind();
   bindArmConfirmShortcut();
   const params = new URLSearchParams(location.search);
-  if (params.get('simulate') === '1') startSimulator();
-  else                                 connectWS();
+  const replayName = params.get('replay');
+  if (replayName)                          startReplay(replayName);
+  else if (params.get('simulate') === '1') startSimulator();
+  else                                     connectWS();
 }
 init();
 </script>
