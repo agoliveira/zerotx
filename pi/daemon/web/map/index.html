@@ -408,6 +408,7 @@
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="/replay.js"></script>
   <script>
   // ZeroTX Map — Stage 4 (refined overlays).
   //
@@ -1385,8 +1386,18 @@
       updateCompass();
 
       const params = new URLSearchParams(location.search);
-      if (params.get('simulate') === '1') startSimulator();
-      else                                 connectWS();
+      const replayName = params.get('replay');
+      if (replayName) {
+        // Replay mode: shared module fetches the recording, runs a
+        // 10 Hz playback clock, and feeds synthesized state messages
+        // into handleStateMessage -- same shape as the live WS, so
+        // the track/aircraft/range-ring rendering is unchanged.
+        Replay.start(replayName, { handleStateMessage: handleStateMessage });
+      } else if (params.get('simulate') === '1') {
+        startSimulator();
+      } else {
+        connectWS();
+      }
     });
 
     map.on('move',     () => { updateScaleBar(); updateCompass(); });

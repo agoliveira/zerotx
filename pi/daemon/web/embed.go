@@ -11,6 +11,7 @@ import "embed"
 // otherwise.
 //
 //go:embed index.html
+//go:embed replay.js
 //go:embed map/index.html
 //go:embed hud/index.html
 //go:embed status/index.html
