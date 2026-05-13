@@ -94,7 +94,18 @@ CREATE TABLE IF NOT EXISTS telemetry (
     link_lq     INTEGER,
     link_snr    INTEGER,
 
-    fm_mode     TEXT
+    fm_mode     TEXT,
+
+    -- Attitude in degrees. Captured at the same cadence as the rest
+    -- of telemetry (subject to the 200 ms throttle). Recorded so
+    -- replay can drive the HUD artificial horizon and the GLCD pitch
+    -- ladder; without these columns the replay UI would show level
+    -- flight regardless of what the aircraft was actually doing.
+    -- Roll: positive = right wing down. Pitch: positive = nose up.
+    -- Yaw: 0-360, compass-style. Matches telemetry.Attitude.
+    attitude_roll  REAL,
+    attitude_pitch REAL,
+    attitude_yaw   REAL
 );
 CREATE INDEX IF NOT EXISTS telemetry_session_ts ON telemetry (session_id, ts_us);
 `
@@ -365,13 +376,15 @@ func (r *Recorder) LogTelemetry(t TelemetrySample) {
 			bat_volts, bat_amps, bat_pct, bat_mah,
 			gps_lat, gps_lon, gps_alt, gps_kmh, gps_hdg, gps_sats,
 			link_rssi, link_lq, link_snr,
-			fm_mode
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			fm_mode,
+			attitude_roll, attitude_pitch, attitude_yaw
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.sessionID, tsUs,
 		t.BatVolts, t.BatAmps, t.BatPct, t.BatMAh,
 		t.GpsLat, t.GpsLon, t.GpsAlt, t.GpsKmh, t.GpsHdg, t.GpsSats,
 		t.LinkRSSI, t.LinkLQ, t.LinkSNR,
-		t.FlightMode); err != nil {
+		t.FlightMode,
+		t.AttitudeRoll, t.AttitudePitch, t.AttitudeYaw); err != nil {
 		log.Printf("recorder: insert telemetry: %v", err)
 	}
 }
@@ -397,6 +410,14 @@ type TelemetrySample struct {
 	LinkSNR    *int
 
 	FlightMode *string
+
+	// Attitude in degrees. nil if no fresh attitude frame seen in
+	// telemetry (Stale=true on the daemon side). Replay consumes
+	// these to animate the HUD artificial horizon and the GLCD
+	// pitch ladder; with all three nil the replay shows level.
+	AttitudeRoll  *float64
+	AttitudePitch *float64
+	AttitudeYaw   *float64
 }
 
 // tsUsLocked returns the timestamp in microseconds relative to the

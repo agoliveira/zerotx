@@ -253,3 +253,101 @@ func TestNoOpRecorder_Interface(t *testing.T) {
 	}
 	r.Close()
 }
+
+// TestTelemetry_AttitudeRecorded verifies attitude_roll/pitch/yaw
+// columns are populated when the sample carries them. Replay needs
+// these to drive the HUD artificial horizon and GLCD pitch ladder;
+// without this round-trip working, the replay would always show
+// level flight.
+func TestTelemetry_AttitudeRecorded(t *testing.T) {
+	r, _ := newTestRecorder(t)
+	r.OnArm("M", "/m.yml")
+
+	roll, pitch, yaw := 12.5, -8.0, 173.2
+	r.LogTelemetry(TelemetrySample{
+		AttitudeRoll:  &roll,
+		AttitudePitch: &pitch,
+		AttitudeYaw:   &yaw,
+	})
+
+	saved := r.OnDisarm()
+	db, _ := sql.Open("sqlite", saved)
+	defer db.Close()
+
+	var gotRoll, gotPitch, gotYaw float64
+	err := db.QueryRow(
+		`SELECT attitude_roll, attitude_pitch, attitude_yaw FROM telemetry LIMIT 1`,
+	).Scan(&gotRoll, &gotPitch, &gotYaw)
+	if err != nil {
+		t.Fatalf("query attitude: %v", err)
+	}
+	if gotRoll != roll || gotPitch != pitch || gotYaw != yaw {
+		t.Errorf("attitude mismatch: got (%g, %g, %g), want (%g, %g, %g)",
+			gotRoll, gotPitch, gotYaw, roll, pitch, yaw)
+	}
+}
+
+// TestTelemetry_AttitudeNilStaysNull verifies that omitting attitude
+// pointers leaves the columns NULL in the database. Distinguishes
+// "no data" from "zero degrees" -- a level aircraft with 0/0/0
+// attitude should still get a non-NULL row when telemetry is fresh.
+func TestTelemetry_AttitudeNilStaysNull(t *testing.T) {
+	r, _ := newTestRecorder(t)
+	r.OnArm("M", "/m.yml")
+
+	v := 14.8
+	r.LogTelemetry(TelemetrySample{BatVolts: &v}) // no attitude
+
+	saved := r.OnDisarm()
+	db, _ := sql.Open("sqlite", saved)
+	defer db.Close()
+
+	// Use sql.NullFloat64 because the columns are NULL when omitted;
+	// scanning into a plain float64 would error.
+	var roll, pitch, yaw sql.NullFloat64
+	err := db.QueryRow(
+		`SELECT attitude_roll, attitude_pitch, attitude_yaw FROM telemetry LIMIT 1`,
+	).Scan(&roll, &pitch, &yaw)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if roll.Valid || pitch.Valid || yaw.Valid {
+		t.Errorf("expected all attitude columns NULL when omitted, got roll=%v pitch=%v yaw=%v",
+			roll, pitch, yaw)
+	}
+}
+
+// TestTelemetry_AttitudeZeroPreserved is the partner to the nil
+// test: an explicit zero must NOT be treated as missing. Pointer
+// types in TelemetrySample exist specifically to make this
+// distinction; a level aircraft with attitude {0, 0, 0} must
+// produce non-NULL columns.
+func TestTelemetry_AttitudeZeroPreserved(t *testing.T) {
+	r, _ := newTestRecorder(t)
+	r.OnArm("M", "/m.yml")
+
+	zero := 0.0
+	r.LogTelemetry(TelemetrySample{
+		AttitudeRoll:  &zero,
+		AttitudePitch: &zero,
+		AttitudeYaw:   &zero,
+	})
+
+	saved := r.OnDisarm()
+	db, _ := sql.Open("sqlite", saved)
+	defer db.Close()
+
+	var roll, pitch, yaw sql.NullFloat64
+	if err := db.QueryRow(
+		`SELECT attitude_roll, attitude_pitch, attitude_yaw FROM telemetry LIMIT 1`,
+	).Scan(&roll, &pitch, &yaw); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !roll.Valid || !pitch.Valid || !yaw.Valid {
+		t.Errorf("explicit zero attitude was stored as NULL")
+	}
+	if roll.Float64 != 0 || pitch.Float64 != 0 || yaw.Float64 != 0 {
+		t.Errorf("expected (0,0,0), got (%g,%g,%g)",
+			roll.Float64, pitch.Float64, yaw.Float64)
+	}
+}

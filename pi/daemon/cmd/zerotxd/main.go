@@ -2219,6 +2219,14 @@ func buildTelemetrySample(s telemetry.Snapshot) recorder.TelemetrySample {
 		mode := s.FlightMode.Data.Mode
 		out.FlightMode = &mode
 	}
+	if s.Attitude != nil && !s.Attitude.Stale {
+		roll := s.Attitude.Data.RollDeg
+		pitch := s.Attitude.Data.PitchDeg
+		yaw := s.Attitude.Data.YawDeg
+		out.AttitudeRoll = &roll
+		out.AttitudePitch = &pitch
+		out.AttitudeYaw = &yaw
+	}
 	return out
 }
 
