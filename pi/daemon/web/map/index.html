@@ -1196,12 +1196,23 @@
     updateCompass();
   }
 
+  // Set in the boot block below; gates whether the WS state path
+  // also calls the renderer. In replay mode the renderer is
+  // skipped (Replay.start runs its own playback loop) but the
+  // kiosk-directive consumer still runs.
+  let inReplayMode = false;
+
   function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/api/v1/stream`);
     ws.onmessage = (ev) => {
-      try { handleStateMessage(JSON.parse(ev.data)); }
-      catch (e) { console.warn('ws message parse failed:', e); }
+      try {
+        const state = JSON.parse(ev.data);
+        if (window.Replay && window.Replay.handleKioskDirective) {
+          window.Replay.handleKioskDirective(state.kiosk);
+        }
+        if (!inReplayMode) handleStateMessage(state);
+      } catch (e) { console.warn('ws message parse failed:', e); }
     };
     ws.onclose = () => { setTimeout(connectWS, 2000); };
     ws.onerror = (e) => { console.warn('ws error:', e); };
@@ -1387,16 +1398,18 @@
 
       const params = new URLSearchParams(location.search);
       const replayName = params.get('replay');
-      if (replayName) {
-        // Replay mode: shared module fetches the recording, runs a
-        // 10 Hz playback clock, and feeds synthesized state messages
-        // into handleStateMessage -- same shape as the live WS, so
-        // the track/aircraft/range-ring rendering is unchanged.
-        Replay.start(replayName, { handleStateMessage: handleStateMessage });
-      } else if (params.get('simulate') === '1') {
+      inReplayMode = !!replayName;
+
+      // WS always connects so we pick up the kiosk-replay nav
+      // directive in both modes (see connectWS comment).
+      if (params.get('simulate') === '1' && !inReplayMode) {
         startSimulator();
       } else {
         connectWS();
+      }
+
+      if (inReplayMode) {
+        Replay.start(replayName, { handleStateMessage: handleStateMessage });
       }
     });
 

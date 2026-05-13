@@ -264,9 +264,19 @@
     }
 
     function closeReplay() {
-      // 2b-4: strip the param locally and reload. 2b-5 will also
-      // POST /api/v1/replay/stop on the daemon so the panel mode
-      // flips back and the kiosk-replay state clears for both kiosks.
+      // Tell the daemon to clear its replay session. This causes
+      // the WS state stream to drop the kiosk.replay directive,
+      // and any peer kiosk's handleKioskDirective will navigate
+      // back to live mode on the next state message.
+      //
+      // Fire-and-forget: we don't wait for the response before
+      // reloading our own tab. Worst case (daemon error) we still
+      // come back to live mode locally; the operator can retry
+      // the operator UI's close button if the daemon state is
+      // stuck.
+      fetch('/api/v1/replay/stop', { method: 'POST' }).catch((e) => {
+        console.warn('Replay: stop POST failed (will still close locally):', e);
+      });
       const u = new URL(location.href);
       u.searchParams.delete('replay');
       location.href = u.toString();
@@ -582,6 +592,41 @@
     return { armState, homePos, currentMode };
   }
 
+  // ---- Kiosk navigation from WS state ----
+  //
+  // Called from the live WS handler on every state message (in
+  // both live and replay mode). The daemon emits state.kiosk.replay
+  // when an operator starts a replay session on the operator UI;
+  // the kiosks see it and auto-navigate into ?replay=<name>.
+  // When the replay session is stopped (daemon-side), the kiosk
+  // field is absent and we navigate back to live mode.
+  //
+  // Reload-based navigation: simpler than tearing down the current
+  // page's state in-place, and the time cost (~500ms reload) is
+  // acceptable for an operator action that happens once per
+  // replay session.
+  function handleKioskDirective(kiosk) {
+    const replay = kiosk && kiosk.replay;
+    const params = new URLSearchParams(location.search);
+    const currentReplayName = params.get('replay');
+
+    if (replay && replay.active && replay.name) {
+      // Daemon wants us in replay mode for this recording.
+      if (currentReplayName !== replay.name) {
+        const u = new URL(location.href);
+        u.searchParams.set('replay', replay.name);
+        location.href = u.toString();
+      }
+    } else if (currentReplayName) {
+      // Daemon has no active replay but we're in replay mode --
+      // operator stopped the session (or Q-pressed on another
+      // kiosk). Navigate back to live.
+      const u = new URL(location.href);
+      u.searchParams.delete('replay');
+      location.href = u.toString();
+    }
+  }
+
   // Export.
-  window.Replay = { start };
+  window.Replay = { start, handleKioskDirective };
 })();

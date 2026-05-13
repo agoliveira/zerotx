@@ -2058,12 +2058,30 @@ function handleStateMessage(state) {
 }
 
 // ---- WebSocket ----
+//
+// Always opened, even in replay mode. In live mode the renderer
+// (handleStateMessage) consumes every state push. In replay mode
+// the renderer is skipped (Replay.start runs its own playback
+// loop) but the kiosk-directive consumer still runs so the daemon
+// can tell us to navigate -- in or out of replay -- when the
+// operator changes the session from another UI.
+let inReplayMode = false;
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/api/v1/stream`);
   ws.onmessage = (ev) => {
-    try { handleStateMessage(JSON.parse(ev.data)); }
-    catch (e) { console.warn('ws message parse failed:', e); }
+    try {
+      const state = JSON.parse(ev.data);
+      // Kiosk directives are always honored regardless of mode --
+      // that's how a replay session begun via the operator UI
+      // gets the kiosks to navigate without a polling endpoint.
+      if (window.Replay && window.Replay.handleKioskDirective) {
+        window.Replay.handleKioskDirective(state.kiosk);
+      }
+      // Renderer skipped in replay mode -- the replay module is
+      // synthesizing its own state stream.
+      if (!inReplayMode) handleStateMessage(state);
+    } catch (e) { console.warn('ws message parse failed:', e); }
   };
   ws.onclose = () => { setTimeout(connectWS, 2000); };
   ws.onerror = (e) => { console.warn('ws error:', e); };
@@ -2647,17 +2665,20 @@ function init() {
   bindArmConfirmShortcut();
   const params = new URLSearchParams(location.search);
   const replayName = params.get('replay');
-  if (replayName) {
-    // Replay mode: hand off to the shared module (see /replay.js).
-    // The module fetches the recording, runs a 10 Hz playback clock,
-    // and feeds synthesized state messages into handleStateMessage
-    // -- identical shape to the live WS path, so the renderer
-    // doesn't know or care that the state is from a saved file.
-    Replay.start(replayName, { handleStateMessage: handleStateMessage });
-  } else if (params.get('simulate') === '1') {
+  inReplayMode = !!replayName;
+
+  // WS always connects so we can pick up the kiosk-replay nav
+  // directive in both modes. The simulator mode (which is a dev
+  // shortcut) stays mutually exclusive with WS, since pretending
+  // to be both live and simulated is confusing.
+  if (params.get('simulate') === '1' && !inReplayMode) {
     startSimulator();
   } else {
     connectWS();
+  }
+
+  if (inReplayMode) {
+    Replay.start(replayName, { handleStateMessage: handleStateMessage });
   }
 }
 init();

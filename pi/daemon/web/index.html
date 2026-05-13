@@ -2798,15 +2798,62 @@ const App = {
         <span class="rec-size">${sizeKB} KB</span>
         <span class="rec-time">${escapeHtml(time)}</span>
         <button class="action small" data-rec-summary="${escapeHtml(r.name)}">Summary</button>
+        <button class="action small" data-rec-replay="${escapeHtml(r.name)}">Replay</button>
       </div>`;
     }).join('');
-    // Bind per-row summary buttons. Re-bound on each render; cheap.
+    // Bind per-row buttons. Re-bound on each render; cheap.
     list.querySelectorAll('[data-rec-summary]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const name = e.currentTarget.dataset.recSummary;
         this.showPostflightSummary(name);
       });
     });
+    list.querySelectorAll('[data-rec-replay]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const name = e.currentTarget.dataset.recReplay;
+        this.startReplay(name);
+      });
+    });
+  },
+
+  // startReplay POSTs to the daemon's /api/v1/replay/start.
+  // On success, the daemon emits state.kiosk.replay in the WS state
+  // stream; /hud and /map see it via Replay.handleKioskDirective
+  // and auto-navigate into ?replay=<name>. This operator UI doesn't
+  // navigate itself -- it stays on the Recordings tab so the
+  // operator can stop the session or pick a different recording.
+  //
+  // Failure modes from the daemon (409 Conflict):
+  //   * aircraft is armed (the safety gate from commit 1)
+  //   * a different replay is already active
+  // Both surface via the existing modal.alert pattern.
+  async startReplay(name) {
+    if (this.state.connection !== 'connected') {
+      this.modal.alert('Replay unavailable', 'Connect to the daemon first.');
+      return;
+    }
+    try {
+      const r = await fetch(
+        `http://${this.state.address}/api/v1/replay/start`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        }
+      );
+      if (!r.ok) {
+        let detail = r.statusText;
+        try {
+          const body = await r.json();
+          if (body && body.error) detail = body.error;
+        } catch (_) {}
+        this.modal.alert('Replay start failed', detail);
+      }
+      // On success there's no in-page action -- the kiosks will
+      // navigate themselves on the next state push (within ~100 ms).
+    } catch (e) {
+      this.modal.alert('Network error', e.message);
+    }
   },
 
   async refreshJoysticks() {
