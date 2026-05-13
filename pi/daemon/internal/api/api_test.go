@@ -593,9 +593,12 @@ func TestHandleReplayStatus_Idle(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want 200", rr.Code)
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, `"active":false`) {
-		t.Errorf("expected active:false in body, got: %s", body)
+	var got ReplayInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body: %v; body=%s", err, rr.Body.String())
+	}
+	if got.Active {
+		t.Errorf("expected Active=false, got %+v", got)
 	}
 }
 
