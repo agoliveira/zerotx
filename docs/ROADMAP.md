@@ -20,7 +20,6 @@ Smaller items, off the critical path. Append as they surface.
 - Power regulator topology fully documented in `docs/CONNECTIONS.md`: replace TODO sections with measured values once the build is final.
 - ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into `docs/BOOTSTRAP.md`.
 - VFD brightness control: if CU20025ECPB-W1J exposes a software-readable contrast or brightness line, wire it to ambient light (LDR) alongside the planned panel auto-brightness.
-- Backup MCU recovery procedures: Mega via ICSP if bootloader corrupted, RP2040 via SWD if BOOTSEL inaccessible.
 
 ## Open questions
 
