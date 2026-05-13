@@ -64,7 +64,7 @@ flowchart LR
 Runs `zerotxd` and two Chromium kiosk browsers. Owns the joystick, LCDs, and the satellite USB-CDC links. See `pi/daemon/`.
 
 ### Mega 2560 (IO hub)
-Drives VFD, 4 buttons, 4 LEDs, 4 relays, 16-pixel WS2813 strip, LDR, passive piezo buzzer, KY-040 rotary encoder. Active-HIGH default with HAL-flag opt-in for active-LOW per pin. Single shared serial link to daemon. See `firmware/io/README.md`.
+Drives VFD, 4 buttons, 4 LEDs, 4 relays, 16-pixel WS2813 strip, LDR, passive piezo buzzer; firmware also supports a KY-040 rotary encoder when fitted. Active-HIGH default with HAL-flag opt-in for active-LOW per pin. Single shared serial link to daemon. See `firmware/io/README.md`.
 
 ### ESP32 (HUB75 panel driver)
 Drives 2x Waveshare P2.5 64x32 panels chained, 128x32 logical resolution. USB-CDC link to Pi. RP2040 was attempted earlier and rejected (3.3V signaling insufficient at panel input shift registers); level shifters explicitly ruled out. See `firmware/display/README.md`.
