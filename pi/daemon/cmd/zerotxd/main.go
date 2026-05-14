@@ -1140,6 +1140,10 @@ func main() {
 			cancel()
 		}
 	}()
+	// Push the firmware-level disarm safety-net config once the IPC
+	// handshake settles. See arm_override.{c,h} in firmware/crsf/.
+	// In SITL mode (link == nil) the goroutine no-ops immediately.
+	go waitHandshakeAndPushArmConfig(ctx, link, holder)
 	// Register the hot-plug callback BEFORE starting the pump. When SDL
 	// reports a new joystick has appeared, we check whether its GUID
 	// matches the currently-installed-but-disconnected reader. If so,
@@ -1568,6 +1572,15 @@ func buildAPIProviders(
 				}
 				dispMgr.SetMode(display.ModePreflight)
 			}
+			// Push the new model's throttle channel index to the RP2040
+			// so the firmware-level disarm safety net uses the right
+			// channel slot. No-op in SITL mode (link == nil) and
+			// before handshake completes (SendArmConfig gates).
+			var m *model.EdgeTXModel
+			if s := holder.Load(); s != nil && s.Model != nil {
+				m = &s.Model.EdgeTX
+			}
+			pushArmConfigToFirmware(link, armConfigFromModel(m), "model-change")
 			return nil
 		},
 		UnloadModel: func() {
@@ -2321,7 +2334,92 @@ func modelThresholdsToDisplay(t *model.Thresholds) *display.Thresholds {
 	return out
 }
 
-// telemetryToDisplayState maps a telemetry.Snapshot to a display.State.
+// armConfigFromModel returns the ArmConfig to push to the RP2040 for
+// the current model. Throttle channel index is resolved per-model
+// (TAER -> 0, AETR -> 2, etc.); arm channel index is hardcoded to 4
+// today because the model file doesn't expose a typed "arm channel"
+// binding the way it does for throttle. If a future operator maps
+// arm elsewhere on a different model, this is where to add the
+// resolver -- the firmware accepts any index 0..15.
+//
+// m == nil (no model loaded yet) returns conservative TAER defaults
+// matching the project's primary aircraft. The firmware will boot
+// with these as compile-time defaults too, so this path produces
+// behavior identical to "config push was missed entirely".
+func armConfigFromModel(m *model.EdgeTXModel) ipc.ArmConfig {
+	const armIdx uint8 = 4 // TODO: resolve from the model when it grows a typed arm binding.
+	c := ipc.ArmConfig{
+		ThrIdx:         0, // TAER default
+		ArmIdx:         armIdx,
+		ThrThreshold:   200,
+		ArmDisarmValue: ipc.CrsfChMin,
+	}
+	if m == nil {
+		return c
+	}
+	if idx := m.ThrottleChannel(); idx >= 0 && idx < ipc.Channels {
+		c.ThrIdx = uint8(idx)
+	}
+	return c
+}
+
+// pushArmConfigToFirmware sends the current model's arm config to the
+// RP2040. Logs success/failure with a stable prefix so the operator
+// can grep the journal. Called at startup (once handshake completes,
+// see waitHandshakeAndPushArmConfig) and on every successful model
+// change. Idempotent: re-sending the same config is harmless.
+func pushArmConfigToFirmware(link *ipc.Link, c ipc.ArmConfig, source string) {
+	if link == nil {
+		return
+	}
+	if err := link.SendArmConfig(c); err != nil {
+		log.Printf("arm-config push (%s) failed: %v", source, err)
+		return
+	}
+	log.Printf("arm-config push (%s): thrIdx=%d armIdx=%d thrThreshold=%d armDisarmValue=%d",
+		source, c.ThrIdx, c.ArmIdx, c.ThrThreshold, c.ArmDisarmValue)
+}
+
+// waitHandshakeAndPushArmConfig polls the link's handshake state and
+// pushes the initial arm config once it lands. Gives up after the
+// handshake's own 5-second timeout window; if the link is in legacy
+// mode SendArmConfig still succeeds (firmware drops unknown frames
+// harmlessly per the v3 -> v4 transition plan in ipc/protocol.go).
+// Logs once if the wait times out so the operator knows the
+// safety-net layer never engaged on this boot.
+func waitHandshakeAndPushArmConfig(ctx context.Context, link *ipc.Link, holder *stackHolder) {
+	if link == nil {
+		return
+	}
+	const (
+		pollEvery = 200 * time.Millisecond
+		giveUpAt  = 10 * time.Second // generous buffer past the link's own 5s
+	)
+	deadline := time.Now().Add(giveUpAt)
+	t := time.NewTicker(pollEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if ok, legacy, _ := link.HandshakeComplete(); ok || legacy {
+				var m *model.EdgeTXModel
+				if s := holder.Load(); s != nil && s.Model != nil {
+					m = &s.Model.EdgeTX
+				}
+				pushArmConfigToFirmware(link, armConfigFromModel(m), "boot")
+				return
+			}
+			if time.Now().After(deadline) {
+				log.Printf("arm-config push (boot): handshake never completed after %s; safety-net layer inactive", giveUpAt)
+				return
+			}
+		}
+	}
+}
+
+
 // Only fields that are present (non-nil entries, non-stale data) are
 // set on the output; the display preserves last-known values for
 // absent fields.

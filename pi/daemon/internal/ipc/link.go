@@ -238,6 +238,37 @@ func (l *Link) SendChannelIntent(channels [Channels]uint16) error {
 	return l.sendFrame(MsgChannelIntent, buf[:])
 }
 
+// SendArmConfig pushes the firmware's defense-in-depth disarm config
+// to the MCU. Sent at link open (once handshake completes) and on
+// every model change. Idempotent: re-sending the same config is
+// safe; the firmware overwrites whatever it had.
+//
+// Like SendChannelIntent, this is gated by the handshake. If
+// firmware is on protocol v3 (no MsgArmConfig handler) the call
+// still goes out and the firmware parser drops it harmlessly --
+// the daemon's arm machine continues to enforce the same policy
+// at the higher layer, so behavior degrades only by losing the
+// safety-net layer (no worse than pre-MsgArmConfig).
+//
+// Errors from sendFrame (serial closed, payload too large) bubble
+// up. A no-handshake state is not an error; it returns nil after
+// logging once per link lifetime.
+func (l *Link) SendArmConfig(c ArmConfig) error {
+	l.hsMu.RLock()
+	gateOpen := l.hsOK || l.hsLegacy
+	l.hsMu.RUnlock()
+	if !gateOpen {
+		l.hsMu.Lock()
+		if !l.hsLoggedTx {
+			log.Printf("ipc: dropping arm config: protocol handshake not complete")
+			l.hsLoggedTx = true
+		}
+		l.hsMu.Unlock()
+		return nil
+	}
+	return l.sendFrame(MsgArmConfig, BuildArmConfigPayload(c))
+}
+
 // HandshakeComplete reports whether the protocol handshake has reached a
 // terminal state (either successful ack or legacy-mode fallback). Returns
 // the firmware's version string if known and a flag indicating legacy mode.
