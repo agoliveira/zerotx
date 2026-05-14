@@ -104,7 +104,7 @@ Workflow:
 5. Deploy: `sudo install -D -m 644 hardware-baseline.yaml /etc/zerotx/hardware-baseline.yaml`.
 6. Restart the daemon. Self-check picks up the file automatically.
 
-Probes the daemon enforces today: `rp2040`, `mega`, `esp32-display`, `hdmi`, `gps-ublox`. Probes the bench tool can test but the daemon doesn't yet observe (RTC, heartbeat LED, joystick, audio, ELRS-as-distinct-from-RP2040) are logged as "no daemon observer (not enforced)" at startup; they don't gate readiness even if mismatched.
+Probes the daemon enforces today: `rp2040`, `mega`, `esp32-display`, `hdmi`, `gps-ublox`, `rtc-ds3231`, `led-heartbeat`, `joystick`, `audio`, `elrs`. All ten bench-tool probes have matching daemon-side observers. Each observer is honest about its limits — for example, the LED check verifies the daemon believes it's driving the GPIO line, not that the LED is physically lit; the audio check verifies the daemon resolved a playback backend for each configured extension, not that the speakers actually emit sound. The bench tool's probes are stronger in some cases (direct hardware exercise); the daemon's are weaker but continuous.
 
 To disable self-check entirely: pass `-hardware-baseline ""` to the daemon (or remove the file). Settling delay tunable via `-hardware-baseline-settle DURATION`.
 

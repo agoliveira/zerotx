@@ -274,10 +274,16 @@ func main() {
 	// the VFD setup. CountFrame is nil-safe.
 	var vfdEvt *vfdEventEmitter
 
+	// elrsObs records the timestamp of every telemetry frame the
+	// daemon receives. Read by the hardware-baseline self-check
+	// (probe id 'elrs') to detect a silent ELRS module.
+	elrsObs := newELRSObserver()
+
 	telemHandler := func(payload []byte) {
 		telemetryState.Feed(payload)
 		mwpTee.Forward(payload)
 		vfdEvt.CountFrame()
+		elrsObs.Touch()
 	}
 	if link != nil {
 		link.OnTelemetry = telemHandler
@@ -1265,7 +1271,7 @@ func main() {
 	// The settle delay covers the time between MCU handshakes and
 	// devhealth seeing its first heartbeats.
 	go loadAndRunSelfCheck(ctx, hwBaselineHolder,
-		newDaemonSource(devs, gpsRdr, hb, jsHolder, rtcName),
+		newDaemonSource(devs, gpsRdr, hb, jsHolder, player, elrsObs, nil, rtcName),
 		*hardwareBaselineSettle)
 
 

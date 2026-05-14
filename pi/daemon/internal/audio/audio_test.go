@@ -628,3 +628,40 @@ func TestStitching_PartialMissingFragmentDegrades(t *testing.T) {
 }
 
 // (helper removed; tests use shellPlayer directly without starting run())
+
+func TestNullPlayer_BackendsNil(t *testing.T) {
+	var p Player = &NullPlayer{}
+	if got := p.Backends(); got != nil {
+		t.Errorf("NullPlayer.Backends() = %v, want nil", got)
+	}
+}
+
+func TestShellPlayer_BackendsReflectsResolved(t *testing.T) {
+	// Build a shellPlayer with a hand-set backends map (skipping
+	// the real detectBackends so the test is hermetic).
+	p := &shellPlayer{
+		backends: map[string]backend{
+			".wav": {cmd: "aplay", args: []string{"-q"}},
+			".mp3": {cmd: "mpg123"},
+		},
+	}
+	got := p.Backends()
+	if got == nil {
+		t.Fatal("Backends() = nil for shellPlayer; want non-nil")
+	}
+	if got[".wav"] != "aplay" {
+		t.Errorf(".wav backend = %q, want aplay", got[".wav"])
+	}
+	if got[".mp3"] != "mpg123" {
+		t.Errorf(".mp3 backend = %q, want mpg123", got[".mp3"])
+	}
+	if _, ok := got[".ogg"]; ok {
+		t.Errorf(".ogg should not be present in returned map: %v", got)
+	}
+	// Returned map should be a copy: mutating it must not affect
+	// the player's internal state.
+	got[".wav"] = "tampered"
+	if p.backends[".wav"].cmd != "aplay" {
+		t.Error("Backends() returned a live reference; mutation leaked back")
+	}
+}

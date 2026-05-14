@@ -146,6 +146,18 @@ type Player interface {
 	// Close stops the player and releases any resources. Pending
 	// events and active alarms are discarded.
 	Close()
+
+	// Backends returns the playback backend command resolved for
+	// each supported file extension. The map keys are ".mp3",
+	// ".wav", ".ogg"; the values are the executable name the
+	// player will exec ("mpg123", "aplay", "paplay", "ffplay").
+	// Returns nil for NullPlayer (no backend resolved at startup).
+	// Used by the hardware-baseline self-check to confirm the
+	// daemon actually has a working audio chain for the files it
+	// will play -- "aplay -l shows a card" doesn't prove that;
+	// "the daemon resolved a backend for every configured
+	// extension" does.
+	Backends() map[string]string
 }
 
 // ActiveAlarm is a snapshot of one currently-scheduled repeating
@@ -332,6 +344,7 @@ func (n *NullPlayer) SetThreshold(Level)            {}
 func (n *NullPlayer) Acknowledge(string)            {}
 func (n *NullPlayer) AcknowledgeAll()               {}
 func (n *NullPlayer) ActiveAlarms() []ActiveAlarm   { return nil }
+func (n *NullPlayer) Backends() map[string]string   { return nil }
 func (n *NullPlayer) Close()                        {}
 
 // === shellPlayer: file-based playback with priority and repeats ===
@@ -588,6 +601,19 @@ func (p *shellPlayer) SetThreshold(l Level) {
 	if Level(old) != l {
 		log.Printf("audio: threshold changed: %s -> %s", Level(old), l)
 	}
+}
+
+// Backends returns a read-only snapshot of the resolved
+// extension-to-executable mapping. Empty (but non-nil) is possible
+// when detectBackends found nothing for any extension; the caller
+// distinguishes that from the NullPlayer case (which returns nil)
+// by checking len.
+func (p *shellPlayer) Backends() map[string]string {
+	out := make(map[string]string, len(p.backends))
+	for ext, b := range p.backends {
+		out[ext] = b.cmd
+	}
+	return out
 }
 
 func (p *shellPlayer) Close() {

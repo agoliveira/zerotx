@@ -40,6 +40,7 @@ func (p *recordingPlayer) SetThreshold(l audio.Level)         { p.threshold = l 
 func (p *recordingPlayer) Acknowledge(name string)            {}
 func (p *recordingPlayer) AcknowledgeAll()                    {}
 func (p *recordingPlayer) ActiveAlarms() []audio.ActiveAlarm  { return nil }
+func (p *recordingPlayer) Backends() map[string]string        { return nil }
 func (p *recordingPlayer) Close()                             {}
 
 // pipeRC adapts an io.PipeReader to io.ReadCloser.

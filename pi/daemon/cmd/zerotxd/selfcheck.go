@@ -29,13 +29,56 @@ import (
 	"context"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/agoliveira/zerotx/pi/daemon/internal/audio"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devhealth"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/gps"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/heartbeat"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/selfcheck"
 )
+
+// elrsObserver tracks the freshness of MSG_TELEMETRY frames
+// forwarded from the RP2040. The daemon's telemetry callback (set
+// from main.go) calls Touch() on every received frame; the
+// selfcheck consults LastSeen() to determine if the ELRS module
+// is currently responding.
+//
+// Why a separate observer instead of adding state to telemetry.State:
+// telemetry.State's job is to decode CRSF frames into typed fields
+// (battery, GPS, etc). Frame-arrival timing is orthogonal -- a malformed
+// frame increments the arrival counter just as much as a parseable one,
+// and that's what we want for liveness. Keeping this off telemetry.State
+// avoids muddying that abstraction.
+type elrsObserver struct {
+	lastUnixNano atomic.Int64
+}
+
+func newELRSObserver() *elrsObserver {
+	return &elrsObserver{}
+}
+
+// Touch records that a MSG_TELEMETRY frame just arrived.
+func (e *elrsObserver) Touch() {
+	if e == nil {
+		return
+	}
+	e.lastUnixNano.Store(time.Now().UnixNano())
+}
+
+// LastSeen returns the time of the most recent Touch(), or zero
+// time if Touch() has never been called.
+func (e *elrsObserver) LastSeen() time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	ns := e.lastUnixNano.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
 
 // hardwareBaselineHolder is the shared store for self-check
 // mismatches. The Preflight provider reads it on each request; the
@@ -89,16 +132,37 @@ type daemonSource struct {
 	gps      *gps.Reader
 	hb       *heartbeat.Heartbeat
 	jsHolder *joystickHolder
+	player   audio.Player
+	elrs     *elrsObserver
 	rtcName  string // empty if /sys/class/rtc/rtc0/name was unreadable
+
+	// audioExts is the set of file extensions the daemon's audio
+	// Player was configured to handle (from audio.Config.Extensions).
+	// audioStatus passes only when player.Backends() covers all of
+	// them. Defaulted from audio package when nil/empty.
+	audioExts []string
+
+	// elrsFreshness is how recently a MSG_TELEMETRY must have
+	// arrived for ELRS to count as alive. Tuned for "are we still
+	// hearing the module right now"; not a long-term link-quality
+	// metric.
+	elrsFreshness time.Duration
 }
 
-func newDaemonSource(devs *devhealth.Registry, gpsRdr *gps.Reader, hb *heartbeat.Heartbeat, jsHolder *joystickHolder, rtcName string) *daemonSource {
+func newDaemonSource(devs *devhealth.Registry, gpsRdr *gps.Reader, hb *heartbeat.Heartbeat, jsHolder *joystickHolder, player audio.Player, elrs *elrsObserver, audioExts []string, rtcName string) *daemonSource {
+	if len(audioExts) == 0 {
+		audioExts = []string{".wav", ".ogg", ".mp3"}
+	}
 	return &daemonSource{
-		devs:     devs,
-		gps:      gpsRdr,
-		hb:       hb,
-		jsHolder: jsHolder,
-		rtcName:  rtcName,
+		devs:          devs,
+		gps:           gpsRdr,
+		hb:            hb,
+		jsHolder:      jsHolder,
+		player:        player,
+		elrs:          elrs,
+		audioExts:     audioExts,
+		rtcName:       rtcName,
+		elrsFreshness: 2 * time.Second,
 	}
 }
 
@@ -122,8 +186,14 @@ func (s *daemonSource) Status(probeID string) (selfcheck.Status, string, bool) {
 		return s.ledHeartbeatStatus()
 	case "joystick":
 		return s.joystickStatus()
+	case "audio":
+		return s.audioStatus()
+	case "elrs":
+		return s.elrsStatus()
 	default:
-		// Untracked: audio, ELRS (both land in commit F2).
+		// All ten bench probes are now tracked. Any new probe
+		// the bench adds will land here as untracked until a
+		// matching observer is wired below.
 		return selfcheck.StatusUnknown, "", false
 	}
 }
@@ -228,6 +298,77 @@ func (s *daemonSource) joystickStatus() (selfcheck.Status, string, bool) {
 	}
 	if !r.Connected() {
 		return selfcheck.StatusFail, "joystick disconnected (was: " + r.Name() + ")", true
+	}
+	return selfcheck.StatusPass, "", true
+}
+
+// audioStatus tests whether the daemon's audio.Player has a
+// resolved backend for every file extension it's configured to
+// play. Pass means the daemon believes it can play .wav, .ogg,
+// .mp3 (the defaults; configurable via audio.Config.Extensions).
+//
+// What this catches:
+//   - NullPlayer fallback (no playback executable installed)
+//   - Missing backend for any configured extension (e.g. mpg123
+//     not installed, no working .mp3 path)
+//
+// What this does NOT catch:
+//   - The ALSA device is muted or volume is zero
+//   - The case speakers are unplugged from the USB audio interface
+//   - A specific sound file is corrupt
+//
+// Verifying any of those requires actual playback at boot, which
+// would beep on every daemon start. That's a separate feature; for
+// now the operator listens for normal boot audio (Speak greeting,
+// 'system ready' events) as the human-in-the-loop check.
+func (s *daemonSource) audioStatus() (selfcheck.Status, string, bool) {
+	if s.player == nil {
+		return selfcheck.StatusUnknown, "", false
+	}
+	backends := s.player.Backends()
+	if backends == nil {
+		return selfcheck.StatusFail, "NullPlayer (no aplay/paplay/mpg123 found at startup)", true
+	}
+	var missing []string
+	for _, ext := range s.audioExts {
+		if backends[ext] == "" {
+			missing = append(missing, ext)
+		}
+	}
+	if len(missing) > 0 {
+		reason := "no backend resolved for: "
+		for i, ext := range missing {
+			if i > 0 {
+				reason += ", "
+			}
+			reason += ext
+		}
+		return selfcheck.StatusFail, reason, true
+	}
+	return selfcheck.StatusPass, "", true
+}
+
+// elrsStatus reports whether a MSG_TELEMETRY frame has arrived
+// recently. Pass = last frame within elrsFreshness (2s by default).
+// Fail = no frame ever, or last one too old.
+//
+// The bench tool's ELRS probe pumps heartbeats and counts frames
+// over a fixed window; this is its runtime equivalent. By the time
+// the self-check runs (settle delay = 3s default), the daemon's
+// RP2040 link should be in LINK_OK and ELRS-TX should be sending
+// link-stats at 4 Hz or higher. Anything less than one frame in
+// the last 2 seconds means ELRS is silent.
+func (s *daemonSource) elrsStatus() (selfcheck.Status, string, bool) {
+	if s.elrs == nil {
+		return selfcheck.StatusUnknown, "", false
+	}
+	last := s.elrs.LastSeen()
+	if last.IsZero() {
+		return selfcheck.StatusFail, "no telemetry frames received", true
+	}
+	age := time.Since(last)
+	if age > s.elrsFreshness {
+		return selfcheck.StatusFail, "last telemetry " + age.Truncate(100*time.Millisecond).String() + " ago", true
 	}
 	return selfcheck.StatusPass, "", true
 }
