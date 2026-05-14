@@ -48,13 +48,17 @@ localhost-only (e.g. for an untrusted network).
 ## Status
 
 This README describes the full intended scope. The tool ships
-incrementally; current commit (C) adds the USB-peripheral probes
-(joystick and audio) on top of the framework and breakout probes.
-Five probes registered. Subsequent commits:
+incrementally; current commit (D1) adds the line-based MCU probes
+(Mega 2560, ESP32 HUB75 panel). Seven probes registered. Subsequent
+commits:
 
-- D: Mega, RP2040, ESP32, ELRS (MCU probes — the ones that need
-  daemon-stopped)
+- D2: RP2040 + ELRS (binary COBS-framed protocol)
 - E: HDMI displays + baseline export
+
+The Mega and ESP32 probes need exclusive USB-CDC access — the
+coexistence check earns its keep here. Running these probes while
+zerotxd has the ports open would corrupt both sides of the channel
+buffer.
 
 ## Required system packages
 

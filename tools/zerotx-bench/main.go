@@ -120,7 +120,11 @@ func registerProbes(r *Registry) {
 	r.Register(joystickProbe{})
 	r.Register(audioProbe{})
 
-	// Phase D: MCU probes (Mega, RP2040, ESP32, ELRS).
+	// MCU probes -- line-based protocols (commit D1).
+	r.Register(megaProbe{})
+	r.Register(esp32Probe{})
+
+	// Phase D2: RP2040 + ELRS (binary COBS-framed protocol).
 	// Phase E: HDMI displays + baseline export.
 }
 
