@@ -4,7 +4,7 @@
 
 A workstation-class ground station for FPV and long-range fixed-wing flying, built into an aluminum briefcase. Replaces the ergonomic compromise of a handheld radio with twin LCDs (HUD plus moving map), an at-a-glance LED matrix panel, audio narration, and a Pi 400 keyboard. RF modules mount externally on poles; the case interior is wired-only.
 
-A Raspberry Pi 400 runs the ZeroTX daemon and serves the web UIs that drive the LCDs. MCU satellites handle the rest: an RP2040 generates CRSF for the radio link, a Mega 2560 drives the IO board (VFD, buttons, indicator LEDs, relays, WS2813 strip; firmware also supports a rotary encoder when fitted), and an ESP32 drives the HUB75 LED panel. Telemetry returns from the ELRS module on the same CRSF wire, decoded by the RP2040 and forwarded to the daemon over USB-CDC.
+A Raspberry Pi 400 runs the ZeroTX daemon and serves the web UIs that drive the LCDs. MCU satellites handle the rest: an RP2040 generates CRSF for the radio link, a Mega 2560 drives the IO board (VFD, panel buttons, 128x64 GLCD), and an ESP32 drives the HUB75 LED panel. The Mega firmware also scaffolds several optional peripherals (second VFD, I2C LCD, indicator LEDs, relays, WS2813 strip, LDR, buzzer, rotary encoder) that pin into the same protocol when fitted. Telemetry returns from the ELRS module on the same CRSF wire, decoded by the RP2040 and forwarded to the daemon over USB-CDC.
 
 ## Why
 
@@ -20,7 +20,7 @@ Current capability:
 
 - ZeroTX daemon (Go) on the Pi reads USB joystick input, evaluates EdgeTX-format model logic (mixes, logic switches, custom functions), and emits CRSF channel intents to the RP2040 at 50 Hz
 - RP2040 firmware (Pico SDK and CMake, hardware watchdog enabled) translates intents to CRSF on the wire and watches the Pi-side link for failsafe
-- Mega 2560 IO board drives VFD, buttons, indicator LEDs, relays, WS2813 strip, LDR, and buzzer; firmware also supports a rotary encoder when fitted
+- Mega 2560 IO board drives VFD, panel buttons, and the 128x64 GLCD artificial horizon. Firmware also scaffolds indicator LEDs, relays, WS2813 strip, LDR, buzzer, a second VFD, an I2C LCD, and a rotary encoder for when those are added
 - ESP32 drives the chained HUB75 LED matrix panel for at-a-glance state (IDLE, PREFLIGHT, FLIGHT, ALARM, RTH, POSTFLIGHT)
 - Audio: pre-baked WAV samples for safety-critical alarms, Piper TTS (en_US-amy-medium) for narration
 - HUD and Map web UIs driving twin LCDs via Chromium kiosk

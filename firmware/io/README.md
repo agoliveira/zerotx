@@ -20,7 +20,6 @@ all share one Mega 2560 connected to the daemon over USB-CDC.
   I2C backpack (LCM2002 default geometry, others configurable).
 - Servo subsystem: 4 servo channels via the Arduino Servo library,
   lazy-attached to keep Timer 5 free until first use.
-- Trackball LEDs: five canonical states with on-firmware animation.
 - Buttons: 10 panel buttons, 20ms polling debounce, edge events.
 - LEDs: 4 generic indicator LEDs.
 - Relays: 4 relays (separate from led for protocol clarity).

@@ -36,9 +36,9 @@ flowchart LR
         HUDL["HUD LCD"]
         MAPL["Map LCD"]
         PANEL["HUB75 128x32"]
-        VFD["VFD 20x2 (x2)"]
+        VFD["VFD 20x2"]
         GLCD["GLCD 128x64<br/>(artificial horizon)"]
-        TB["Trackball + buttons"]
+        BTN["Panel buttons<br/>(6 of 10)"]
         JS["USB joystick"]
     end
 
@@ -52,10 +52,9 @@ flowchart LR
     RP <-->|"single-wire CRSF<br/>(manga 5m)"| ELRS
     MEGA --> VFD
     MEGA --> GLCD
-    MEGA -->|"LED ring"| TB
+    MEGA --> BTN
     ESP32 --> PANEL
     JS -->|USB HID| DAEMON
-    TB -->|USB HID| DAEMON
 ```
 
 ## Components
@@ -64,7 +63,7 @@ flowchart LR
 Runs `zerotxd` and two Chromium kiosk browsers. Owns the joystick, LCDs, and the satellite USB-CDC links. See `pi/daemon/`.
 
 ### Mega 2560 (IO hub)
-Drives VFD, 4 buttons, 4 LEDs, 4 relays, 16-pixel WS2813 strip, LDR, passive piezo buzzer; firmware also supports a KY-040 rotary encoder when fitted. Active-HIGH default with HAL-flag opt-in for active-LOW per pin. Single shared serial link to daemon. See `firmware/io/README.md`.
+Drives the VFD (`vfd.0`), 6 of 10 panel buttons in the `button.0..9` matrix, and the 128x64 ST7920 graphic LCD (`glcd`). Firmware also scaffolds peripherals not currently fitted: a second VFD instance (`vfd.1`), an I2C LCD (`lcd.0`), 4 indicator LEDs (`led.0..3`), 4 relays (`relay.0..3`), 16-pixel WS2813 strip (`ws.0`), LDR (`ldr.0`), passive piezo buzzer, and a KY-040 rotary encoder (`enc.0`). Active-HIGH default with HAL-flag opt-in for active-LOW per pin. Single shared serial link to daemon. See `firmware/io/README.md`.
 
 ### ESP32 (HUB75 panel driver)
 Drives 2x Waveshare P2.5 64x32 panels chained, 128x32 logical resolution. USB-CDC link to Pi. RP2040 was attempted earlier and rejected (3.3V signaling insufficient at panel input shift registers); level shifters explicitly ruled out. See `firmware/display/README.md`.
@@ -85,7 +84,7 @@ Two HDMI panels driven by the Pi's two HDMI ports. Each runs a Chromium kiosk po
 At-a-glance state display: arm state, mode, alarms, big numerics. 2x Waveshare P2.5 64x32 chained. Wire protocol in `docs/protocols/display.md`.
 
 ### VFD (Noritake CU20025ECPB-W1J)
-20x2 blue/white VFD. Driven by Mega via the vfd.0 and vfd.1 subsystems (HD44780 4-bit interface). Two instances coexist on the panel; originally specced for an RP2040 driver, moved to Mega to consolidate IO.
+20x2 blue/white VFD. Driven by Mega via the `vfd.0` subsystem (HD44780 4-bit interface). Firmware supports a second instance (`vfd.1`) on a separate pin group; the second VFD is not currently fitted, but the slot is reserved. Originally specced for an RP2040 driver, moved to Mega to consolidate IO.
 
 ### 128x64 graphic LCD (ST7920)
 Small monochrome graphic LCD next to the VFDs on the front panel. Driven by the Mega via 3-wire serial (hardware SPI), the `glcd` Mega subsystem renders a cool-factor artificial horizon (pitch ladder, roll scale, numeric readout) from attitude telemetry the daemon pushes at ~10 Hz. Falls back to a "NO LINK" screen when attitude is stale. Not on the safety path; loss of the GLCD doesn't block flight.

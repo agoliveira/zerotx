@@ -77,7 +77,7 @@ for a simple "system on" indication. No commitment until parts arrive.
 
 - 2x Noritake CU20025ECPB-W1J 2x20 VFD **have**
   - HD44780 parallel, 4-bit mode (6 GPIO + 2 power = 8 conductors per unit)
-  - Two instances on the panel: `vfd.0` and `vfd.1`, different status categories on each
+  - Currently only `vfd.0` is wired and driven by the Mega; `vfd.1` remains a reserved slot on independent pin groups (firmware supports both, awaiting wiring)
   - Initialized at full brightness
   - Japanese-ROM (A00) variant; ASCII works directly but bytes with bit 7 set render as katakana — a useful diagnostic for floating D7 (a bit-pattern symptom of a broken D7 wire)
 - 1x 128x64 ST7920 graphic LCD **have**

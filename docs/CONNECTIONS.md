@@ -45,8 +45,7 @@ Initial estimates. Refine with bench measurements once the regulator topology is
 | ESP32 (panel driver) | 5V | ~0.3A | via USB |
 | RP2040 (CRSF) | 5V | ~0.1A | via USB |
 | VFD (CU20025ECPB-W1J) | 5V | TODO | confirm against datasheet |
-| Trackball ring LEDs | 5V | small | sourced from Mega |
-| WS2813 strip (16 px) | 5V | 0.96A worst case | full white |
+| WS2813 strip (16 px) | 5V | 0.96A worst case | full white; *scaffolded — not currently fitted* |
 | Lid LED panels | TODO | TODO | TODO |
 | Powered USB hub | TODO | TODO | self-powered vs internal-rail-powered: TODO |
 | ELRS TX module (default) | 12V via cable | ~1A peak | direct off the case 12V rail through the pole cable |
@@ -80,7 +79,6 @@ Pi 400 USB port C (USB 2.0)
         +-- Mega 2560 IO board       (id: usb-Arduino_LLC_Mega_2560_R3_<serial>)
         +-- ESP32 panel driver       (id: usb-<vendor>_<chip>_<serial>)
         +-- USB joystick             (Thrustmaster <model>)
-        +-- Trackball + 2 buttons    (USB HID composite)
         +-- Front-panel USB-A x N    (ad-hoc, charging, dev access)
 ```
 
@@ -124,7 +122,7 @@ Noritake CU20025ECPB-W1J (20x2, blue/white) is driven by Mega via HD44780 4-bit 
 
 ## Mega IO connections
 
-Pin assignments for all Mega-attached peripherals (VFD, 4 buttons, 4 LEDs, 4 relays, WS2813 strip, LDR, passive piezo buzzer, and a KY-040 rotary encoder if fitted) are managed via the HAL EEPROM v2 system in `firmware/io/`. The active configuration can be read and modified with `tools/zerotx-iohal-config/`.
+Pin assignments for all Mega-attached peripherals are managed via the HAL EEPROM v2 system in `firmware/io/`. Currently fitted: VFD (`vfd.0`), 6 of 10 panel buttons, GLCD. Firmware also scaffolds a second VFD, an I2C LCD, indicator LEDs, relays, WS2813 strip, LDR, passive piezo buzzer, and a KY-040 rotary encoder for future expansion. The active configuration can be read and modified with `tools/zerotx-iohal-config/`.
 
 The canonical pin table lives in `firmware/io/README.md`. This doc deliberately does not duplicate it.
 

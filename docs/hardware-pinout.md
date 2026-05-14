@@ -767,11 +767,10 @@ The Pi 400 has 3 USB ports total. Allocation:
 | Hub port | Device | Notes |
 |----------|--------|-------|
 | 1 | ESP32 DevKit V1 | HUB75 LED panel driver |
-| 2 | Mega 2560 | IO board (VFD, buttons, indicator LEDs, relays, encoder, buzzer, LDR, WS2813 strip) |
+| 2 | Mega 2560 | IO board (VFD, buttons, GLCD; firmware also supports indicator LEDs, relays, encoder, buzzer, LDR, WS2813 strip when fitted) |
 | 3 | USB joystick passthrough | Routes via an internal USB-A extension cable to a panel-mount USB-A on the front of the case. Operator plugs in their X-HOTAS (or any class-compliant USB joystick) |
-| 4 | Trackball | USB HID |
-| 5 | USB audio interface | Generic class-compliant USB audio board, drives the case speakers |
-| 6, 7 | unused | Headroom for future devices |
+| 4 | USB audio interface | Generic class-compliant USB audio board, drives the case speakers |
+| 5, 6, 7 | unused | Headroom for future devices |
 
 **Tracker note:** the experimental ESP32-S3 antenna tracker is NOT on
 the case USB. It sits on the wired CRSF cable between the case and
