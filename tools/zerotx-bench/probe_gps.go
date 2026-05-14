@@ -174,7 +174,7 @@ func (s *nmeaStats) fixDescription() string {
 // library would pull in CGo for tcsetattr; for 9600 baud read-only
 // the default kernel termios is fine for our purposes.
 func captureNMEA(ctx context.Context, window time.Duration) (*nmeaStats, error) {
-	f, err := os.OpenFile(gpsDevice, os.O_RDONLY|os.O_NOCTTY, 0)
+	f, err := os.OpenFile(gpsDevice, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", gpsDevice, err)
 	}
