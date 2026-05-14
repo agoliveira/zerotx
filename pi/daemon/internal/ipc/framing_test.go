@@ -184,3 +184,54 @@ func TestParserStreaming(t *testing.T) {
 		t.Fatalf("seq order wrong: %v %v", got[0].Seq, got[1].Seq)
 	}
 }
+
+// TestArmConfigPayloadRoundtrip verifies the daemon can serialize an
+// ArmConfig and recover it identically. Catches endianness mistakes
+// in the uint16 fields and field-order drift between Build and Parse.
+// The firmware-side decoder is hand-mirrored from the same payload
+// spec; this test guards the daemon side of that mirror.
+func TestArmConfigPayloadRoundtrip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   ArmConfig
+	}{
+		{"TAER big talon", ArmConfig{ThrIdx: 0, ArmIdx: 4, ThrThreshold: 200, ArmDisarmValue: CrsfChMin}},
+		{"AETR synthetic", ArmConfig{ThrIdx: 2, ArmIdx: 4, ThrThreshold: 200, ArmDisarmValue: CrsfChMin}},
+		{"extremes", ArmConfig{ThrIdx: 15, ArmIdx: 15, ThrThreshold: CrsfChMax, ArmDisarmValue: CrsfChMax}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := BuildArmConfigPayload(tc.in)
+			if len(p) != 6 {
+				t.Fatalf("payload len: got %d, want 6", len(p))
+			}
+			out, err := ParseArmConfigPayload(p)
+			if err != nil {
+				t.Fatalf("ParseArmConfigPayload: %v", err)
+			}
+			if out != tc.in {
+				t.Errorf("roundtrip mismatch:\n got %+v\nwant %+v", out, tc.in)
+			}
+		})
+	}
+}
+
+// TestArmConfigPayloadRejectMalformed: parser refuses out-of-range
+// channel indices and short payloads rather than silently accepting.
+// Mirrors what the firmware-side parser must do.
+func TestArmConfigPayloadRejectMalformed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+	}{
+		{"empty", nil},
+		{"5 bytes (one short)", make([]byte, 5)},
+		{"thrIdx out of range", []byte{16, 4, 200, 0, 172, 0}},
+		{"armIdx out of range", []byte{0, 16, 200, 0, 172, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseArmConfigPayload(tc.payload); err == nil {
+				t.Errorf("ParseArmConfigPayload(%v): err=nil, want non-nil", tc.payload)
+			}
+		})
+	}
+}
