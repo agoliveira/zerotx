@@ -33,6 +33,16 @@ void state_set_channels(const uint16_t channels[ZTX_CHANNELS]) {
     memcpy(s_channels, channels, sizeof(s_channels));
 }
 
+void state_set_channel(uint8_t idx, uint16_t value) {
+    if (idx >= ZTX_CHANNELS) return;
+    s_channels[idx] = value;
+}
+
+uint16_t state_get_channel(uint8_t idx) {
+    if (idx >= ZTX_CHANNELS) return 0;
+    return s_channels[idx];
+}
+
 void state_get_channels(uint16_t out[ZTX_CHANNELS]) {
     memcpy(out, s_channels, sizeof(s_channels));
 }

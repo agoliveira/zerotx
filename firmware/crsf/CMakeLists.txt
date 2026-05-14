@@ -17,6 +17,7 @@ add_executable(zerotx-fw
     src/status_led.c
     src/input_arm.c
     src/input_momentary.c
+    src/arm_override.c
 )
 
 target_include_directories(zerotx-fw PRIVATE src)

@@ -9,6 +9,7 @@
 
 #include "protocol.h"
 #include "ipc.h"
+#include "arm_override.h"
 
 #define DEBOUNCE_US  20000u  /* 20ms */
 
@@ -56,6 +57,15 @@ uint8_t input_arm_poll(uint64_t now_us, uint8_t seq) {
 
     /* Stable change confirmed (or boot-time first announce). */
     s.stable = raw_up;
+
+    /* Firmware-level disarm safety net. On a high->low edge,
+     * arm_override checks throttle and cuts the arm channel
+     * directly if conditions are safe. No-op on low->high (arming
+     * is the daemon's call). Done BEFORE sending the IPC event so
+     * the daemon and the firmware act on the same edge instant; if
+     * the daemon is hung the firmware has still done its job. */
+    arm_override_on_arm_key_edge(raw_up);
+
     uint8_t payload[2];
     payload[0] = ZTX_INPUT_ARM_KEY;
     payload[1] = raw_up ? 1u : 0u;

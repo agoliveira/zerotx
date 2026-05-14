@@ -20,6 +20,7 @@
 #include "status_led.h"
 #include "input_arm.h"
 #include "input_momentary.h"
+#include "arm_override.h"
 
 #define CRSF_BAUD       400000u
 
@@ -124,6 +125,23 @@ static void handle_frame(const ipc_frame_t *f, uint64_t now_us) {
          * before we could). Nothing further to do; the daemon's gate
          * has been lifted on its side. */
         break;
+    case MSG_ARM_CONFIG: {
+        /* Payload: [thr_idx:1][arm_idx:1][thr_threshold:2 LE][arm_disarm_value:2 LE]
+         * Total 6 bytes. Sent at link open and on every model change
+         * so the firmware-level disarm uses the right slots. */
+        if (f->len != 6u) {
+            ipc_log("bad ARM_CONFIG len=%u", (unsigned)f->len);
+            break;
+        }
+        uint8_t  thr_idx          = f->payload[0];
+        uint8_t  arm_idx          = f->payload[1];
+        uint16_t thr_threshold    = (uint16_t)f->payload[2]
+                                  | ((uint16_t)f->payload[3] << 8);
+        uint16_t arm_disarm_value = (uint16_t)f->payload[4]
+                                  | ((uint16_t)f->payload[5] << 8);
+        arm_override_set_config(thr_idx, arm_idx, thr_threshold, arm_disarm_value);
+        break;
+    }
     default:
         ipc_log("unknown msg type 0x%02X", f->type);
         break;
@@ -148,6 +166,7 @@ int main(void) {
     state_init();
     input_arm_init();
     input_momentary_init();
+    arm_override_init();
 
     /* Arm the hardware watchdog. Must be kicked at least every
      * WATCHDOG_TIMEOUT_MS or the chip resets. The main loop

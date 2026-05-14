@@ -83,16 +83,16 @@ const (
 // telemetry data, but the daemon still works (auto-checks fall back
 // to manual confirmations).
 //
-// v3 (current): adds MsgInputEvent. Daemon arming features
+// v3: adds MsgInputEvent. Daemon arming features
 // (state machine, AUX channel control) require both sides at v3.
 //
-// MsgArmConfig (0x15) is registered in v3 by code organization but
-// the firmware-side handler arrives in a separate firmware commit.
-// Until then the daemon may choose to send it; old firmware drops
-// unknown message types harmlessly (see the parser convention noted
-// for v2). ProtoVersion will bump to 4 when the firmware-side
-// arm_override module lands.
-const ProtoVersion uint8 = 3
+// v4 (current): adds MsgArmConfig (0x15). RP2040 firmware-level
+// disarm safety net depends on this config arriving from the daemon
+// at link open. Old firmware against new daemon: daemon's config
+// push is dropped as unknown, daemon-side arming still works.
+// New firmware against old daemon: firmware uses compile-time
+// TAER defaults until/unless config arrives.
+const ProtoVersion uint8 = 4
 
 // Sizing limits (must agree with the firmware).
 const (

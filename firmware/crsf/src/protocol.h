@@ -67,6 +67,27 @@
 /* Slow-path messages */
 #define MSG_LOG             0x14  /* MCU -> Pi, ASCII string */
 
+/* MSG_ARM_CONFIG (0x15): Pi -> MCU. Sent at link open and on every
+ * model change. Configures the firmware-level defense-in-depth
+ * disarm in arm_override.c.
+ *
+ * Payload (6 bytes, little-endian for the uint16 fields):
+ *   [thr_idx:1][arm_idx:1][thr_threshold:2][arm_disarm_value:2]
+ *
+ * thr_idx          0-15  throttle channel slot (model-dependent;
+ *                        TAER->0, AETR->2)
+ * arm_idx          0-15  arm channel slot (conventionally 4)
+ * thr_threshold    CRSF unit cutoff; throttle at or below this
+ *                  is considered "zero" and permits a disarm
+ * arm_disarm_value value to write into ch[arm_idx] on disarm
+ *                  (conventionally ZTX_CRSF_CH_MIN = 172)
+ *
+ * Out-of-range indices are rejected by the firmware; the daemon
+ * side also range-checks, so a malformed message means corruption
+ * or a future daemon. Firmware keeps whatever config it had
+ * (or compile-time defaults at boot). */
+#define MSG_ARM_CONFIG      0x15
+
 /* Reserved input IDs for MSG_INPUT_EVENT.
  *
  * 0x00 is reserved as "invalid / probe". Future controls-area inputs
@@ -89,8 +110,16 @@
  *     input edges. Backward compatible at the IPC parser level
  *     (unknown messages are silently dropped). Daemon arming
  *     features require both sides at v3.
+ *
+ * v4: adds MSG_ARM_CONFIG (0x15) for the firmware-level disarm
+ *     safety net. Old daemon (v3) against new firmware: firmware
+ *     uses compile-time TAER defaults; primary aircraft works,
+ *     non-TAER models would have the wrong throttle slot. New
+ *     daemon (v4) against old firmware: daemon's config push is
+ *     dropped as unknown; daemon-side arm machine still works.
+ *     Both sides on v4: firmware-level safety net is active.
  */
-#define ZTX_PROTO_VERSION   3u
+#define ZTX_PROTO_VERSION   4u
 
 /* Sizing limits */
 #define ZTX_MAX_PAYLOAD     256
