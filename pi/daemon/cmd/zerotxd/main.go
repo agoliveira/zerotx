@@ -842,7 +842,7 @@ func main() {
 	// fires audio cues, runs flight-armed side effects on
 	// EventArmed/EventDisarmed) and a 1Hz Tick driver for the 60s
 	// arming-request timeout.
-	go drainArmEvents(ctx, armMachine, player, holder, telemetryState, *soundsLang, flightArmedHandler)
+	go drainArmEvents(ctx, armMachine, player, dispMgr, holder, telemetryState, *soundsLang, flightArmedHandler)
 	go tickArmMachine(ctx, armMachine)
 	go func() {
 		if err := mwpTee.Run(ctx); err != nil {
@@ -2354,10 +2354,10 @@ func telemetryToDisplayState(s telemetry.Snapshot) display.State {
 
 // drainArmEvents consumes events from the arm state machine and
 // translates them into side effects: logs every transition, fires the
-// matching audio cue, and runs flight-armed side effects (recorder,
-// display mode, alarm cleanup, post-flight narration) on EventArmed
-// and EventDisarmed.
-func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, holder *stackHolder, tel *telemetry.State, lang string, flightArmedHandler func(bool)) {
+// matching audio cue, fires panel alarms for safety-critical events,
+// and runs flight-armed side effects (recorder, display mode, alarm
+// cleanup, post-flight narration) on EventArmed and EventDisarmed.
+func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, dispMgr *display.Manager, holder *stackHolder, tel *telemetry.State, lang string, flightArmedHandler func(bool)) {
 	events := m.Events()
 	for {
 		select {
@@ -2366,6 +2366,7 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 		case e := <-events:
 			log.Printf("arm: %s (state=%s)", e, m.State())
 			playArmCue(player, holder, tel, lang, e)
+			fireArmPanelAlarm(dispMgr, e)
 			if flightArmedHandler != nil {
 				switch e {
 				case arm.EventArmed:
@@ -2375,6 +2376,25 @@ func drainArmEvents(ctx context.Context, m *arm.Machine, player audio.Player, ho
 				}
 			}
 		}
+	}
+}
+
+// fireArmPanelAlarm surfaces safety-critical arm events on the HUB75
+// panel via the alarm overlay. Pairs with the audio cue (playArmCue):
+// audio is the primary attention-grabber, the panel overlay is the
+// visual confirmation that survives noise, audio dropouts, or the
+// operator already moving the radio. Only events at warning level or
+// above fire the overlay; routine arm/disarm transitions stay silent
+// on the panel (they already drive the FLIGHT/IDLE mode change).
+func fireArmPanelAlarm(dispMgr *display.Manager, e arm.Event) {
+	if dispMgr == nil {
+		return
+	}
+	switch e {
+	case arm.EventDisarmDeniedInFlight:
+		dispMgr.FireAlarm(display.AlarmWarning, "DISARM DENIED")
+	case arm.EventBootKeyUp:
+		dispMgr.FireAlarm(display.AlarmWarning, "ARM KEY UP")
 	}
 }
 
