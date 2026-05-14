@@ -116,7 +116,10 @@ func registerProbes(r *Registry) {
 	r.Register(gpsProbe{})
 	r.Register(ledProbe{})
 
-	// Phase C: USB peripherals (joystick, audio).
+	// USB peripherals (commit C).
+	r.Register(joystickProbe{})
+	r.Register(audioProbe{})
+
 	// Phase D: MCU probes (Mega, RP2040, ESP32, ELRS).
 	// Phase E: HDMI displays + baseline export.
 }

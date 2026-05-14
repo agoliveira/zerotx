@@ -48,11 +48,10 @@ localhost-only (e.g. for an untrusted network).
 ## Status
 
 This README describes the full intended scope. The tool ships
-incrementally; current commit (B) adds the breakout-board peripheral
-probes on top of the framework from commit A. Three probes registered:
-DS3231 RTC, u-blox GPS, heartbeat LED. Subsequent commits:
+incrementally; current commit (C) adds the USB-peripheral probes
+(joystick and audio) on top of the framework and breakout probes.
+Five probes registered. Subsequent commits:
 
-- C: joystick, audio (USB peripherals)
 - D: Mega, RP2040, ESP32, ELRS (MCU probes — the ones that need
   daemon-stopped)
 - E: HDMI displays + baseline export
@@ -63,11 +62,13 @@ Probes shell out to standard Pi/Linux tools rather than carrying
 their own implementations. Install via apt:
 
 ```
-sudo apt install i2c-tools gpiod
+sudo apt install i2c-tools gpiod alsa-utils
 ```
 
 `i2c-tools` provides `i2cdetect` (RTC presence check) and `hwclock`
 typically comes from the base `util-linux` package, so it's always
 present. `gpiod` provides `gpioinfo` and `gpioset` for the LED probe.
+`alsa-utils` provides `aplay` and `speaker-test` for the audio probe.
 
-The GPS probe reads `/dev/ttyAMA1` directly with no extra tools.
+The GPS and joystick probes use kernel device files directly (no
+extra packages).
