@@ -48,17 +48,23 @@ localhost-only (e.g. for an untrusted network).
 ## Status
 
 This README describes the full intended scope. The tool ships
-incrementally; current commit (D1) adds the line-based MCU probes
-(Mega 2560, ESP32 HUB75 panel). Seven probes registered. Subsequent
-commits:
+incrementally; current commit (D2) adds the binary-COBS MCU probes
+(RP2040 CRSF generator, ELRS-via-RP2040). Nine probes registered.
+Subsequent commits:
 
-- D2: RP2040 + ELRS (binary COBS-framed protocol)
 - E: HDMI displays + baseline export
 
-The Mega and ESP32 probes need exclusive USB-CDC access — the
-coexistence check earns its keep here. Running these probes while
-zerotxd has the ports open would corrupt both sides of the channel
-buffer.
+The Mega, ESP32, and RP2040 probes need exclusive USB-CDC access
+— the coexistence check earns its keep here. Running these probes
+while zerotxd has the ports open would corrupt both sides of the
+channel buffer.
+
+The ELRS probe uses the RP2040 link to observe forwarded telemetry
+frames. CAUTION: while the ELRS probe runs, the RP2040 emits live
+CRSF at 50Hz with safe defaults (sticks centered, throttle low,
+arm low). Bench-only by design, but if an aircraft is bound to
+this ELRS link the frames reach the FC. Never run with an aircraft
+powered on.
 
 ## Required system packages
 

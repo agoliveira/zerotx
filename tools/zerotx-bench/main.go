@@ -124,7 +124,10 @@ func registerProbes(r *Registry) {
 	r.Register(megaProbe{})
 	r.Register(esp32Probe{})
 
-	// Phase D2: RP2040 + ELRS (binary COBS-framed protocol).
+	// MCU probes -- binary COBS protocol (commit D2).
+	r.Register(rp2040Probe{})
+	r.Register(elrsProbe{})
+
 	// Phase E: HDMI displays + baseline export.
 }
 
