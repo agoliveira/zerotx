@@ -81,6 +81,8 @@ Before each flight:
    - **RP2040 link**: heartbeats every ~200 ms over USB-CDC. Down means the CRSF generator is silent and the aircraft will failsafe.
    - **HDMI kiosk displays**: both micro-HDMI ports must report `connected` in `/sys/class/drm`. Down means one of the operator displays is unplugged.
    If either is down, "Proceed to flight" is disabled and the hint reads `Blocked by: device down: <name>`. Plug it back in, wait ~2 s for the page to re-poll, button enables.
+
+   If a hardware baseline file is deployed (see "Hardware baseline" below), additional blockers may appear in the format `hardware baseline: <probe> expected pass, got <actual> (<reason>)`. These come from the daemon's self-check comparing the deployed baseline to current device state.
 4. **Proceed**: click "Proceed to flight" on either kiosk. Both kiosks transition to `/hud` and `/map`.
 5. Telemetry stream visible: HUD shows live values, panel transitions to PREFLIGHT.
 6. Joystick centered, no stuck axes: verify with `bin/zerotx-axes` if needed.
@@ -88,6 +90,23 @@ Before each flight:
 8. Map shows current position (home or aircraft, depending on aircraft GPS state).
 
 After the syscheck gate, the daemon doesn't gate flight further -- arm/disarm is the operator's responsibility via the joystick.
+
+### Hardware baseline (optional)
+
+The bench-side `zerotx-bench` diagnostic tool (`tools/zerotx-bench/`) can export a YAML snapshot of every probed device's state. When that file is deployed to `/etc/zerotx/hardware-baseline.yaml`, the daemon runs a self-check at startup: ~3 seconds after launch (enough for devhealth heartbeats to settle), it compares the baseline's pass-expected probes against its current view of each device and lists mismatches in the Preflight blockers.
+
+Workflow:
+
+1. On the bench, wire up hardware as desired.
+2. Stop the daemon: `sudo systemctl stop zerotxd`.
+3. Run the bench tool: `tools/zerotx-bench/zerotx-bench`. Browse to `http://<pi-host>:8081`. Click through probes (or "Run all"), manually skip any probes that are intentionally absent.
+4. Press "Export baseline". A modal pops up with the YAML and a Copy button. The file also gets written to `./hardware-baseline.yaml`.
+5. Deploy: `sudo install -D -m 644 hardware-baseline.yaml /etc/zerotx/hardware-baseline.yaml`.
+6. Restart the daemon. Self-check picks up the file automatically.
+
+Probes the daemon enforces today: `rp2040`, `mega`, `esp32-display`, `hdmi`, `gps-ublox`. Probes the bench tool can test but the daemon doesn't yet observe (RTC, heartbeat LED, joystick, audio, ELRS-as-distinct-from-RP2040) are logged as "no daemon observer (not enforced)" at startup; they don't gate readiness even if mismatched.
+
+To disable self-check entirely: pass `-hardware-baseline ""` to the daemon (or remove the file). Settling delay tunable via `-hardware-baseline-settle DURATION`.
 
 ## Arming the aircraft
 

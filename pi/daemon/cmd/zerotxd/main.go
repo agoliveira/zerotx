@@ -110,6 +110,8 @@ func main() {
 	iohubPort := flag.String("iohub-port", "", "Mega IO board USB-CDC device (serial path, e.g. /dev/ttyACM2; \"log\" to scaffold via daemon log; empty disables)")
 	geoDB := flag.String("geo-db", "", "Offline place-name database for post-flight narration (built by tools/build-geo.sh). Empty disables location enrichment.")
 	weatherCacheDir := flag.String("weather-cache-dir", os.ExpandEnv("$HOME/zerotx/cache/weather"), "directory for cached weather JSON. Empty disables persistence (cache held in memory only).")
+	hardwareBaseline := flag.String("hardware-baseline", "/etc/zerotx/hardware-baseline.yaml", "path to hardware baseline YAML from zerotx-bench; mismatches surface as Preflight.Blockers. Empty disables self-check.")
+	hardwareBaselineSettle := flag.Duration("hardware-baseline-settle", 3*time.Second, "delay between daemon startup and the self-check comparison; gives devhealth time to receive heartbeats before being queried")
 	siteLat := flag.Float64("site-lat", 0, "configured flight site latitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
 	siteLon := flag.Float64("site-lon", 0, "configured flight site longitude (decimal degrees). Used as fallback when no GPS lock and no home position. 0 = unset.")
 	noWeather := flag.Bool("no-weather", false, "disable weather subsystem entirely (no fetches, no API)")
@@ -1071,9 +1073,15 @@ func main() {
 	// the HUB75 panel and which recording is current.
 	replayState := replay.New()
 
+	// Hardware baseline self-check holder. Built here so it can be
+	// threaded into buildAPIProviders below; the actual comparison
+	// runs in a goroutine launched further down (after link.Run
+	// starts so heartbeats are flowing into devhealth).
+	hwBaselineHolder := newHardwareBaselineHolder(*hardwareBaseline)
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, replayState, link, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, replayState, link, hwBaselineHolder, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1144,6 +1152,15 @@ func main() {
 	// handshake settles. See arm_override.{c,h} in firmware/crsf/.
 	// In SITL mode (link == nil) the goroutine no-ops immediately.
 	go waitHandshakeAndPushArmConfig(ctx, link, holder)
+
+	// Hardware baseline self-check. Loads /etc/zerotx/hardware-
+	// baseline.yaml (if present), waits for devhealth + GPS to
+	// settle, then compares each pass-expected probe against the
+	// daemon's current view. Mismatches surface as additional
+	// Preflight.Blockers via hwBaselineHolder, which the preflight
+	// provider consults below. Missing baseline = silent no-op
+	// (this is the common state on first deploy).
+	go loadAndRunSelfCheck(ctx, hwBaselineHolder, newDaemonSource(devs, gpsRdr), *hardwareBaselineSettle)
 	// Register the hot-plug callback BEFORE starting the pump. When SDL
 	// reports a new joystick has appeared, we check whether its GUID
 	// matches the currently-installed-but-disconnected reader. If so,
@@ -1470,6 +1487,7 @@ func buildAPIProviders(
 	devs *devhealth.Registry,
 	replayState *replay.State,
 	link *ipc.Link,
+	hwBaseline *hardwareBaselineHolder,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1561,7 +1579,7 @@ func buildAPIProviders(
 			return out
 		},
 		Preflight: func() api.Preflight {
-			return buildPreflight(holder, jsHolder, devs, port, modelDefaultPath)
+			return buildPreflight(holder, jsHolder, devs, hwBaseline, port, modelDefaultPath)
 		},
 		LoadModel: func(path string) error {
 			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, lang, path); err != nil {
@@ -1906,7 +1924,7 @@ func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Pane
 
 // buildPreflight returns the aggregate readiness snapshot the GUI's
 // pre-flight tab consumes via /api/v1/preflight.
-func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devhealth.Registry, port, modelDefaultPath string) api.Preflight {
+func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devhealth.Registry, hwBaseline *hardwareBaselineHolder, port, modelDefaultPath string) api.Preflight {
 	out := api.Preflight{
 		GroundStation: api.PreflightGS{
 			LinkPort: port,
@@ -1975,6 +1993,9 @@ func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devheal
 	for _, name := range out.BlockingDown {
 		out.Blockers = append(out.Blockers, "device down: "+name)
 	}
+	// Hardware-baseline self-check mismatches. Empty when self-check
+	// is disabled, the baseline file is absent, or all probes match.
+	out.Blockers = append(out.Blockers, hwBaseline.Blockers()...)
 	out.Ready = len(out.Blockers) == 0
 
 	return out

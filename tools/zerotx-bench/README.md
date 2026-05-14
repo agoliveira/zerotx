@@ -63,10 +63,11 @@ covering MCUs, breakout-board peripherals, USB devices, and HDMI:
 
 Plus a baseline export: the "Export baseline" button in the top-
 right runs all probes, captures their current results, and writes
-a YAML snapshot to `./hardware-baseline.yaml`. The intended
-consumer is a daemon-side runtime self-check (separate, future
-feature) that re-runs the same probes at boot and alerts on
-mismatch.
+a YAML snapshot to `./hardware-baseline.yaml`. Copy the file to
+`/etc/zerotx/hardware-baseline.yaml` and the daemon picks it up
+on next start: self-check at boot compares baseline expectations
+against the daemon's view of each device, and lists mismatches as
+additional `Preflight.Blockers` (visible on `/status`).
 
 The Mega, ESP32, and RP2040 probes need exclusive USB-CDC access
 — the coexistence check earns its keep here. Running these probes
