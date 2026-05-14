@@ -48,13 +48,26 @@ localhost-only (e.g. for an untrusted network).
 ## Status
 
 This README describes the full intended scope. The tool ships
-incrementally; current commit (A) is the framework only — web server,
-probe registry, HTTP API, UI shell. No probes registered. Run it
-and you'll see "No probes registered". Subsequent commits add probes
-in this order:
+incrementally; current commit (B) adds the breakout-board peripheral
+probes on top of the framework from commit A. Three probes registered:
+DS3231 RTC, u-blox GPS, heartbeat LED. Subsequent commits:
 
-- B: RTC, GPS, heartbeat LED (breakout peripherals)
 - C: joystick, audio (USB peripherals)
 - D: Mega, RP2040, ESP32, ELRS (MCU probes — the ones that need
   daemon-stopped)
 - E: HDMI displays + baseline export
+
+## Required system packages
+
+Probes shell out to standard Pi/Linux tools rather than carrying
+their own implementations. Install via apt:
+
+```
+sudo apt install i2c-tools gpiod
+```
+
+`i2c-tools` provides `i2cdetect` (RTC presence check) and `hwclock`
+typically comes from the base `util-linux` package, so it's always
+present. `gpiod` provides `gpioinfo` and `gpioset` for the LED probe.
+
+The GPS probe reads `/dev/ttyAMA1` directly with no extra tools.

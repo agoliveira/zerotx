@@ -109,12 +109,16 @@ func main() {
 
 // registerProbes is the single entry point where each probe type
 // registers itself with the registry. Probes land in subsequent
-// commits; this function grows as they're added. Empty in commit A.
-func registerProbes(_ *Registry) {
-	// Phase B: probes/rtc.go, probes/gps.go, probes/led.go
-	// Phase C: probes/joystick.go, probes/audio.go
-	// Phase D: probes/mega.go, probes/rp2040.go, probes/esp32.go, probes/elrs.go
-	// Phase E: probes/hdmi.go (+ baseline export endpoint)
+// commits; this function grows as they're added.
+func registerProbes(r *Registry) {
+	// Breakout-board peripherals (commit B).
+	r.Register(rtcProbe{})
+	r.Register(gpsProbe{})
+	r.Register(ledProbe{})
+
+	// Phase C: USB peripherals (joystick, audio).
+	// Phase D: MCU probes (Mega, RP2040, ESP32, ELRS).
+	// Phase E: HDMI displays + baseline export.
 }
 
 // --- HTTP handlers ---
