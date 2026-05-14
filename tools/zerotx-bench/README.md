@@ -47,12 +47,26 @@ localhost-only (e.g. for an untrusted network).
 
 ## Status
 
-This README describes the full intended scope. The tool ships
-incrementally; current commit (D2) adds the binary-COBS MCU probes
-(RP2040 CRSF generator, ELRS-via-RP2040). Nine probes registered.
-Subsequent commits:
+The tool is feature-complete as of commit E. Ten probes registered
+covering MCUs, breakout-board peripherals, USB devices, and HDMI:
 
-- E: HDMI displays + baseline export
+- Mega 2560 (line-based USB-CDC)
+- ESP32 HUB75 panel (line-based USB-CDC)
+- RP2040 CRSF generator (binary COBS-framed USB-CDC)
+- ELRS TX via RP2040 (telemetry frame observation)
+- DS3231 RTC (I2C)
+- u-blox GPS (UART)
+- Heartbeat LED (GPIO 17)
+- USB joystick
+- USB audio interface
+- HDMI displays (DRM sysfs)
+
+Plus a baseline export: the "Export baseline" button in the top-
+right runs all probes, captures their current results, and writes
+a YAML snapshot to `./hardware-baseline.yaml`. The intended
+consumer is a daemon-side runtime self-check (separate, future
+feature) that re-runs the same probes at boot and alerts on
+mismatch.
 
 The Mega, ESP32, and RP2040 probes need exclusive USB-CDC access
 — the coexistence check earns its keep here. Running these probes

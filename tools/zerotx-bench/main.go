@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/api/probes", handleListProbes(registry))
 	mux.HandleFunc("/api/probes/", handleProbeAction(registry))
 	mux.HandleFunc("/api/probes/run-all", handleRunAll(registry))
+	mux.HandleFunc("/api/baseline", handleBaseline(registry))
 
 	webRoot, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -128,7 +129,8 @@ func registerProbes(r *Registry) {
 	r.Register(rp2040Probe{})
 	r.Register(elrsProbe{})
 
-	// Phase E: HDMI displays + baseline export.
+	// HDMI displays (commit E).
+	r.Register(hdmiProbe{})
 }
 
 // --- HTTP handlers ---

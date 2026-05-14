@@ -54,12 +54,23 @@
   #detail .test-output.error { border-color: var(--fail); color: var(--fail); }
   .empty-state { padding: 40px; text-align: center; color: var(--fg-dim); }
   .empty-state h2 { color: var(--fg); font-weight: 400; font-size: 16px; }
+  #baseline-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 100; }
+  #baseline-modal.shown { display: flex; }
+  #baseline-modal .box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; max-width: 800px; max-height: 80vh; display: flex; flex-direction: column; }
+  #baseline-modal h2 { margin: 0 0 8px; font-size: 16px; }
+  #baseline-modal .path { font-family: ui-monospace, monospace; font-size: 12px; color: var(--fg-dim); margin-bottom: 12px; }
+  #baseline-modal pre { background: var(--bg); border: 1px solid var(--border); padding: 12px; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; overflow: auto; flex: 1; margin: 0 0 12px; }
+  #baseline-modal .row { display: flex; gap: 8px; justify-content: flex-end; }
+  #baseline-modal button { padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+  #baseline-modal button.primary { background: var(--accent); color: #0f1419; border: 0; font-weight: 600; }
+  #baseline-modal button.secondary { background: var(--panel-hi); color: var(--fg); border: 1px solid var(--border); }
 </style>
 </head>
 <body>
 <header>
   <h1>ZeroTX bench tool</h1>
   <span class="subtitle">hardware diagnostic &amp; testing</span>
+  <button id="export-baseline" style="margin-left:auto;background:var(--panel);color:var(--fg);border:1px solid var(--border);">Export baseline</button>
   <button id="run-all">Run all probes</button>
 </header>
 <main>
@@ -68,6 +79,17 @@
     <p class="empty">Select a device on the left to view its details and test actions.</p>
   </section>
 </main>
+<div id="baseline-modal">
+  <div class="box">
+    <h2>Baseline exported</h2>
+    <div class="path" id="baseline-path"></div>
+    <pre id="baseline-yaml"></pre>
+    <div class="row">
+      <button class="secondary" id="baseline-copy">Copy YAML</button>
+      <button class="primary" id="baseline-close">Close</button>
+    </div>
+  </div>
+</div>
 <script>
 const state = {
   probes: [],
@@ -214,6 +236,31 @@ document.getElementById('run-all').addEventListener('click', async () => {
   if (state.probes.length === 0) return;
   await fetch('/api/probes/run-all', { method: 'POST' });
   await fetchProbes();
+});
+
+document.getElementById('export-baseline').addEventListener('click', async () => {
+  const r = await fetch('/api/baseline', { method: 'POST' });
+  if (!r.ok) { alert('export failed: ' + r.status); return; }
+  const body = await r.json();
+  document.getElementById('baseline-path').textContent = body.path;
+  document.getElementById('baseline-yaml').textContent = body.yaml;
+  document.getElementById('baseline-modal').classList.add('shown');
+  await fetchProbes(); // probes may have been run during export
+});
+
+document.getElementById('baseline-close').addEventListener('click', () => {
+  document.getElementById('baseline-modal').classList.remove('shown');
+});
+
+document.getElementById('baseline-copy').addEventListener('click', async () => {
+  const text = document.getElementById('baseline-yaml').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    document.getElementById('baseline-copy').textContent = 'Copied!';
+    setTimeout(() => { document.getElementById('baseline-copy').textContent = 'Copy YAML'; }, 1500);
+  } catch (e) {
+    alert('clipboard write blocked -- select the text manually');
+  }
 });
 
 function escape(s) {
