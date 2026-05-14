@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZeroTX bench tool</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #161b22;
+    --panel-hi: #1f2731;
+    --border: #2d333b;
+    --fg: #c9d1d9;
+    --fg-dim: #8b949e;
+    --accent: #58a6ff;
+    --pass: #3fb950;
+    --fail: #f85149;
+    --skip: #d29922;
+    --unknown: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: ui-sans-serif, system-ui, sans-serif; }
+  header { padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  header .subtitle { font-size: 13px; color: var(--fg-dim); }
+  header button { margin-left: auto; padding: 6px 14px; background: var(--accent); color: #0f1419; border: 0; border-radius: 4px; font-weight: 600; cursor: pointer; }
+  header button:hover { filter: brightness(1.1); }
+  main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 49px); }
+  #devices { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; }
+  #devices .category { padding: 8px 16px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--fg-dim); }
+  #devices .device { padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+  #devices .device:hover { background: var(--panel-hi); }
+  #devices .device.selected { background: var(--panel-hi); border-left: 3px solid var(--accent); padding-left: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .dot.pass { background: var(--pass); }
+  .dot.fail { background: var(--fail); }
+  .dot.skipped { background: var(--skip); }
+  .dot.unknown { background: var(--unknown); }
+  #detail { padding: 24px; overflow-y: auto; }
+  #detail .empty { color: var(--fg-dim); font-style: italic; }
+  #detail h2 { margin: 0 0 4px; font-size: 18px; }
+  #detail .meta { color: var(--fg-dim); font-size: 13px; margin-bottom: 16px; }
+  #detail .actions { display: flex; gap: 8px; margin-bottom: 20px; }
+  #detail .actions button { padding: 6px 14px; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  #detail .actions button:hover { background: var(--panel-hi); }
+  #detail .actions button.primary { background: var(--accent); color: #0f1419; border-color: var(--accent); font-weight: 600; }
+  #detail section { margin-bottom: 24px; }
+  #detail section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--fg-dim); margin: 0 0 8px; font-weight: 600; }
+  #detail .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-family: ui-monospace, monospace; font-size: 13px; }
+  #detail .kv .k { color: var(--fg-dim); }
+  #detail .test-button { display: block; margin-bottom: 6px; padding: 6px 12px; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; text-align: left; width: 100%; max-width: 400px; }
+  #detail .test-button:hover { background: var(--panel-hi); }
+  #detail .test-output { margin-top: 8px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; max-width: 600px; }
+  #detail .test-output.error { border-color: var(--fail); color: var(--fail); }
+  .empty-state { padding: 40px; text-align: center; color: var(--fg-dim); }
+  .empty-state h2 { color: var(--fg); font-weight: 400; font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ZeroTX bench tool</h1>
+  <span class="subtitle">hardware diagnostic &amp; testing</span>
+  <button id="run-all">Run all probes</button>
+</header>
+<main>
+  <nav id="devices"></nav>
+  <section id="detail">
+    <p class="empty">Select a device on the left to view its details and test actions.</p>
+  </section>
+</main>
+<script>
+const state = {
+  probes: [],
+  selectedId: null,
+};
+
+async function fetchProbes() {
+  const r = await fetch('/api/probes');
+  if (!r.ok) throw new Error('GET /api/probes: ' + r.status);
+  state.probes = await r.json();
+  render();
+}
+
+function render() {
+  renderDevices();
+  renderDetail();
+}
+
+function renderDevices() {
+  const nav = document.getElementById('devices');
+  if (state.probes.length === 0) {
+    nav.innerHTML = `<div class="empty-state"><h2>No probes registered</h2><p>The framework is up but no device probes have been registered yet. Each probe lands in its own commit; see <code>tools/zerotx-bench/main.go:registerProbes</code>.</p></div>`;
+    return;
+  }
+  // Group by category, preserve registration order within category.
+  const byCat = new Map();
+  for (const p of state.probes) {
+    if (!byCat.has(p.category)) byCat.set(p.category, []);
+    byCat.get(p.category).push(p);
+  }
+  let html = '';
+  for (const [cat, items] of byCat) {
+    html += `<div class="category">${escape(cat)}</div>`;
+    for (const p of items) {
+      const status = p.lastResult.status || 'unknown';
+      const cls = (p.id === state.selectedId) ? 'device selected' : 'device';
+      html += `<div class="${cls}" data-id="${p.id}"><span class="dot ${status}"></span>${escape(p.name)}</div>`;
+    }
+  }
+  nav.innerHTML = html;
+  nav.querySelectorAll('.device').forEach(el => {
+    el.addEventListener('click', () => {
+      state.selectedId = el.dataset.id;
+      render();
+    });
+  });
+}
+
+function renderDetail() {
+  const detail = document.getElementById('detail');
+  if (!state.selectedId) {
+    detail.innerHTML = `<p class="empty">Select a device on the left to view its details and test actions.</p>`;
+    return;
+  }
+  const p = state.probes.find(x => x.id === state.selectedId);
+  if (!p) {
+    detail.innerHTML = `<p class="empty">Probe disappeared.</p>`;
+    return;
+  }
+
+  const result = p.lastResult || { status: 'unknown' };
+  let detailsHtml = '';
+  if (result.details) {
+    detailsHtml = '<div class="kv">';
+    for (const [k, v] of Object.entries(result.details)) {
+      detailsHtml += `<div class="k">${escape(k)}</div><div>${escape(v)}</div>`;
+    }
+    detailsHtml += '</div>';
+  } else if (result.status === 'unknown') {
+    detailsHtml = '<p class="empty">Probe has not been run yet. Click "Run probe" to execute.</p>';
+  }
+
+  let notesHtml = '';
+  if (result.notes) notesHtml = `<section><h3>Notes</h3><p>${escape(result.notes)}</p></section>`;
+  if (result.error) notesHtml += `<section><h3>Error</h3><p style="color:var(--fail)">${escape(result.error)}</p></section>`;
+
+  let testsHtml = '';
+  if (p.tests && p.tests.length) {
+    testsHtml = '<section><h3>Test actions</h3>';
+    for (const t of p.tests) {
+      testsHtml += `<button class="test-button" data-test="${t.id}"><strong>${escape(t.label)}</strong>` +
+        (t.description ? `<br><span style="color:var(--fg-dim);font-size:12px">${escape(t.description)}</span>` : '') +
+        `</button><div class="test-output" id="test-output-${t.id}" style="display:none"></div>`;
+    }
+    testsHtml += '</section>';
+  }
+
+  const wiringHtml = p.wiringRef
+    ? `<section><h3>Wiring</h3><a href="/docs/hardware-pinout.md#${escape(p.wiringRef)}" target="_blank">See wiring diagram</a></section>`
+    : '';
+
+  detail.innerHTML = `
+    <h2>${escape(p.name)}</h2>
+    <div class="meta">${escape(p.category)}${result.ranAt ? ' · last run ' + new Date(result.ranAt).toLocaleTimeString() : ''}${result.took ? ' (' + formatDuration(result.took) + ')' : ''}</div>
+    <div class="actions">
+      <button class="primary" id="btn-run">Run probe</button>
+      <button id="btn-skip">${p.skipped ? 'Un-skip' : 'Skip'}</button>
+    </div>
+    <section><h3>Result</h3>${detailsHtml}</section>
+    ${notesHtml}
+    ${testsHtml}
+    ${wiringHtml}
+  `;
+
+  document.getElementById('btn-run').addEventListener('click', () => runProbe(p.id));
+  document.getElementById('btn-skip').addEventListener('click', () => setSkipped(p.id, !p.skipped));
+  detail.querySelectorAll('.test-button').forEach(b => {
+    b.addEventListener('click', () => runTest(p.id, b.dataset.test));
+  });
+}
+
+async function runProbe(id) {
+  const r = await fetch(`/api/probes/${id}/run`, { method: 'POST' });
+  if (!r.ok) { alert('probe failed: ' + r.status); return; }
+  await fetchProbes();
+}
+
+async function setSkipped(id, skip) {
+  await fetch(`/api/probes/${id}/skip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skip }),
+  });
+  await fetchProbes();
+}
+
+async function runTest(probeId, testId) {
+  const out = document.getElementById(`test-output-${testId}`);
+  out.style.display = 'block';
+  out.classList.remove('error');
+  out.textContent = 'running…';
+  const r = await fetch(`/api/probes/${probeId}/tests/${testId}`, { method: 'POST' });
+  if (!r.ok) { out.classList.add('error'); out.textContent = 'HTTP ' + r.status; return; }
+  const body = await r.json();
+  if (body.error) {
+    out.classList.add('error');
+    out.textContent = body.error + (body.output ? '\n' + body.output : '');
+  } else {
+    out.textContent = (body.output || '(no output)') + (body.took ? `\n\nelapsed: ${body.took}` : '');
+  }
+}
+
+document.getElementById('run-all').addEventListener('click', async () => {
+  if (state.probes.length === 0) return;
+  await fetch('/api/probes/run-all', { method: 'POST' });
+  await fetchProbes();
+});
+
+function escape(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+function formatDuration(ns) {
+  // server sends time.Duration as nanoseconds (number) when via Go's default; but
+  // our writeJSON outputs Result with Took as time.Duration which marshals as int.
+  if (typeof ns === 'number') {
+    if (ns < 1e6) return ns + 'ns';
+    if (ns < 1e9) return (ns / 1e6).toFixed(1) + 'ms';
+    return (ns / 1e9).toFixed(2) + 's';
+  }
+  return String(ns);
+}
+
+fetchProbes().catch(err => {
+  document.getElementById('devices').innerHTML = `<div class="empty-state">Could not reach /api/probes: ${escape(err.message)}</div>`;
+});
+</script>
+</body>
+</html>
