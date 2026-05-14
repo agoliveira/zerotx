@@ -1153,14 +1153,9 @@ func main() {
 	// In SITL mode (link == nil) the goroutine no-ops immediately.
 	go waitHandshakeAndPushArmConfig(ctx, link, holder)
 
-	// Hardware baseline self-check. Loads /etc/zerotx/hardware-
-	// baseline.yaml (if present), waits for devhealth + GPS to
-	// settle, then compares each pass-expected probe against the
-	// daemon's current view. Mismatches surface as additional
-	// Preflight.Blockers via hwBaselineHolder, which the preflight
-	// provider consults below. Missing baseline = silent no-op
-	// (this is the common state on first deploy).
-	go loadAndRunSelfCheck(ctx, hwBaselineHolder, newDaemonSource(devs, gpsRdr), *hardwareBaselineSettle)
+	// (Hardware baseline self-check goroutine is launched later in
+	// main, after heartbeat + RTC + joystick are constructed -- the
+	// daemonSource references all of them.)
 	// Register the hot-plug callback BEFORE starting the pump. When SDL
 	// reports a new joystick has appeared, we check whether its GUID
 	// matches the currently-installed-but-disconnected reader. If so,
@@ -1253,12 +1248,26 @@ func main() {
 	// announcing it at startup confirms the kernel detected the
 	// DS3231 (or any other dtoverlay-loaded RTC). Absence is also
 	// fine; the system clock is set from the network or the previous
-	// systohc on shutdown.
+	// systohc on shutdown. Result is captured for the hardware-
+	// baseline self-check below.
+	var rtcName string
 	if data, err := os.ReadFile("/sys/class/rtc/rtc0/name"); err == nil {
-		log.Printf("RTC: %s", strings.TrimSpace(string(data)))
+		rtcName = strings.TrimSpace(string(data))
+		log.Printf("RTC: %s", rtcName)
 	} else {
 		log.Printf("RTC: not detected (relying on system clock)")
 	}
+
+	// Hardware baseline self-check goroutine. Construction of the
+	// holder happened earlier (so the Preflight closure could
+	// capture it); the goroutine launches here, after every
+	// dependency the daemonSource references has been constructed.
+	// The settle delay covers the time between MCU handshakes and
+	// devhealth seeing its first heartbeats.
+	go loadAndRunSelfCheck(ctx, hwBaselineHolder,
+		newDaemonSource(devs, gpsRdr, hb, jsHolder, rtcName),
+		*hardwareBaselineSettle)
+
 
 	// 50Hz mapper -> CHANNEL_INTENT.
 	period := time.Second / time.Duration(*rate)

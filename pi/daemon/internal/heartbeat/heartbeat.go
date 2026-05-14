@@ -107,6 +107,21 @@ func (h *Heartbeat) Start() error {
 	return nil
 }
 
+// IsActive reports whether the Heartbeat is driving real hardware.
+// True when wrapping the *real driver from NewReal; false when
+// wrapping NewNull (no GPIO chip available, -heartbeat-gpio < 0,
+// or NewReal failed). Used by the hardware-baseline self-check to
+// decide whether the led-heartbeat probe expectation is met --
+// "the daemon thinks it's blinking the LED" is the strongest
+// signal we have without an external observer.
+func (h *Heartbeat) IsActive() bool {
+	if h == nil || h.drv == nil {
+		return false
+	}
+	_, isNull := h.drv.(null)
+	return !isNull
+}
+
 // Tick records that the main loop is alive. Cheap (one atomic store);
 // safe to call from the hot path. Goroutines other than the main loop
 // can also call Tick() without coordination.

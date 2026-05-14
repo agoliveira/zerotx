@@ -287,3 +287,26 @@ func TestNullDriver(t *testing.T) {
 		t.Errorf("Close: %v", err)
 	}
 }
+
+func TestIsActive_NullDriver(t *testing.T) {
+	h := New(NewNull(), Config{})
+	if h.IsActive() {
+		t.Error("IsActive() = true for null driver, want false")
+	}
+}
+
+func TestIsActive_RealDriverFake(t *testing.T) {
+	// A non-null Driver implementation is treated as active. We use
+	// fakeDriver as a stand-in since NewReal opens a real gpiochip.
+	h := New(&fakeDriver{}, Config{})
+	if !h.IsActive() {
+		t.Error("IsActive() = false for non-null driver, want true")
+	}
+}
+
+func TestIsActive_NilReceiver(t *testing.T) {
+	var h *Heartbeat
+	if h.IsActive() {
+		t.Error("IsActive() on nil receiver = true, want false")
+	}
+}

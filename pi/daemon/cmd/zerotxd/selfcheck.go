@@ -33,6 +33,7 @@ import (
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/devhealth"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/gps"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/heartbeat"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/selfcheck"
 )
 
@@ -77,19 +78,28 @@ func (h *hardwareBaselineHolder) setMismatches(ms []selfcheck.Mismatch) {
 
 // daemonSource is the selfcheck.Source implementation that maps
 // probe IDs to the daemon's existing observers. Owned by main()
-// and built after devhealth/gps are constructed.
+// and built after devhealth/gps/heartbeat/joystick are constructed.
 //
 // Probe IDs come from the bench tool's probe.ID() values. The
 // mapping table lives here as a switch rather than a generic map
 // so the relationship between bench probe IDs and daemon data
 // sources is explicit and grep-able.
 type daemonSource struct {
-	devs *devhealth.Registry
-	gps  *gps.Reader
+	devs     *devhealth.Registry
+	gps      *gps.Reader
+	hb       *heartbeat.Heartbeat
+	jsHolder *joystickHolder
+	rtcName  string // empty if /sys/class/rtc/rtc0/name was unreadable
 }
 
-func newDaemonSource(devs *devhealth.Registry, gpsRdr *gps.Reader) *daemonSource {
-	return &daemonSource{devs: devs, gps: gpsRdr}
+func newDaemonSource(devs *devhealth.Registry, gpsRdr *gps.Reader, hb *heartbeat.Heartbeat, jsHolder *joystickHolder, rtcName string) *daemonSource {
+	return &daemonSource{
+		devs:     devs,
+		gps:      gpsRdr,
+		hb:       hb,
+		jsHolder: jsHolder,
+		rtcName:  rtcName,
+	}
 }
 
 // Status implements selfcheck.Source. Returns tracked=false for
@@ -106,10 +116,14 @@ func (s *daemonSource) Status(probeID string) (selfcheck.Status, string, bool) {
 		return s.devhealthStatus("hdmi-displays")
 	case "gps-ublox":
 		return s.gpsStatus()
+	case "rtc-ds3231":
+		return s.rtcStatus()
+	case "led-heartbeat":
+		return s.ledHeartbeatStatus()
+	case "joystick":
+		return s.joystickStatus()
 	default:
-		// Untracked: RTC, heartbeat LED, joystick, audio, ELRS.
-		// The bench tool can probe these; the daemon has no
-		// observer for them today.
+		// Untracked: audio, ELRS (both land in commit F2).
 		return selfcheck.StatusUnknown, "", false
 	}
 }
@@ -148,6 +162,72 @@ func (s *daemonSource) gpsStatus() (selfcheck.Status, string, bool) {
 	state := s.gps.Get()
 	if state.Fix == gps.FixNone {
 		return selfcheck.StatusFail, "no fix", true
+	}
+	return selfcheck.StatusPass, "", true
+}
+
+// rtcStatus reports whether the kernel detected a hardware RTC.
+// The check happens once at daemon startup (via os.ReadFile on
+// /sys/class/rtc/rtc0/name); we just cache the result. Pass when
+// the kernel sees an RTC; fail when /sys/class/rtc/rtc0/name was
+// unreadable at startup (no dtoverlay, chip not wired, etc).
+//
+// This is necessarily weaker than the bench tool's probe, which
+// directly i2cdetects 0x68. The daemon trusts the kernel's
+// detection result; if the kernel said "no rtc0" then the chip
+// either isn't there or the dtoverlay wasn't loaded -- the bench
+// distinction between the two doesn't matter for runtime gating.
+func (s *daemonSource) rtcStatus() (selfcheck.Status, string, bool) {
+	if s.rtcName == "" {
+		return selfcheck.StatusFail, "kernel reports no rtc0", true
+	}
+	return selfcheck.StatusPass, "", true
+}
+
+// ledHeartbeatStatus reports whether the heartbeat LED driver
+// successfully bound to a real GPIO line. Pass when the daemon
+// is wrapping the real driver from heartbeat.NewReal; fail when
+// it fell back to NewNull (gpio chip absent, -heartbeat-gpio < 0,
+// NewReal returned error, etc).
+//
+// This tests the daemon's own decision about whether it can
+// drive the LED. It doesn't verify the LED itself is wired or
+// lit -- that requires an external observer (a phototransistor or
+// the operator's eyes). The bench tool's probe is stronger here
+// because it can re-open the chip and confirm it's not [used],
+// then drive blinks; the daemon can only report what it believes
+// at startup.
+func (s *daemonSource) ledHeartbeatStatus() (selfcheck.Status, string, bool) {
+	if s.hb == nil {
+		return selfcheck.StatusUnknown, "", false
+	}
+	if s.hb.IsActive() {
+		return selfcheck.StatusPass, "", true
+	}
+	return selfcheck.StatusFail, "null driver (gpio chip unavailable or -heartbeat-gpio disabled)", true
+}
+
+// joystickStatus reports whether any joystick is currently open
+// AND connected. Pass requires both: a Reader exists in the holder
+// AND it currently sees the device (SDL hot-plug Connected() flag).
+// Fail when no reader, or reader exists but device is disconnected
+// (USB cable yanked, etc).
+//
+// The bench tool's probe enumerates /dev/input/js* without
+// committing to one; the daemon picks one via GUID match and is
+// pickier. A successful daemon-side pass here implies the bench-
+// tool probe would also pass (the device is plugged in and the
+// daemon could open it).
+func (s *daemonSource) joystickStatus() (selfcheck.Status, string, bool) {
+	if s.jsHolder == nil {
+		return selfcheck.StatusUnknown, "", false
+	}
+	r := s.jsHolder.Reader()
+	if r == nil {
+		return selfcheck.StatusFail, "no joystick open", true
+	}
+	if !r.Connected() {
+		return selfcheck.StatusFail, "joystick disconnected (was: " + r.Name() + ")", true
 	}
 	return selfcheck.StatusPass, "", true
 }
