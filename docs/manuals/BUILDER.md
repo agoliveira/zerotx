@@ -27,17 +27,171 @@
 
 ## 1. System overview
 
-### What ZeroTX is (one paragraph + hero render)
+### What ZeroTX is
+
+![ZeroTX ground control station, opened](../images/zerotx-render.png)
+
+ZeroTX is a portable ground control station for long-range fixed-wing FPV. It replaces a hand-held transmitter with a desktop-style station in an aluminum briefcase. A Raspberry Pi 400 runs the show, paired with three MCU satellites (Mega 2560, ESP32, RP2040). A Thrustmaster HOTAS joystick plugs into a front-panel USB-A port. Twin 7" HDMI LCDs in the lid drive a HUD and a map. A HUB75 LED panel, a 2x20 VFD, and a 128x64 graphic LCD give at-a-glance state on the body's front panel. The case is wired-only inside: no RF, no antennas, no transceivers. The ELRS TX module lives externally on a pole, connected to the case by a single cable.
+
+The defaults are conservative: hardware kill in series with the module DC feed, a 950 ms end-to-end failsafe chain, recorded telemetry on every flight, and audio narration for non-trivial events. Nothing in the case is bespoke silicon; everything is off-the-shelf modules wired into a custom panel layout, with firmware in this repo.
+
 ### Topology block diagram
+
+```
+                              AIRCRAFT
+                                 ^
+                                 |  RF (ELRS)
+                                 |
+                          +------+------+
+                          |  ELRS TX    |   externally pole-mounted
+                          +------+------+
+                                 |
+                                 |  single-wire CRSF (default config)
+                                 |  + 12V + GND, 5m shielded cable
+                                 |
++ZeroTX case ====================|===========================================+
+|                                |                                           |
+|                                v                                           |
+|                          +-----+----+                                      |
+|                          | RP2040   |  CRSF endpoint                       |
+|                          +-----+----+                                      |
+|                                ^                                           |
+|                                | USB-CDC                                   |
+|                                v                                           |
+|       +----------------------- + -------------------------------+          |
+|       |                  zerotxd  (Go daemon)                   |          |
+|       |          on Raspberry Pi 400, Pi OS Lite                |          |
+|       |    + two Chromium kiosks (HUD, Map) on dual HDMI        |          |
+|       |    + ALSA audio out (samples + Piper TTS)               |          |
+|       +---+----------+-----------+------------+-----------------+          |
+|           |          |           |            |                            |
+|           | USB-CDC  | USB-CDC   | USB HID    | HDMI x2                    |
+|           v          v           |            v                            |
+|       +---+----+ +---+----+      |       +----+-----+                      |
+|       | Mega   | | ESP32  |      |       | HUD LCD  |                      |
+|       | 2560   | | panel  |      |       | Map LCD  |   in case lid        |
+|       | IO hub | | driver |      |       +----------+                      |
+|       +--+--+--+ +---+----+      |                                         |
+|          |  |        |           |                                         |
+|     +----+  |        v           v                                         |
+|     |       |    +---+-------+  +-----------------+                        |
+|     v       v    | HUB75     |  | USB joystick    |                        |
+|   VFD,    panel  | 128x32    |  | (Thrustmaster)  |                        |
+|   GLCD    buttons| LED panel |  | front-panel USB |                        |
+|   on      (6/10) +-----------+  +-----------------+                        |
+|   front          (front panel)                                             |
+|   panel                                                                    |
+|                                                                            |
++============================================================================+
+
+Optional, not pictured: extended cable configuration replaces the single-wire
+CRSF run with RS-422 (MAX490 pair on each end), which enables an inline
+ESP32-S3 antenna tracker between the cable's pole end and the ELRS module.
+The tracker byte-pumps frames transparently and is invisible to the daemon.
+See Section 4 for cable choices and Section 5 for tracker firmware.
+```
+
 ### Subsystem responsibilities
-#### Pi 400 (daemon, displays, audio)
-#### RP2040 (CRSF generator)
-#### Mega 2560 (IO board, VFD, status row, control row)
-#### ESP32 (HUB75 panel)
-#### ESP32-S3 (antenna tracker, optional pole-end)
-### End-to-end signal path (joystick to aircraft)
-### Failsafe chain (preview; full treatment in User Manual)
-### Power tree (preview; full treatment in Section 4)
+
+#### Raspberry Pi 400 (brain)
+
+Runs the `zerotxd` Go daemon and two Chromium kiosk browsers (HUD and Map). Owns the USB joystick, both HDMI displays, the audio output, and the three USB-CDC links to the MCU satellites. Boots from a USB SSD; built-in keyboard is the operator input device for menus, settings, and (during build) provisioning. Pi OS Lite, no desktop environment, no greeter. The daemon ingests CRSF telemetry from the RP2040, drives the LCDs through the kiosk browsers, orchestrates the HUB75 panel through the ESP32, talks to the Mega for buttons and status displays, plays audio, and sends joystick-derived channel intents back to the RP2040 for CRSF emission.
+
+#### RP2040 (CRSF endpoint)
+
+Bidirectional CRSF gateway. On the host side, USB-CDC to the Pi. On the wire side, half-duplex CRSF on the case-to-pole cable. Outbound: receives channel intents from the daemon, builds CRSF frames, drives the wire. Inbound: receives telemetry frames coming back from the link, forwards them to the daemon. Hardware watchdog enabled. In the default cable configuration, TX and RX are merged through a 470Ω series resistor at the case end for single-wire half-duplex. RP2040-Zero is the production board; original Pico is kept as a backup.
+
+#### Mega 2560 (IO hub)
+
+Drives the front-panel status and control surfaces. Currently fitted: one VFD (20x2, HD44780 4-bit), one 128x64 ST7920 graphic LCD (artificial horizon), six of the ten panel buttons in the button matrix. Firmware scaffolds additional peripherals on independent pin groups: a second VFD instance, an I2C LCD, four indicator LEDs, four relays, a 16-pixel WS2813 strip, an LDR, a passive piezo buzzer, and a KY-040 rotary encoder. Active-HIGH default; HAL flags opt individual pins into active-LOW. Single shared USB-CDC link to the daemon, multiplexed by the daemon's `iohub` subsystem.
+
+#### ESP32 (HUB75 panel driver)
+
+Drives the HUB75 LED panel: two Waveshare P2.5 64x32 panels chained for 128x32 logical resolution. USB-CDC link to the Pi. Owns its own state model (IDLE, PREFLIGHT, FLIGHT, ALARM, RTH, POSTFLIGHT) and renders modes based on commands from the daemon's `devices/display` subsystem. RP2040 was tried for this role and rejected: 3.3V signaling insufficient at the panel's input shift registers, level shifters explicitly ruled out per locked decision.
+
+#### ESP32-S3 (antenna tracker, optional)
+
+Pole-end add-on, not in the case. Sits inline on the wired CRSF path between the cable's pole-end MAX490 and the ELRS TX module's CRSF UART. Byte-pumps frames transparently in both directions on Core 1 at top priority (this is the safety floor; the only task registered with the hardware watchdog). Parses CRSF GPS telemetry on Core 0, computes az/el to the aircraft, drives a 2-DOF pan/tilt gimbal autonomously. Daemon-unaware. Removing the tracker (or hardware-bypassing the cable past it) requires zero daemon-side changes. Failsafe is hold-last-position by construction. Requires the extended cable configuration (RS-422), not deployable on single-wire CRSF.
+
+### End-to-end signal path
+
+Outbound (operator to aircraft):
+
+```
+USB joystick (HID) ----USB---> Pi 400 / zerotxd
+                                    | reads axes & buttons
+                                    | mixes against active EdgeTX model
+                                    | (input map, expo, limits)
+                                    v
+                              channel intents
+                                    |
+                                    | USB-CDC (framed COBS + CRC)
+                                    v
+                                  RP2040
+                                    | builds CRSF frame
+                                    v
+                              CRSF on the wire
+                                    |
+                                    | single-wire half-duplex
+                                    | (5m manga blindado)
+                                    v
+                              ELRS TX module ----RF---> aircraft RX -> FC
+```
+
+Inbound (aircraft to operator) is the same path in reverse: ELRS TX emits CRSF telemetry on its UART, the RP2040 reads it off the wire and forwards over USB-CDC, the daemon parses frames into structured state, then fans out to the HUD (via WebSocket to the kiosk), to the HUB75 panel (via ESP32), to the VFD (via Mega), to the narrator (audio), and to the recorder (SQLite log).
+
+The single-wire half-duplex CRSF is the default. In the extended cable configuration the wire is replaced by an RS-422 differential pair (MAX490 transceivers on each end), which lets cable runs go well beyond 5m cleanly and is also the substrate the inline antenna tracker requires. The RP2040 firmware is unchanged between configurations.
+
+### Failsafe chain
+
+Every wiring choice in this manual exists to make this chain reliable:
+
+```
+Pi daemon stops sending intents
+    |  ~200ms
+    v
+RP2040 watchdog notices, stops emitting fresh CRSF
+    |  ~600ms
+    v
+ELRS module sees no fresh data, declares link down
+    |  ~150ms
+    v
+FC (INAV) failsafe triggers, executes its configured behavior
+(RTH, land, hold; configured per airframe on the FC, not here)
+```
+
+Total roughly **950 ms** from "Pi-side daemon goes quiet" to "FC takes over."
+
+Three things follow from this chain that the builder must respect:
+
+1. **The hardware kill (e-stop, NC contacts) is wired into the module DC feed**, not into the Pi or the RP2040. Cutting power to the ELRS module is faster and more deterministic than asking software to stop. The chain still fires after a hardware kill (the module's link drop is what propagates to the FC), but the case-side path is no longer required.
+2. **The daemon goes silent on loss of joystick input.** It does not emit last-known values forever; going silent is what makes the chain fire. No wiring depends on this, but it affects acceptance criteria in Section 7.
+3. **The FC owns the post-failsafe behavior**, not ZeroTX. ZeroTX cannot guarantee RTH executes correctly; that is INAV configuration per airframe, tested on the bench before first flight.
+
+### Power tree
+
+A single 12VDC input on a panel-mount jack feeds the entire case. Battery backup is external (operator-supplied 12V SLA + charger upstream of the jack). Two 12V to 5V bucks split the 5V loads: one for the Pi 400, one for the powered USB hub.
+
+```
+12VDC input (panel jack)
+    |
+    +---- inline fuse ---- keylock switch ----+---- 12V bus
+                                              |
+12V bus ----+---- buck #1: 12V -> 5V ---- Pi 400
+            |
+            +---- buck #2: 12V -> 5V ---- powered USB hub
+            |                              (Mega, ESP32 panel, joystick,
+            |                               USB DAC, front-panel USB)
+            |
+            +---- direct 12V ---- audio amplifier
+            |
+            +---- direct 12V ---- voltmeter (display only)
+            |
+            +---- direct 12V via e-stop (NC) ---- ELRS module
+                                                  (modules tolerate up to 16V)
+```
+
+Current budgets, fuse sizing, and bench-measured draws are detailed in Section 4 (Wiring). For now, the points worth absorbing are: two bucks (not one), ELRS direct off 12V (no module-side regulation), and the e-stop in series with the module DC feed (hardware kill).
 
 ## 2. Bill of materials
 
