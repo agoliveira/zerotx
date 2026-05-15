@@ -297,7 +297,7 @@ flowchart LR
 
 The tracker is daemon-unaware and the case-side stack is identical to the default configuration. Removing the tracker (or hardware-bypassing the cable past it) requires zero daemon changes; the pole-end MAX490 simply talks to the ELRS module directly.
 
-Wiring detail for both configurations is in `docs/CONNECTIONS.md`.
+Wiring detail for both configurations is in the builder's manual Section 4.7 (`docs/manuals/BUILDER.md`).
 
 ## See also
 
@@ -306,7 +306,7 @@ Wiring detail for both configurations is in `docs/CONNECTIONS.md`.
 - `firmware/io/README.md`: Mega IO board firmware and HAL
 - `firmware/tracker/README.md`: ESP32-S3 antenna tracker firmware
 - `firmware/crsf/README.md`: CRSF endpoint firmware
-- `docs/CONNECTIONS.md`: physical wiring and topology
+- `docs/manuals/BUILDER.md`: physical wiring (Section 4) and topology (Section 1)
 - `docs/OPERATIONS.md`: launch and recovery procedures
 - `docs/BOOTSTRAP.md`: bare-metal Pi 400 provisioning
 - `docs/DECISIONS.md`: locked architectural decisions

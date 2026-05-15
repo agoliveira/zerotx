@@ -17,7 +17,7 @@ Items deferred to a specific later moment, not abandoned.
 
 Smaller items, off the critical path. Append as they surface.
 
-- Power regulator topology fully documented in `docs/CONNECTIONS.md`: replace TODO sections with measured values once the build is final.
+- Power regulator topology fully documented in the builder's manual Section 4.2: replace TODO sections with measured values once the build is final.
 - ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into `docs/BOOTSTRAP.md`.
 - VFD brightness control: if CU20025ECPB-W1J exposes a software-readable contrast or brightness line, wire it to ambient light (LDR) alongside the planned panel auto-brightness.
 
@@ -35,4 +35,4 @@ Decisions that need to be made but haven't been. Resolve and migrate to `docs/DE
 ## See also
 
 - `docs/DECISIONS.md`: locked decisions
-- `docs/ARCHITECTURE.md`, `docs/CONNECTIONS.md`, `docs/OPERATIONS.md`, `docs/BOOTSTRAP.md`: docs containing TODO markers that may graduate to roadmap items
+- `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/BOOTSTRAP.md`, `docs/manuals/BUILDER.md`: docs containing TODO markers that may graduate to roadmap items

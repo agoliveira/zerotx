@@ -75,7 +75,7 @@ Notes:
 - Pins are adjacent on the Zero's edge header, so a Dupont 3-pin
   shell or a JST-XH-3 connector covers both signals plus GND.
 
-**ELRS module** (CRSF, see `CONNECTIONS.md` for the full case-to-pole cable)
+**ELRS module** (CRSF, see the builder's manual Section 4.7 for the full case-to-pole cable)
 
 ```
 RP2040 Zero                       Bulkhead -> pole cable
@@ -91,7 +91,7 @@ Notes:
   to protect against bus contention. The single signal then runs the
   pole cable to the ELRS module's CRSF pin.
 - Extended cable mode (RS-422 over longer runs) is documented in
-  `CONNECTIONS.md`; GP0 and GP1 connect to a MAX490 transceiver
+  the builder's manual Section 4.7.2; GP0 and GP1 connect to a MAX490 transceiver
   instead. No firmware change required.
 
 ## Arduino Mega 2560 (IO board)
