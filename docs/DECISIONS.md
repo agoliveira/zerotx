@@ -27,7 +27,7 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 ## Mechanical and case
 
 - Case is wired-only inside: no internal antennas, no SMA bulkhead passthroughs, no RF shielding concerns for the case itself.
-- Case mechanicals settled: sun hoods for LCDs, cable bulkhead connectors, dual-rail (13.8V CCTV plus 12V/AC field) power input, front-panel USB layout, ventilation and cooling, power switch, interior status indication via lid LED panels.
+- Case mechanicals settled: sun hoods for LCDs, cable bulkhead connectors, single 12VDC input on a panel-mount jack, front-panel USB layout, ventilation and cooling, power switch, interior status indication via lid LED panels.
 
 ## Case-to-pole link
 
@@ -45,5 +45,7 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 
 ## Power
 
-- 13.8V CCTV PSU is the primary internal rail: feeds all internal nodes via downstream regulation.
-- 12V/AC dual-rail field power input: alternative path for field operation, switches over to internal regulation chain.
+- Single 12VDC input on a panel-mount jack: no internal PSU, no internal UPS. The case is power-agnostic from anything upstream of the jack.
+- Battery backup is external and operator-supplied: a 12V SLA + charger unit (CCTV-style or equivalent) sits upstream of the case input. Rationale: keeps the case small and field-portable; lets the operator choose runtime by SLA capacity; matches the way the unit will be used (paired with whatever 12V source is on hand at the field, bench, or in transit).
+- Two 12V to 5V buck converters inside the case: one feeds the Pi 400, the other feeds the powered USB hub. Separate bucks isolate Pi brownout from hub-side transient loads (joystick hotplug, USB DAC spin-up, MCU resets).
+- ELRS module runs direct from the 12V rail. Modules accept up to ~16V, so no module-side regulation is needed. E-stop (NC contacts) sits in series with the module DC feed as the hardware kill path.

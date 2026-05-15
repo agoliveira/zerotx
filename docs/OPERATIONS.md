@@ -8,8 +8,8 @@ For architecture see `docs/ARCHITECTURE.md`. For wiring see `docs/CONNECTIONS.md
 
 ## Cold start sequence
 
-1. Confirm power source: lab IEC (front) or field 12V/AC input (rear). Both feed the same internal regulation; pick one.
-2. Flip the case power switch. 13.8V rail comes up; downstream 5V rails follow.
+1. Confirm 12VDC source is connected to the rear panel jack (bench supply, SLA+charger pack, or vehicle 12V; the case is source-agnostic).
+2. Flip the case power switch. 12V rail comes up; downstream 5V rails follow.
 3. Pi 400 boots from the USB SSD. HUD and Map LCDs show Pi boot output.
 4. MCU satellites enumerate as the Pi reaches USB init.
    - Mega: VFD shows boot banner. (TODO: confirm final banner text)
@@ -178,7 +178,7 @@ The tracker reports `tracking` when receiving fresh GPS frames, `hold` when it h
 2. Wait for clean exit. Recording flush completes; serial buffers drained.
 3. `sudo poweroff` on the Pi.
 4. Wait for Pi shutdown (LCDs go dark).
-5. Flip the case power switch. 13.8V rail drops.
+5. Flip the case power switch. 12V rail drops.
 6. Disconnect power source.
 
 Order matters: stop the daemon before pulling power so recordings finalize and USB serial flushes complete.

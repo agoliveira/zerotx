@@ -10,24 +10,27 @@ This is a living document for an in-progress build. Sections and rows marked **T
 
 ## Power distribution
 
-Primary rail: 13.8V CCTV PSU. Field-power alternate: 12V/AC dual-rail input on the rear bulkhead. Both feed the same internal regulation chain.
+Single 12VDC input on a panel-mount jack on the rear bulkhead. No internal PSU and no internal UPS. Battery backup, if any, is operator-supplied upstream of the case (typically a 12V SLA + charger unit).
 
 ### Rails
 
 ```
-TODO: confirm regulator topology, then redraw
-
-13.8V CCTV PSU ----+---- buck to 5V ---- USB hub, Pi 400, MCUs, HUB75 panels,
-                   |                     VFD, WS2813, lid LED panels, SSD
-                   |
-                   +---- 12V direct  ---- LCDs (TODO confirm voltage per panel),
-                   |                      pole cable (ELRS module direct in
-                   |                      default cfg; pole-end project box
-                   |                      in extended cfg)
-                   |
-                   +---- TODO: any 3.3V direct loads
-
-12V/AC field input ----> [switchover: TODO ORing diode / relay / manual] ----> 13.8V bus
+12VDC input (panel jack)
+    |
+    +---- inline fuse ---- keylock switch ----+---- 12V bus
+                                              |
+12V bus ----+---- buck #1: 12V -> 5V ---- Pi 400
+            |
+            +---- buck #2: 12V -> 5V ---- powered USB hub
+            |                              (Mega, ESP32 panel, joystick,
+            |                               USB DAC, front-panel USB)
+            |
+            +---- direct 12V ---- audio amplifier
+            |
+            +---- direct 12V ---- voltmeter (display only)
+            |
+            +---- direct 12V via e-stop (NC) ---- ELRS module
+                                                  (modules tolerate up to 16V)
 ```
 
 ### Per-component budget
@@ -55,9 +58,7 @@ Initial estimates. Refine with bench measurements once the regulator topology is
 
 ### Field vs lab power
 
-Lab: bench supply or AC mains feeding the internal 13.8V CCTV PSU through the front IEC inlet.
-
-Field: 12V/AC dual-rail input on the rear bulkhead, feeding the same internal regulation chain. Switchover mechanism: **TODO** (document the actual scheme once decided: passive ORing diodes, manual switch, auto-changeover relay, or other).
+Same input either way: 12VDC on the rear panel-mount jack. The upstream source changes (bench supply on a workbench, 12V SLA + charger pack in the field, vehicle 12V on the road), the case doesn't care.
 
 ## USB topology
 
@@ -240,8 +241,7 @@ Case-side connectors. **TODO**: confirm final list and locations after assembly.
 
 | Connector | Type | Purpose |
 |---|---|---|
-| Lab power input | IEC C14 (front) | mains to internal 13.8V CCTV PSU |
-| Field power input | TODO (XT60? Anderson Powerpole?) | 12V/AC dual-rail field input |
+| Power input | DC barrel jack (rear) | 12VDC from operator-supplied source (bench supply, SLA+charger, vehicle 12V) |
 | Pole connector | Multi-conductor; default config carries CRSF + signal GND + 12V + power GND, extended config carries RS-422 pair + 12V + GND + spare | feeds the ELRS module directly (default) or the pole-end project box (extended) |
 | Front-panel USB | USB-A x N | ad-hoc devices, charging, dev access |
 

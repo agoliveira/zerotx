@@ -259,8 +259,8 @@ The recorder runs **off the flight-critical path** entirely:
 design: writing to the SD card during flight risks FS corruption
 under power-cut scenarios, and tmpfs writes are effectively free.
 The trade-off is that a complete loss of power on the Pi mid-flight
-loses the in-memory recording. A 12V SLA UPS on the case is the
-proper redundancy.
+loses the in-memory recording. An external 12V SLA UPS upstream of the
+case input is the proper redundancy.
 
 Cell count detected by the telemetry layer (heuristic from initial
 voltage) is implicit in the recorded battery rows: the recording

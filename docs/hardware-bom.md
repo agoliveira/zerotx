@@ -36,13 +36,16 @@ strain relief on both halves.
 2. ELRS module: RX timeout per its own configuration
 3. Hardware kill: e-stop in series with module DC feed, pure mechanical
 
-**Power: external CCTV-style PSU at 13.8V** with a built-in 7Ah SLA UPS,
-fed into the case via a panel-mount barrel jack. Inline fuse, then
-keylock master switch on the input side. Single 13.8V to 5V buck supplies
-Pi 400, RP2040, VFD, level shifter. Audio amp runs directly off the
-13.8V rail. ELRS module runs direct from 13.8V (modules accept up to 16V).
-Self-contained 7-segment voltmeter is wired across the rail and runs zero
-software.
+**Power: 12VDC input** on a panel-mount jack. No internal PSU and no
+internal UPS: battery backup, if any, sits upstream of the case as an
+operator-supplied 12V SLA + charger unit. Inline fuse on the 12V rail,
+then keylock master switch on the input side. Two 12V to 5V bucks: one
+feeds the Pi 400 (and downstream USB devices it powers), the other
+feeds the powered USB hub. Audio amp runs directly off the 12V rail.
+ELRS module runs direct from 12V (modules accept up to 16V). E-stop
+(NC contacts) is in series with the module DC feed for hardware kill.
+Self-contained 7-segment voltmeter is wired across the 12V rail and
+runs zero software.
 
 ## Section 1 - Input controls (panel-mount, classic style)
 
@@ -85,7 +88,7 @@ for a simple "system on" indication. No commitment until parts arrive.
   - Hosts the artificial-horizon "cool factor" HUD (`glcd` Mega subsystem) — supplementary, never on the safety path
 - 1x 5V 8-channel level shifter (74AHCT125 or similar) for VFD
   data/control lines **have**
-- 1x self-contained 7-segment LED voltmeter, direct to 13.8V rail **buy**
+- 1x self-contained 7-segment LED voltmeter, direct to 12V rail **buy**
 
 
 ## Section 3 - Computer and link hardware
@@ -114,21 +117,25 @@ leaving the module within its input window.
 
 ## Section 4 - Power
 
-- 1x CCTV PSU with built-in 7 Ah SLA UPS, 13.8 V output **have**
-- 1x 7 Ah SLA battery **have**
-- 1x panel-mount DC barrel jack, case input **buy**
-- 1x inline fuse holder + ~10 A fuse **buy**
+External (operator-supplied, not part of the case BOM):
+
+- 1x 12V SLA battery + charger / UPS unit (CCTV-style or equivalent), upstream of the case input. Capacity chosen for desired field runtime.
+
+Inside the case:
+
+- 1x panel-mount DC barrel jack, 12VDC input **buy**
+- 1x inline fuse holder + fuse (rating set after measured peak load; ~10 A placeholder) **buy**
 - 1x keylock switch (listed in section 1, on input rail downstream of
   the fuse)
 - 1x e-stop (listed in section 1, NC contacts in series with module DC)
-- 1x buck converter, 13.8 V -> 5 V at 3 A or higher, for Pi 400, RP2040,
-  VFD, level shifter **buy**
-- Audio amplifier on 13.8 V rail **have**
+- 2x buck converter, 12 V -> 5 V at 3 A or higher: one for Pi 400, one
+  for the powered USB hub **buy**
+- Audio amplifier on 12 V rail **have**
 
-PSU lives external to the case. Mains power cable runs from the PSU into
-the case via the barrel jack only. No AC mains inside the case.
+No PSU and no UPS live inside the case. Battery backup is the operator's
+responsibility upstream of the jack.
 
-The ELRS module runs directly off the 13.8 V rail (modules accept up to
+The ELRS module runs directly off the 12 V rail (modules accept up to
 16 V), so no module-side buck is needed. If a future module turns out to
 prefer lower voltage, two Schottky diodes in series drop ~0.8 V to the
 module without rebuilding the rail.
@@ -266,7 +273,7 @@ These are deferred until parts arrive or design progresses:
 
 In hand:
 
-- CCTV PSU (13.8 V, SLA UPS), 7 Ah SLA, 8-channel level shifter,
+- 8-channel level shifter,
   audio amp, RP2040-Zero, original Pico, ELRS modules (ES900TX, Ranger
   2.4 GHz), 3D-printed module housing, antennas, Aomway 7" monitor,
   Walksnail Avatar VRX, HDMI splitter, USB HDMI capture dongle, 1x 7"
@@ -283,11 +290,13 @@ To buy:
 - USB-C right-angle cable (Pi -> RP2040)
 - Pre-made cat6 cable, RJ45 keystone, locking boot
 - DC barrel jack panel mount, fuse + holder
-- 1x 13.8 V -> 5 V buck (3 A+)
+- 2x 12 V -> 5 V buck (3 A+); one for Pi 400, one for the USB hub
 - HDMI cables (right-angle micro-HDMI x2, internal HDMI runs x3)
 - USB-C cables for displays (4x), USB hub
 - Thermal pad
-- Black acrylic 3 mm sheets x2 (panels), cut + engraved
+- 3D-printed panels (primary); cut acrylic remains an option for any
+  panel where the 3D-printed version doesn't satisfy fit, finish, or
+  optical requirements
 - Cable gland / strain relief
 - Vent mesh
 - M3 hardware
