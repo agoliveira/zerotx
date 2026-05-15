@@ -3019,15 +3019,330 @@ Once Section 8 passes, the build is operationally ready. Subsequent sections cov
 
 ## 9. Troubleshooting (build-time)
 
-### Firmware won't flash
-### MCU enumerates but daemon doesn't see it (udev)
-### Daemon won't start
-### Kiosks blank or wrong display
-### Audio silent
-### VFD blank
-### HUB75 panel dark or scrambled
-### CRSF link to FC fails on bench
-### Tracker doesn't track
+### 9.1 Reading this section
+
+This section is the destination for the "if fail → Section 9" pointers scattered through Sections 4-8. Each subsection covers one class of failure: symptoms first (what you see), then diagnostic order (what to check), then fixes (what to change).
+
+Use the diagnostics in order. Skipping a step because you "think you know the answer" is the fastest way to spend an hour fixing the wrong thing. The order is designed to escalate from cheap-and-likely to expensive-and-unlikely.
+
+If a fix involves redoing a build-time step (rewiring, reflashing, reprovisioning), the relevant earlier section is cited. Section 9 isn't a replacement for the build sections; it points you back to them.
+
+If a symptom doesn't match anything here exactly, pick the closest match and follow that subsection's diagnostic order; the diagnostics often surface unexpected root causes.
+
+### 9.2 Firmware won't flash
+
+Covers Section 5 flash failures across all four MCUs.
+
+#### RP2040 (Section 5.1)
+
+**Symptom: BOOTSEL drag-and-drop fails or board doesn't enumerate as `RPI-RP2`.**
+
+1. **Hold BOOT correctly**: press and hold BOOT *before* plugging in USB. Release BOOT after the cable seats. If you plug first and then press, the board has already booted into firmware and won't enter BOOTSEL mode.
+2. **USB cable is data-capable**: many USB-C cables are charge-only. Test the cable with another device that's known data-capable.
+3. **Volume didn't mount**: some Linux desktops don't auto-mount USB mass storage. Confirm with `lsblk` after holding BOOT and plugging in; `RPI-RP2` should appear as a small (~128 MB) FAT16 volume.
+4. **picotool reports "no boards found"**: same root cause as 1; the board isn't in BOOTSEL mode. Picotool can only flash boards already running picotool-compatible firmware OR boards in BOOTSEL.
+
+**Symptom: UF2 copies successfully but the board never boots into the new firmware.**
+
+1. **UF2 is corrupted**: rebuild from source (Section 5.1.1). A partial copy of a UF2 results in a board that re-enumerates as `RPI-RP2` on next plug rather than running the firmware.
+2. **Wrong UF2**: confirm you copied `firmware/crsf/build/zerotx-fw.uf2`, not some other UF2 left over in `build/`.
+
+#### Mega 2560 (Section 5.2)
+
+**Symptom: `avrdude: stk500v2_ReceiveMessage(): timeout`.**
+
+1. **Wrong upload port**: `pio run --target upload` autodetects; if it picks the wrong device, specify with `--upload-port /dev/ttyACM0`. List candidates with `ls /dev/ttyACM*`.
+2. **Bootloader not responding**: press the Mega's RESET button briefly; PlatformIO retries on the next attempt. If consistent, the bootloader may be corrupt; reflash the bootloader with an external programmer (out of scope for this manual; consult Mega Arduino documentation).
+3. **USB cable charge-only**: same as RP2040 case 2 above.
+
+**Symptom: Flash succeeds but the firmware crashes on boot.**
+
+1. **Voltage sag**: if the Mega is connected to peripherals (VFD, GLCD, LED strip) drawing significant current via the Mega's 5V pin, the bootloader's reset may dip the rail below the brownout threshold. Disconnect peripherals, reflash, then reconnect.
+2. **Wrong board variant**: confirm `platformio.ini` targets `megaatmega2560`. Some clones identify differently.
+
+#### ESP32 / ESP32-S3 (Section 5.3 / 5.4)
+
+**Symptom: PlatformIO fails to upload with "Failed to connect to ESP32".**
+
+1. **BOOT button dance**: ESP32 DevKit V1 (CP2102 bridge) usually doesn't need it because PlatformIO drives DTR/RTS for auto-reset; if that flow fails, hold BOOT, briefly tap EN/RESET, release BOOT, retry the upload.
+2. **Wrong USB-C port (ESP32-S3 only)**: the ESP32-S3 DevKit-C-1 has two USB-C ports — UART and native USB. Native USB (typically the right side) is the flash interface for this firmware build; UART works too but slower. Pick the same one as Section 5.4.2.
+3. **Wrong port**: `--upload-port /dev/ttyUSB0` (CP2102 bridge) for ESP32, `/dev/ttyACM0` for ESP32-S3 native USB.
+
+**Symptom: Flash completes but the firmware doesn't respond on USB-CDC.**
+
+1. **Wrong baud**: monitor at 115200 8N1; the firmware's protocol is line-oriented at this rate. Anything else returns garbage.
+2. **Reset after flash didn't happen**: power-cycle the board (unplug-replug USB) and re-open the monitor.
+
+### 9.3 MCU enumerates but daemon doesn't see it (udev)
+
+**Symptom: `ls /dev/ttyACM*` or `/dev/ttyUSB*` shows the device, but `/dev/zerotx-<name>` symlink is missing, or daemon log reports it can't open the configured path.**
+
+1. **udev rule typo**: the most common cause. Print the active rule:
+   ```
+   cat /etc/udev/rules.d/99-zerotx.rules
+   ```
+   Compare against the actual device's properties:
+   ```
+   udevadm info --query=property --name=/dev/ttyACM0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_SERIAL_SHORT'
+   ```
+   Mismatched VID, PID, or serial (for the RP2040, which has unit-specific serials) → no symlink. Fix the rule (Section 6.11) and reload:
+   ```
+   sudo udevadm control --reload-rules
+   sudo udevadm trigger
+   ```
+2. **Rule reload didn't fire**: even with the right rule, udev needs `--reload-rules` to pick it up. If you edited the file but didn't reload, the old rule is still active.
+3. **udev rules file in wrong location**: must be `/etc/udev/rules.d/`, not `/lib/udev/rules.d/` (the latter is for distro-shipped rules; user rules go in `/etc`).
+4. **Permission denied on the symlink target**: the daemon runs as `<user>`; user must be able to read/write the underlying `/dev/ttyACM*`. Section 0.9 covers the `dialout` group. On the Pi, confirm:
+   ```
+   groups <user>
+   ```
+   Must include `dialout`. If not:
+   ```
+   sudo usermod -a -G dialout <user>
+   # log out and back in
+   ```
+5. **Daemon-side path mismatch**: even with a valid symlink, the systemd unit must reference the symlink (`/dev/zerotx-rp2040`) or the underlying device (`/dev/ttyACM0`) — the unit's `-port` and `-iohub-port` flags must match what udev produces. Re-confirm Section 6.15.
+
+### 9.4 Daemon won't start
+
+**Symptom: `systemctl status zerotxd.service` shows `Active: failed`.**
+
+Always start with the journal:
+
+```
+journalctl -u zerotxd.service -n 100 --no-pager
+```
+
+Read the most recent stack-trace or error message. Most failures fall into one of these:
+
+1. **Binary path wrong**: unit's `ExecStart=/usr/local/bin/zerotxd` but the binary isn't there. Confirm with `ls -la /usr/local/bin/zerotxd`. If missing, redo Section 6.14.
+2. **User mismatch**: `User=<user>` in the unit must match the actual username the daemon expects (home directory paths in the same unit are user-specific). Inconsistency means the daemon tries to read from the wrong home directory and dies. Fix the unit to match the actual user.
+3. **Required port not available**: the daemon opens `/dev/zerotx-rp2040` and `/dev/zerotx-mega` at startup; if either symlink doesn't resolve, daemon exits. Back to Section 9.3.
+4. **Config file missing**: if `-model /home/<user>/zerotx/configs/big_talon_zerotx.yml` references a non-existent file, daemon exits. Either supply the file or drop the `-model` flag from the unit.
+5. **Static asset paths**: `-web-dir`, `-recordings-dir`, `-sounds-dir` must all point at existing directories. The daemon doesn't create them on the fly. Create with `mkdir -p ~/zerotx/recordings ~/zerotx/sounds` etc. as needed.
+6. **Port 8080 already in use**: another process is bound to 127.0.0.1:8080. Find it:
+   ```
+   sudo ss -tlnp | grep :8080
+   ```
+   Kill that process or change the daemon's `-api 127.0.0.1:<port>` flag.
+7. **systemd-protected file access**: the unit uses `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=...`. If the daemon writes to a path not in `ReadWritePaths`, it gets an EACCES. Read the journal for the specific path; add it to `ReadWritePaths` (Section 6.15).
+
+After fixing, reload and restart:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl restart zerotxd.service
+journalctl -u zerotxd.service -f
+```
+
+Watch for "active (running)" in the journal as the daemon starts up.
+
+### 9.5 Kiosks blank or wrong display
+
+**Symptom: Both LCDs show black after boot, or only one is showing content.**
+
+1. **Pi reaches kiosk-launch stage at all?** SSH in and check:
+   ```
+   ps -ef | grep -i chromium
+   ```
+   Should show two chromium processes (one per kiosk). If zero, `.xinitrc` never ran or failed early.
+2. **xinit failed**: check the X log:
+   ```
+   cat ~/.xsession-errors        # if present
+   journalctl -u getty@tty1 -n 200 --no-pager
+   ```
+   Common reasons: `xrandr` output names don't match what your Pi reports (the script assumes `HDMI-1` and `HDMI-2`; some kernel versions use `HDMI-A-1` or `HDMI-A-2`).
+3. **Wrong output name in xinitrc**: SSH in while X is running:
+   ```
+   DISPLAY=:0 xrandr | head -10
+   ```
+   Edit `~/.xinitrc` to use the actual reported names (Section 6.13).
+4. **Daemon not yet listening when Chromium tried to load**: the xinitrc has a curl health probe to prevent this, but if the probe timed out you'll see kiosks stuck on "This site can't be reached." Restart X to retry:
+   ```
+   sudo pkill -KILL Xorg
+   # .bash_profile re-runs startx
+   ```
+5. **Cable / HDMI port confusion**: if HUD content lands on the Map screen, the kiosk-to-display assignment is reversed. Fix in `~/.xinitrc` (swap the two `--window-position` blocks) rather than rewiring the cables.
+
+**Symptom: Kiosks loaded but render a blank/white area instead of the daemon UI.**
+
+1. **Daemon not responding** at the URL the kiosks loaded. From the Pi:
+   ```
+   curl http://127.0.0.1:8080/status/?dest=hud
+   ```
+   If you get HTML back, daemon is fine; the kiosk-side rendering is the issue. If you get an error, daemon is down (Section 9.4).
+2. **Web assets missing**: daemon `-web-dir` points at a directory but the directory is empty or incomplete. Confirm:
+   ```
+   ls ~/zerotx/pi/daemon/web/
+   ```
+   Should contain `status/`, `hud/`, `map/`, `assets/`, etc. If empty, re-clone the repo to the Pi or rsync from workstation.
+
+### 9.6 Audio silent
+
+**Symptom: Speaker produces no sound at all.**
+
+1. **ALSA card selection wrong**: `aplay -l` lists cards. Compare against `~/.asoundrc`:
+   ```
+   cat ~/.asoundrc
+   ```
+   Card index must match the USB DAC (typically `card 1` if onboard audio is `card 0`). Fix Section 6.9 if wrong.
+2. **Volume at zero**: `amixer -c <N> sget PCM` and look at the % level. Set with `amixer -c <N> set PCM 80%`. Persist with `sudo alsactl store`.
+3. **USB DAC not powered**: the DAC is in the powered hub (Section 6.9). Confirm the hub is powered (its LED, if present) and the DAC enumerates with `lsusb`.
+4. **Amplifier unpowered**: trace 12V from the rear panel through the e-stop to the amp's input terminals. Multimeter on the amp's DC input pins should show ~12V.
+5. **Speaker wired with wrong polarity / disconnected**: not strictly silent but produces noticeable phase issues; check terminals match the amp's outputs.
+
+**Symptom: Audio plays but tinny, distorted, or with background hum.**
+
+1. **Ground loop between USB DAC and Pi**: the DAC must be on the *powered* hub (5V from buck #2), not directly on a Pi USB port. Verify Section 6.9.
+2. **Gain mismatch**: amp gain set too high → clipping; too low → quiet plus speaker hiss audible. Adjust the amp's gain pot.
+3. **Impedance mismatch**: speaker impedance must match the amp's specified load. A 4Ω speaker on a 8Ω amp produces distortion at higher levels.
+
+**Symptom: Piper's TTS produces silence but `speaker-test` works.**
+
+1. **Daemon doesn't have the Piper binary at the configured path**:
+   ```
+   ls /home/<user>/zerotx/third_party/piper/piper
+   ```
+   Section 6.8.
+2. **Voice file missing**: daemon logs the requested voice file path; check it exists. Re-run `scripts/fetch-voices.sh` if missing.
+3. **Daemon-spawned Piper has no audio access**: the systemd unit's `User=<user>` must be in the `audio` group:
+   ```
+   groups <user>
+   ```
+   Should include `audio`. If not:
+   ```
+   sudo usermod -a -G audio <user>
+   sudo systemctl restart zerotxd.service
+   ```
+
+### 9.7 VFD blank, garbled, or stuck
+
+**Symptom: VFD is dark — no boot banner, no daemon text.**
+
+1. **Power not reaching VFD**: multimeter on VFD's VCC vs GND pins. Should be 5V (Noritake CU20025ECPB-W1J in HD44780 mode). If absent, trace back through the level shifter to the Mega's 5V output.
+2. **Level shifter unpowered**: the 74AHCT125 needs 5V on *both* VCC pins (pin 1 and pin 14 of the SOIC). A common error is wiring only one. Multimeter on both.
+3. **Mega not running**: VFD content comes from the Mega's firmware. If the Mega isn't booting, VFD stays dark. Confirm Section 9.2 / 9.3.
+4. **VFD contrast / brightness pot turned all the way down**: Noritake VFDs ship with a default brightness, but some have a software brightness command. If the daemon is sending one with a zero value, the VFD goes dark. Confirm with `SET vfd.0 brightness 0xFF` from a serial console direct to the Mega.
+
+**Symptom: VFD shows katakana (Japanese characters) where ASCII should appear.**
+
+This is the floating D7 line. Noritake VFD ROM A00 renders ASCII when bit 7 of each byte is 0, and katakana when bit 7 is 1. If the D7 data line on the VFD's bus is floating (broken wire, cold solder, level shifter output unconnected on that channel), every byte gets a random bit 7 and renders as katakana.
+
+Fix: trace the D7 line from the Mega's pin assignment (per Appendix A.2) through the level shifter to the VFD's data bus pin. Verify continuity end-to-end with a multimeter.
+
+**Symptom: VFD shows random characters that change with daemon activity but never resolve into readable text.**
+
+The data lines are wired in the wrong order. The HD44780 protocol uses 4 data lines in 4-bit mode (DB4-DB7) plus RS, R/W, and E. If the Mega is sending bits but they land on the wrong VFD pins, the result is garbled output.
+
+Fix: verify each data and control line against the canonical pinout in Appendix A.2. The mapping is `Mega pin → 74AHCT125 input → 74AHCT125 output → VFD pin`. Confirm each hop.
+
+**Symptom: VFD shows the boot banner correctly but never updates after the daemon starts.**
+
+Daemon-side issue. The daemon's VFD subsystem isn't sending updates. Check:
+
+```
+journalctl -u zerotxd.service --no-pager | grep -i vfd | tail -20
+```
+
+Should show periodic VFD writes. If absent, the daemon's VFD subsystem either isn't initialized or is in an error state. Daemon-side debugging is out of scope for this manual; the firmware-side (Mega) is what Section 9 covers.
+
+### 9.8 HUB75 panel dark or scrambled
+
+**Symptom: Panel completely dark, no boot banner, no IDLE clock.**
+
+1. **5V high-current power not connected**: the panel needs a separate 5V rail sized for ~6A peak (Section 6.3). The ESP32's logic 5V is not sufficient. Verify with multimeter at the panel's power terminal block: should read 5V even at idle.
+2. **HUB75 ribbon disconnected or wrong orientation**: the 16-pin IDC ribbon has a directional notch on one side. Reversed seating produces a completely dark panel. Verify the notch matches on both ends.
+3. **ESP32 isn't running**: USB-CDC enumeration test (Section 9.2 ESP32 case). If the ESP32 isn't talking on serial, the panel will stay dark even with power and ribbon connected.
+
+**Symptom: Panel shows garbled output (wrong colors, scrambled patterns, half-panel only).**
+
+1. **GPIO mapping doesn't match wiring**: the firmware's default pinout assumes the standard ESP32-HUB75-MatrixPanel-DMA library mapping (Appendix A.3). If your wiring uses different ESP32 pins, the firmware must be edited (firmware/display/src/main.cpp setup() function, uncomment the `mxconfig.gpio.<pin> = ...` overrides) and reflashed (Section 5.3).
+2. **Wrong panel size in firmware**: the firmware expects 2x P2.5 64x32 panels chained = 128x32 logical resolution. If your panels are different (96x32, 64x64), the firmware logic doesn't adapt; you'd need to edit the dimensions in source.
+3. **Power supply ripple**: cheap 5V supplies under HUB75's high transient current produce visible color shifts and flicker. Test with a known-good lab supply; if the symptom changes, replace the supply.
+
+**Symptom: Boot banner shows correctly but panel goes dark when daemon connects.**
+
+The daemon is sending a mode command that the firmware interprets as "off" or "blank". Check the daemon log for panel mode transitions and confirm against the protocol grammar in `docs/protocols/display.md`.
+
+### 9.9 CRSF link to FC fails on bench
+
+Bench-only failure mode (Section 8). With case healthy, real ELRS module connected, but no telemetry coming back or RP2040 LED never reaching green.
+
+**Symptom: RP2040 LED stuck on amber (PENDING) — daemon never connects.**
+
+1. **Daemon log error**: `journalctl -u zerotxd.service | grep -i rp2040` shows the daemon trying to open the port; if it's failing, see Section 9.3 (udev) and 9.4 (daemon won't start).
+2. **Wrong serial path**: daemon's `-port` flag points at the wrong device. Confirm with `ls -l /dev/zerotx-rp2040`.
+
+**Symptom: RP2040 LED green (OK) but ELRS module never reaches "transmitting" state.**
+
+1. **Cable issue**: continuity test (Section 8.3 diagnostic step 3). With case unpowered, multimeter continuity from the case's bulkhead pin to the ELRS module's CRSF pin.
+2. **470Ω resistor missing or wrong value**: for single-wire CRSF (default), the 470Ω series resistor at the case end of the cable is required to prevent bus contention between TX and RX. If absent or shorted, the link may not establish.
+3. **Wrong CRSF pin on ELRS module**: ELRS modules vary; some use the "TX" pin from a JR-bay perspective (which is module-RX from the CRSF wire perspective), some are labelled differently. Confirm with the ELRS module's documentation.
+4. **MAX490 not powered (extended config only)**: both transceivers need 5V. Multimeter check at both ends.
+
+**Symptom: ELRS module reaches "transmitting" state but the FC (or SITL) sees no input.**
+
+1. **Channel intent values stuck at zero**: confirm the daemon is computing channels from the joystick. Check the daemon's API:
+   ```
+   curl -s http://127.0.0.1:8080/api/v1/channels | jq
+   ```
+   Should show non-zero values for the joystick channels. If all zero, the joystick subsystem isn't bound; back to Section 9.3.
+2. **Baud rate mismatch**: CRSF default is 400000 baud. If somehow the firmware was built with a different `CRSF_BAUD` value, the module won't decode frames. Confirm with `firmware/crsf/src/crsf.c` and reflash if changed.
+3. **Wire polarity (TX vs RX) swapped**: rare with single-wire CRSF since one wire carries both directions, but possible with separated TX/RX wiring. Confirm against Appendix A.1.
+
+### 9.10 Tracker doesn't track
+
+Optional. Skip if no antenna tracker installed.
+
+**Symptom: Tracker firmware boots (self-test passes per Section 5.4.3) but byte pump shows zero throughput.**
+
+The tracker is supposed to forward CRSF bytes transparently. If the byte-pump count stays at zero:
+
+1. **No CRSF input reaches the tracker**: case → cable → pole-end MAX490 → tracker's UART2 RX. Trace each segment with the case running and a scope or by injecting test bytes via the calibration console.
+2. **MAX490 power**: pole-end MAX490 needs its own 5V. Multimeter at the project box.
+3. **UART pin mismatch**: tracker firmware's UART2 / UART1 RX/TX pins must match the wiring (per `firmware/tracker/README.md` pin map). If you wired the case-side stream to a different ESP32-S3 pin than the firmware expects, no bytes flow.
+
+**Symptom: Byte pump alive but no GPS frames parsed.**
+
+The parser on core 0 sniffs the byte stream for CRSF GPS frames. If the count stays at zero with telemetry actively flowing:
+
+1. **Telemetry isn't enabling GPS frames**: ELRS / FC must be configured to emit GPS telemetry. In the absence of GPS-equipped FC or properly configured telemetry, no GPS frames means no tracker activity (no aircraft GPS = no az/el to compute).
+2. **Parser bug or version mismatch**: tracker firmware vs daemon CRSF dialect mismatch. Reflash the latest from this repo build (Section 5.4).
+
+**Symptom: GPS frames parsed, az/el computed, but servos don't move.**
+
+1. **Servo power not connected**: servos need their own 5V/6V rail (per the gimbal kit's spec). Multimeter at the servos' V+ pin.
+2. **Servo signal pin wrong**: tracker firmware's LEDC channel maps to specific ESP32-S3 GPIO pins; if you wired the servos to different pins than the firmware drives, no PWM signal.
+3. **NVS calibration out of range**: if servo trim or limit values are nonsensical (e.g., min > max, or limits clamping to a single µs value), the servos can't move. Re-run Section 5.4.4 calibration.
+
+**Symptom: Servos move but point the wrong direction.**
+
+Calibration drift. Per Section 8.8 sanity-check:
+
+1. Compute expected az/el from a known aircraft position relative to station GPS.
+2. Compare to tracker's reported az/el (`> az-el` console command).
+3. If reported value differs by tens of degrees or by a sign flip, the station GPS coordinates are wrong, the servo trims are off, or the az convention in the firmware doesn't match expectations (e.g., clockwise-from-north vs counter-clockwise).
+
+Re-run Section 5.4.4 with confirmed station coordinates.
+
+### 9.11 Where to go if nothing here matches
+
+Sometimes the symptom doesn't match any of the above, or the diagnostics all pass and the problem persists. Options in order:
+
+1. **Re-read Section 8 acceptance criteria**. The most common cause of "I can't fly" without a clear failure is an 8.x check that *almost* passed but had a subtle issue you didn't notice the first time.
+2. **Run `zerotx-bench` (Section 8.4)** with the daemon stopped. The bench tool surfaces a lot of low-level state that's invisible from normal operation. If a probe reports WARN where you expect OK, that's usually the root cause.
+3. **Check the daemon journal extensively**:
+   ```
+   journalctl -u zerotxd.service --since "1 hour ago" --no-pager | less
+   ```
+   Errors and warnings often appear long before they manifest as visible symptoms.
+4. **Capture and share**: open an issue in the repo with:
+   - `journalctl -u zerotxd.service -n 500 --no-pager` output
+   - `dmesg | tail -100` output
+   - `ls -l /dev/zerotx-* /dev/ttyACM* /dev/ttyUSB*` output
+   - Description of the visible symptom and what step you were attempting
+   - Output of `git log --oneline -5` so the maintainer can correlate with code state
+5. **As a last resort, regenerate the Pi from SSD backup** (Section 6.17). If you have a known-good backup from after Section 8 passed, restoring it is often faster than debugging a degraded state.
 
 ## Appendices
 
