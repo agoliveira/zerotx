@@ -729,7 +729,7 @@ No transceivers, no pole-end electronics. CRSF is half-duplex on a single wire; 
 
 #### 4.7.2 Extended configuration (RS-422, longer runs and tracker support)
 
-Required when the cable run exceeds ~5m or when the inline antenna tracker is fitted. The single-wire CRSF is replaced with an RS-422 differential pair driven by MAX490 transceivers at each end. The case end is the only change to in-case wiring; on the pole, a project box replaces the simple module housing.
+Replaces the default single-wire CRSF with an RS-422 differential pair driven by MAX490 transceivers at each end. **Required** for the inline antenna tracker (the tracker firmware byte-pumps RS-422 between the pole-end MAX490 and the ELRS module's CRSF UART, so the substrate has to be RS-422). **Recommended but not required** for cable runs significantly longer than 5m where single-wire TTL CRSF signal integrity becomes uncertain; single-wire may continue to work at longer distances depending on the cable, the routing environment, and acceptable bit-error tolerance. Build it, bench it; upgrade to MAX490 if you see bit errors or telemetry dropouts in normal use.
 
 Cable: Cat6 or equivalent shielded twisted pair, T568B color order.
 

@@ -270,7 +270,7 @@ Both tiers share the same ALSA output. Sample-tier requests preempt the TTS queu
 
 ## Optional: extended cable configuration with pole-end project box
 
-The default single-wire cable handles a 5m run from the case directly to a pole-mounted ELRS module. Two situations require the extended configuration: cable runs longer than 5m where single-ended TTL stops being viable, and use of the inline antenna tracker.
+The default single-wire cable handles a 5m run from the case directly to a pole-mounted ELRS module. The extended configuration is required only for the inline antenna tracker (whose firmware byte-pumps RS-422). It is also a reasonable upgrade for cable runs significantly longer than 5m where single-wire TTL signal integrity becomes uncertain, though single-wire may continue to work at longer distances depending on cable and routing.
 
 In the extended configuration the case-to-pole cable carries an RS-422 differential pair instead of single-wire CRSF. A MAX490 transceiver at each end converts between the RP2040's TTL UART and the differential cable. The pole end terminates inside a project box that holds the pole-end MAX490, the ELRS TX module, an optional ESP32-S3 antenna tracker, downstream bucks for servos and logic, and the pan/tilt servos themselves. When the tracker is present it sits inline on the wire between the pole-end MAX490 and the ELRS module, byte-pumping frames transparently and sniffing GPS telemetry to drive the gimbal.
 

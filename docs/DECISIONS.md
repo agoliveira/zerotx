@@ -32,7 +32,7 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 ## Case-to-pole link
 
 - Default cable configuration is single-wire CRSF over a 5m shielded multi-core cable, terminating directly on the ELRS module. No transceivers, no pole-end electronics. The 470Ω TX series resistor at the case end handles half-duplex contention.
-- Extended cable configuration uses RS-422 (MAX490 pair on each end) instead of single-wire CRSF. Required for cable runs longer than ~5m and as the substrate the inline antenna tracker requires. Differential pairs handle long cable runs cleanly where a native UART would suffer noise and length limits.
+- Extended cable configuration uses RS-422 (MAX490 pair on each end) instead of single-wire CRSF. Required as the substrate the inline antenna tracker needs (the tracker byte-pumps RS-422). Recommended but not required for cable runs significantly longer than 5m where single-wire TTL signal integrity becomes uncertain; single-wire may continue to work at longer distances depending on cable, routing, and acceptable bit-error tolerance. Differential pairs handle long cable runs cleanly where a native UART would suffer noise and length limits.
 - Switching between configurations requires no firmware change on the RP2040. GP0/GP1 either drive a single-wire merge through 470Ω or feed a MAX490; the firmware is unchanged.
 
 ## Antenna tracker (optional)
