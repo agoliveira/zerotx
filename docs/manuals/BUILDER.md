@@ -2052,20 +2052,407 @@ This is the canonical baseline for cloning to a fresh SSD. Re-image after any ma
 
 ## 7. First-boot verification
 
-### Pre-power checklist
-### Power-on sequence
-### udev symlinks present (/dev/zerotx-rp2040, -mega, -esp32, -tracker)
-### zerotxd active, HTTP responds
-### Both Chromium kiosks load /status
-### Mega reports HAL EEPROM v2 valid
-### VFD shows boot banner
-### HUB75 panel runs self-test
-### Joystick enumerates and binds
-### Audio: Piper synthesizes test phrase
-### RTC reads correct time
-### GPS UART produces NMEA
-### Telemetry frames via SITL bench mode
-### Pass/fail acceptance summary
+### 7.1 Reading this section
+
+Picks up where Section 4.11 (electrical verification) and Section 6 (Pi provisioning) left off. The case is fully assembled and wired, all four MCU firmwares are flashed (Section 5), the Pi's SSD is provisioned, the daemon is installed with its systemd unit, the `~/.xinitrc` is in place, and the operator has just turned the keylock to ON for the first time as a complete system.
+
+This section's job: confirm every subsystem is responsive *in isolation* before any flight-relevant testing happens. Each check is a single, narrow pass/fail. Deeper troubleshooting per failure mode lives in Section 9.
+
+End-to-end SITL flight testing (with a simulated FC, simulated telemetry, simulated failsafe events) is Section 8's job.
+
+Run the checks in order. If a check fails, fix it before moving on; later checks assume earlier ones pass.
+
+### 7.2 Pre-flight software checklist
+
+Quick checklist to run before turning the keylock to ON. Verifies the provisioning side is intact, in case time has passed since Section 6.
+
+```
+# On the Pi over SSH (or directly if you still have a keyboard):
+ls /usr/local/bin/zerotxd                   # daemon binary present
+ls /etc/systemd/system/zerotxd.service      # systemd unit present
+systemctl is-enabled zerotxd.service        # should print: enabled
+ls /etc/udev/rules.d/99-zerotx.rules        # udev rules present
+ls ~/.xinitrc                               # kiosk launcher present
+ls ~/zerotx/third_party/piper/piper         # Piper binary present
+ls ~/zerotx/third_party/voices/             # at least one .onnx voice
+ls ~/zerotx/configs/                        # at least one EdgeTX model YAML
+```
+
+All entries should resolve. Any missing file means Section 6 didn't complete; return to the relevant subsection and finish it.
+
+If you can't reach the Pi over SSH because the case is already closed and the kiosks are running, that's expected; this checklist is for the bench phase before final assembly. The remainder of Section 7 runs from the kiosks and HDMIs visible on the case itself.
+
+### 7.3 Power-on observation
+
+Apply 12V at the rear jack with the keylock OFF and the e-stop released. Turn the keylock to ON. Watch and listen for the first 30 seconds:
+
+| Time | What you should see / hear |
+|---|---|
+| t=0s | Voltmeter wakes, shows ~12.0V. Audio amp may emit a brief power-on pop through the speaker. |
+| t=1-3s | Pi 400 begins booting. Boot SSD activity LED flickers. Both LCDs show Pi boot output (kernel messages on a black background). |
+| t=4-8s | Pi reaches userspace. tty1 auto-login fires; the brief shell appears, then `startx` launches and the screens go black. Display managers? None. There is no greeter. |
+| t=8-12s | Chromium starts on both displays. White-background loading appears on both LCDs. |
+| t=10-15s | Kiosks land on the daemon's `/status` page (HUD on the left, Map on the right; or swapped if your wiring puts them that way). The Map kiosk shows a tile-loading state, the HUD shows pre-flight readouts as placeholders. |
+| t=2-5s (parallel with above) | MCU satellites enumerate via USB:<br>- VFD `vfd.0` shows the boot banner text<br>- HUB75 panel shows "ZEROTX <version>" briefly (~800ms), then transitions to its IDLE state (dim "ZEROTX" centered with a clock tick)<br>- RP2040 status LED transitions through BOOT → PENDING (amber) and eventually to OK (green) once the daemon connects |
+
+If after 30 seconds the kiosks aren't showing the `/status` page, something has gone wrong in either the daemon's startup or the kiosk launch chain. Skip to Section 9 (Troubleshooting) for the relevant subsystem.
+
+### 7.4 SSD boot
+
+SSH into the Pi (the Pi will be reachable over Ethernet if connected; over Wi-Fi if configured; otherwise plug a USB keyboard into a front-panel USB-A and use the Pi's keyboard):
+
+```
+findmnt /
+```
+
+Expected: a USB-attached `nvme0n1pX` or `sdaX` device, **not** `mmcblk0pX`. If `mmcblk0pX` appears, an SD card was somehow detected and booted from; remove it and reboot.
+
+Also verify:
+
+```
+cat /proc/cmdline | grep -o 'root=[^ ]*'
+```
+
+Should print a UUID-form path or `/dev/sdaX`-style path corresponding to the SSD partition. If it prints an `mmcblk` path, the boot order is wrong; revisit Section 6.2.
+
+### 7.5 udev symlinks present
+
+```
+ls -l /dev/zerotx-*
+```
+
+Expected output (varies depending on what's plugged in and your specific board USB IDs):
+
+```
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-rp2040 -> ttyACM0
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-mega   -> ttyACM1
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-esp32  -> ttyUSB0
+```
+
+`/dev/zerotx-tracker` should be absent unless the optional ESP32-S3 tracker is connected and you've added its udev rule.
+
+If any symlink is missing:
+
+```
+sudo udevadm trigger
+ls -l /dev/zerotx-*
+```
+
+If still missing, the udev rule's `idVendor` / `idProduct` / `serial` don't match the actual device. Confirm with `udevadm info --query=property --name=/dev/ttyACM0` (substitute the actual device path), then update `/etc/udev/rules.d/99-zerotx.rules` to match and re-trigger.
+
+### 7.6 zerotxd service active
+
+```
+systemctl status zerotxd.service
+```
+
+Expected: `Active: active (running)`. PID and uptime should be sensible. The `Loaded:` line should show the unit was loaded successfully.
+
+If `Active: failed`, capture the failure mode:
+
+```
+journalctl -u zerotxd.service -n 100 --no-pager
+```
+
+Look at the most recent failure. Common causes: udev symlinks not present (preceding 7.5), daemon binary path wrong in the unit, MCU firmware not running (Section 5), config files not present in `~/zerotx/configs/`.
+
+Tail the journal during the next start attempt for live diagnostics:
+
+```
+sudo systemctl restart zerotxd.service
+journalctl -u zerotxd.service -f
+```
+
+Healthy daemon startup output includes: opening each MCU port, loading the EdgeTX model file (if `-model` is set), starting the HTTP server on 127.0.0.1:8080, starting the mapper loop, and announcing systems ready.
+
+### 7.7 HTTP API responds
+
+```
+curl -s http://127.0.0.1:8080/api/v1/health
+```
+
+Expected: a JSON response with `"status":"ok"` (or similar; the exact schema is the daemon's, but a 200 with non-empty body is the pass bar). Status code 200.
+
+If you get a connection refused, the daemon isn't running or isn't listening on 8080; back to 7.6.
+
+If you get an unexpected response shape, the daemon is running but possibly a wrong version. Confirm with:
+
+```
+curl -s http://127.0.0.1:8080/api/v1/version
+```
+
+### 7.8 Kiosks loaded
+
+Look at both LCDs. Each should be showing the daemon's `/status` page: a "Pre-flight" header, a list of subsystem readiness items (RP2040 link OK, both HDMI displays OK, etc.), and a "Proceed to flight" button at the bottom.
+
+Specifically:
+
+- **HUD kiosk** (left LCD by default): URL bar (if visible) shows `http://127.0.0.1:8080/status/?dest=hud`. Page renders without scrollbars.
+- **Map kiosk** (right LCD by default): URL `?dest=map`. Same page until the operator clicks "Proceed to flight" on either kiosk.
+
+If both kiosks show "This site can't be reached" or a connection error, the daemon's HTTP server isn't responding to the kiosks. Confirm:
+
+```
+curl -s http://127.0.0.1:8080/api/v1/health   # from inside the Pi
+```
+
+If that works but the kiosks don't load, the kiosks may have started before the daemon. The `.xinitrc` has a `curl` health probe before launching Chromium specifically to prevent this; if the probe was skipped or timed out, restart X:
+
+```
+# Switch to tty2 over SSH, kill X:
+sudo pkill -KILL Xorg
+# X exits, bash falls back to tty1 shell, .bash_profile re-launches startx
+```
+
+The HUD and Map mapping (which kiosk lands on which physical screen) is controlled by `~/.xinitrc`'s `--window-position` flags. If swapped, edit the file rather than physically rewiring the HDMI cables.
+
+### 7.9 Mega: HAL EEPROM and subsystems
+
+The daemon talks to the Mega over `/dev/zerotx-mega` (USB-CDC at 115200 baud, line-mode protocol). The daemon should have already issued `GET caps` and `GET hal-status` at startup; check the journal:
+
+```
+journalctl -u zerotxd.service --no-pager | grep -i 'mega\|hal\|iohub' | tail -20
+```
+
+Healthy output mentions: HAL EEPROM v3 (or current version) detected as valid, subsystems registered (`vfd.0`, `glcd`, `button.0..N`, plus any scaffolded subsystems your wiring activates).
+
+If the daemon log shows "HAL EEPROM blank, using compiled defaults," that's not necessarily wrong; the Mega is operating against its compiled-in defaults, which is fine for the reference build. Section 5.2.3 covers how to capture and persist the current map to EEPROM if you want it explicit.
+
+Direct interaction with the Mega for verification (with the daemon stopped to avoid contention):
+
+```
+sudo systemctl stop zerotxd.service
+screen /dev/zerotx-mega 115200
+# Type: GET version<Enter>
+# Type: GET caps<Enter>
+# Type: SET vfd.0 line0 "test"<Enter>
+# Then Ctrl-A, K to quit screen
+sudo systemctl start zerotxd.service
+```
+
+Each `GET` returns `> body...`; each `SET` returns `ok`. The `SET vfd.0 line0 "test"` should change the visible VFD text in real time.
+
+### 7.10 VFD boot banner
+
+Look at the VFD. After power-on it should show the boot banner the Mega firmware emits (e.g., "ZEROTX IO v0.6"), then transition to whatever the daemon writes on top of it (typically status text plus a clock).
+
+If the VFD is dark with no text:
+
+- Confirm 5V power is reaching the VFD (multimeter on VCC vs GND at the VFD header)
+- Confirm the level shifter has 5V on both VCC pins (74AHCT125 requires VCC on both pin 1 and pin 14)
+- The Mega's `vfd.0` subsystem is on the wiring described in Appendix A.2; trace each data and control line for shorts or breaks
+
+If the VFD shows katakana characters where ASCII should appear, the D7 line is floating or broken (Japanese ROM A00 quirk; ASCII works with bit 7 clear, but a floating D7 sets bit 7 and renders as katakana). See Section 9.
+
+If the VFD shows random characters that change with daemon activity but never resolve to readable text, the data lines may be wired in the wrong order; verify against the canonical pinout in Appendix A.2.
+
+### 7.11 HUB75 panel self-test
+
+At power-on the HUB75 firmware shows "ZEROTX <version>" centered on the panel for ~800ms, then transitions to IDLE mode. IDLE renders a dim "ZEROTX" text centered on the panel and an updated clock tick every second.
+
+Once the daemon connects to the ESP32 over USB-CDC, it issues mode commands. The expected state right after first boot (with no flight active) is IDLE.
+
+If the panel stays dark:
+
+- Confirm 5V high-current power to the panel chain (not just the ESP32 logic 5V)
+- Confirm the HUB75 ribbon is fully seated at both ends and oriented correctly
+- The daemon's panel subsystem journal should show "ESP32 panel connected" or similar; if absent, the USB-CDC link to the ESP32 is the problem
+
+If the panel shows garbled or scrambled output, the GPIO mapping in the firmware doesn't match the panel chain wiring. Confirm against Appendix A.3 and re-flash if needed.
+
+### 7.12 RP2040 CRSF endpoint
+
+Status LED on the RP2040-Zero board (visible through the case if a viewing slot exists, or by opening the case during bench testing):
+
+| LED color/pattern | State | What it means |
+|---|---|---|
+| White slow pulse | BOOT | Just powered, firmware initializing |
+| Amber solid | PENDING | Waiting for daemon to talk to it |
+| Green solid | OK | Daemon connected, channel intents flowing |
+| Amber rapid blink | HOLD | Lost daemon heartbeat, holding last channels (200-800ms window) |
+| Red rapid blink | FAILSAFE | No heartbeat too long; CRSF emission has stopped |
+
+Expected state at idle (daemon up, but no joystick driving, no model loaded): **OK (green solid)** with steady channels at their idle values.
+
+Confirm the daemon log shows the RP2040 link healthy:
+
+```
+journalctl -u zerotxd.service --no-pager | grep -i 'rp2040\|crsf' | tail -10
+```
+
+Should mention: opening `/dev/zerotx-rp2040`, IPC framing initialized, RP2040 firmware version, heartbeat established.
+
+### 7.13 Joystick enumerates and binds
+
+Plug the Thrustmaster joystick into the front-panel USB-A. On the Pi:
+
+```
+ls /dev/input/by-id/ | grep -i thrustmaster
+```
+
+Should report a `usb-Thrustmaster_*` symlink. Test the HID interface directly:
+
+```
+sudo apt -y install evtest
+evtest /dev/input/by-id/usb-Thrustmaster_<rest>
+```
+
+Press buttons and move axes; `evtest` should report events in real time. Quit with Ctrl+C.
+
+Confirm the daemon recognizes the joystick:
+
+```
+journalctl -u zerotxd.service --no-pager | grep -i joystick | tail -10
+```
+
+Should mention: joystick `Thrustmaster <model>` bound, axis count and button count reported.
+
+If the joystick doesn't enumerate at all, the front-panel USB-A wiring is suspect (back to Section 4.8.3); try plugging it into a Pi USB port directly to isolate the panel wiring from the joystick itself.
+
+### 7.14 Audio path (Piper smoke test)
+
+The audio path is Pi → USB DAC (in the hub) → audio amplifier → speaker.
+
+Confirm ALSA sees the DAC:
+
+```
+aplay -l
+```
+
+The USB DAC should be one of the listed cards.
+
+Run the Piper smoke test from Section 6.8 (now with the real speaker path):
+
+```
+echo "ZeroTX online" | ~/zerotx/third_party/piper/piper \
+  --model ~/zerotx/third_party/voices/en_US-amy-medium.onnx \
+  --output_file /tmp/test.wav
+aplay /tmp/test.wav
+```
+
+Pass: the phrase plays audibly through the case speaker, clear enough to understand from arm's length.
+
+Common failure modes:
+
+- No sound at all: ALSA card index wrong in `~/.asoundrc`; back to Section 6.9
+- Faint or distorted sound: amp gain not set, or amp not powered (check 12V on the amp's input); speaker impedance mismatch with amp's specified load
+- Tinny sound with noticeable noise floor: USB DAC ground loop with the Pi's power; usually resolved by ensuring the USB DAC is on the powered hub (5V via buck #2), not directly on a Pi port
+
+The daemon's TTS for narrated events uses the same path; once this smoke test passes, in-flight narration will too.
+
+### 7.15 RTC reads correct time (if fitted)
+
+Skip if you didn't install a DS3231 RTC.
+
+```
+sudo hwclock -r
+date
+```
+
+Both should print the current time, within a few seconds of each other. If `hwclock` reports a clearly-wrong time (years off), the RTC battery may be drained or the chip was never written; set it from the kernel clock once while online and the kernel will pick it up at every subsequent boot:
+
+```
+sudo hwclock -w
+```
+
+Verify the kernel sees the RTC as `rtc0`:
+
+```
+ls /sys/class/rtc/
+dmesg | grep -i 'rtc.*registered'
+```
+
+Should show `rtc0` and a `rtc-ds1307 ... registered as rtc0` line in dmesg.
+
+### 7.16 GPS UART produces NMEA (if fitted)
+
+Skip if you didn't wire a Pi-attached GPS.
+
+```
+sudo cat /dev/ttyAMA1
+```
+
+Should print lines starting with `$GP...` or `$GN...` arriving at the configured rate (1 Hz default for u-blox M-series). Press Ctrl+C to stop.
+
+If you get garbage, set the baud explicitly (the GPS may be at a different rate than the default):
+
+```
+stty -F /dev/ttyAMA1 9600 raw -echo
+sudo cat /dev/ttyAMA1
+```
+
+Confirm the daemon parses GPS frames:
+
+```
+journalctl -u zerotxd.service --no-pager | grep -i 'gps\|nmea' | tail -10
+```
+
+Should mention: opening `/dev/ttyAMA1`, NMEA parser started, GPS fix state changes (no-fix initially; 2D/3D fix once the antenna has sky view).
+
+GPS fix from inside a building typically doesn't acquire. Take the case outside or to a window for sky view, wait 30-90 seconds for first fix.
+
+### 7.17 Heartbeat LED (if fitted)
+
+Skip if you didn't wire a heartbeat LED.
+
+With `zerotxd` running and `-heartbeat-gpio 17` in the systemd unit, the LED should blink at 1 Hz steadily.
+
+LED dark: either the daemon's mapper loop has hung, or the LED is miswired. Confirm wiring with `gpioset`:
+
+```
+sudo systemctl stop zerotxd.service
+gpioset gpiochip0 17=1    # LED should light
+gpioset gpiochip0 17=0    # LED should darken
+sudo systemctl start zerotxd.service
+```
+
+If `gpioset` controls the LED but the daemon doesn't blink it, check the daemon log for heartbeat-related messages or errors. If `gpioset` doesn't control the LED, the wiring is wrong (Section 4.8.4).
+
+### 7.18 Telemetry via SITL bench mode
+
+End-to-end telemetry verification without a real FC or aircraft. Uses INAV SITL (Simulator In The Loop) to provide simulated CRSF telemetry that the daemon ingests and displays on the kiosks.
+
+Setup: INAV SITL on a workstation accessible to the Pi over the network. The daemon's `-fc-tcp-addr` flag points at the SITL endpoint instead of (or in addition to) the RP2040 wire path.
+
+```
+# Add to the systemd unit's ExecStart (temporary, for verification):
+-fc-tcp-addr <workstation_ip>:5760
+```
+
+`systemctl daemon-reload && systemctl restart zerotxd.service`.
+
+Launch INAV SITL on the workstation per its own documentation (the `howto/bench-test-sitl.md` reference covers the full setup).
+
+Expected on the kiosks: HUD telemetry tiles start populating with simulated values (battery voltage, GPS coordinates, attitude, link stats). Map kiosk shows the simulated GPS position. Audio narration may trigger if you simulate events that the daemon recognizes (e.g., low battery threshold crossed).
+
+This is the strongest pre-flight check: it exercises the full data path from telemetry frames → daemon parsers → typed state → API → WebSocket → kiosk renderer, end to end. If this works with SITL, real telemetry from a real aircraft will work the same way.
+
+Remove the `-fc-tcp-addr` flag from the unit when SITL testing is done; the daemon will fall back to reading from the RP2040 wire (Section 8 bench test exercises the wire path).
+
+### 7.19 Pass/fail acceptance summary
+
+Quick reference for what counts as ready-to-bench-test. If every row passes, the system is healthy in isolation and ready for Section 8 (bench test before field deployment).
+
+| Check | Pass criterion | If fail |
+|---|---|---|
+| Power-on observation (7.3) | All listed visual cues in the right time window | Section 9, electrical or boot issue |
+| SSD boot (7.4) | `findmnt /` shows USB-attached drive, not mmcblk | Section 6.2 (boot order) |
+| udev symlinks (7.5) | `/dev/zerotx-*` all present for fitted MCUs | Section 6.11 (udev rules) |
+| zerotxd service (7.6) | `active (running)` | journalctl, fix per-error |
+| HTTP API (7.7) | curl /api/v1/health returns 200 | back to 7.6 |
+| Kiosks loaded (7.8) | Both LCDs show `/status` page | Section 9, kiosk wedge |
+| Mega + HAL (7.9) | journal mentions HAL EEPROM detected and subsystems registered; `SET vfd.0 line0 ...` changes VFD text | Section 5.2 / Section 9 |
+| VFD banner (7.10) | Boot banner appears, daemon writes status text on top | Section 9 (VFD blank, katakana, scrambled) |
+| HUB75 panel (7.11) | "ZEROTX" banner briefly, then IDLE clock | Section 9 (panel dark, scrambled) |
+| RP2040 CRSF (7.12) | Status LED green solid; daemon log shows healthy link | Section 9 (LED color states) |
+| Joystick (7.13) | enumerates as `/dev/input/by-id/usb-Thrustmaster_*`, daemon binds | Section 4.8.3 / Section 9 |
+| Audio (7.14) | Piper phrase plays audibly through speaker | Section 6.9 / Section 9 |
+| RTC (7.15, optional) | `hwclock -r` and `date` agree | Section 6.10.1 |
+| GPS UART (7.16, optional) | NMEA sentences flow at /dev/ttyAMA1; daemon parses | Section 6.10.2 |
+| Heartbeat LED (7.17, optional) | 1 Hz blink while daemon running | Section 4.8.4 / Section 6.10.3 |
+| SITL telemetry (7.18) | HUD/Map kiosks show simulated telemetry from INAV SITL | Section 9, daemon-side or network |
+
+After this section passes end to end, the next step is Section 8 (bench test before field deployment), which adds a real ELRS module (without an aircraft) and tests the failsafe chain, hardware kill, and full intent-to-wire-to-module signal path.
 
 ## 8. Bench test before field deployment
 
