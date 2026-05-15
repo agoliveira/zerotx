@@ -2760,12 +2760,262 @@ After this section passes end to end, the next step is Section 8 (bench test bef
 
 ## 8. Bench test before field deployment
 
-### SITL end-to-end test (daemon to INAV SITL via X-Plane or stub)
-### Failsafe chain bench test (cut Pi heartbeat, observe CRSF stop, observe RX timeout)
-### Hardware kill test (e-stop trips module DC)
-### Antenna tracker self-test (if installed)
-### Recording and replay round-trip
-### Acceptance: bench-ready means field-ready
+### 8.1 Reading this section
+
+Section 7 confirms every subsystem is alive in isolation. This section validates the *scenarios*: full SITL flight with all subsystems active, the failsafe chain under deliberately injected faults, hardware kill via e-stop, optional tracker integration, and the record/replay loop. Passing Section 8 is the gate to first field deployment.
+
+These tests deliberately inject failures (cutting heartbeat, killing the daemon, pulling cables, hitting e-stop) to confirm the safety behavior is what the design promises. Bench-only because triggering these faults in flight is the bad outcome we're guarding against.
+
+The acceptance criterion at the end of this section (Section 8.10) is binary: **every test passes, or the system doesn't go to the field**. The chain is only as strong as its weakest link, and the bench is where weak links must surface.
+
+### 8.2 Equipment for bench test
+
+Beyond what Section 7 required:
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Real ELRS TX module | Receive CRSF from the case, observe failsafe behavior | Same module that will fly. If you have a spare, use it; pole-mounting and dismounting wears connectors. |
+| Workstation running INAV SITL | Provides simulated FC + telemetry over TCP | Per `docs/howto/bench-test-sitl.md`. SITL replaces the RP2040 → ELRS → aircraft path with a pure-software loop. |
+| Network between Pi and SITL workstation | TCP carries CRSF between them | Wi-Fi or Ethernet; the SITL endpoint is `<workstation_ip>:5762` per the SITL setup. |
+| Optional: spare/sacrificial FC with no motors | End-to-end RF path verification | An FC configured for CRSF receiver mode, ELRS module bound, observed via INAV Configurator. Not strictly necessary if SITL passes; provides one more confidence step. |
+| Optional: oscilloscope | Verify CRSF signal integrity at the RP2040 UART0 TX and the ELRS module input | Useful for the extended cable / RS-422 configuration; not necessary for default single-wire CRSF. |
+
+The case is fully assembled and powered as in Section 7. The ELRS module is connected via the pole cable (single-wire CRSF default; or RS-422 + MAX490 in the extended configuration).
+
+### 8.3 ELRS module on bench
+
+Power-up the case with the ELRS module connected. The module's own status LED (varies by ELRS module variant) should indicate:
+
+- Boot / waiting for input briefly
+- Then: "RF on, transmitting" steady (the daemon is sending CHANNEL_INTENT → RP2040 → CRSF → module)
+- LED behavior matches whatever the ELRS firmware on the module specifies; consult its documentation
+
+If the ELRS module never reaches the "transmitting" state, the CRSF link from the case isn't reaching it. Diagnostic order:
+
+1. Verify the RP2040 status LED is **green solid** (OK state) at the case (Section 7.12). If amber or red, the daemon isn't talking to the RP2040; back to Section 7.6 / 7.9.
+2. Verify daemon log shows CRSF frames being emitted:
+   ```
+   journalctl -u zerotxd.service --no-pager | grep -i 'crsf\|rp2040' | tail -20
+   ```
+   Should mention channel intents being sent at the configured rate.
+3. Verify the pole cable wiring (Section 4.7), specifically that GND and the single-wire signal both make it to the ELRS module's CRSF input. With a multimeter (DC mode, case unpowered): continuity from the case's bulkhead CRSF pin to the module's CRSF input, and same for GND.
+4. If RS-422 is in use, both MAX490 transceivers (case end and pole end) need 5V power. Verify with multimeter at each end.
+
+This bench check exercises the daemon → RP2040 → cable → ELRS module path end to end on real hardware. SITL in Section 8.5 exercises the upstream path but bypasses the RP2040 and cable; this test fills that gap.
+
+### 8.4 zerotx-bench diagnostic web UI
+
+The `tools/zerotx-bench/` tool is a comprehensive hardware-probe web UI. It probes every device the Pi can talk to (MCUs, breakout peripherals, USB peripherals, HDMI, ELRS via the RP2040) and offers interactive test actions per device.
+
+Build it (one-time):
+
+```
+cd ~/zerotx/tools/zerotx-bench
+go build -o /tmp/zerotx-bench
+```
+
+Run it. **It refuses to start while `zerotxd` is running** (the probes need exclusive USB-CDC access; running both at once corrupts the channel buffer and could trigger unsafe arm-state transitions):
+
+```
+sudo systemctl stop zerotxd.service
+sudo /tmp/zerotx-bench   # sudo needed for I2C and GPIO; if your user is in the right groups, drop sudo
+```
+
+Open `http://<pi_host>:<port>/` (port reported on stdout when the tool starts) from a workstation browser. The web UI shows every device with a status pill and an Actions panel per device:
+
+- **Mega 2560**: capabilities listing, VFD test message, button-press logging, encoder rotation visualisation, LED/relay toggle, buzzer beep, WS2813 color sweep
+- **RP2040**: state polling, channel intent injection, manual arm/disarm
+- **ESP32 panel driver**: capabilities, mode change (IDLE, FLIGHT, MENU, etc.), pixel test pattern
+- **DS3231 RTC**: read time, set time
+- **GPS**: live NMEA stream, fix state monitoring
+- **Heartbeat LED**: blink on demand, set duty cycle
+- **Joystick**: axis/button visualization
+- **Audio**: test tone, Piper test phrase
+- **HDMI**: probe both displays present
+- **ELRS via RP2040**: send test channel intents, observe ELRS module response
+
+Walk through every device tab. Each probe should report **OK**. Any **WARN** or **FAIL** indicates a wiring or firmware issue at the relevant subsystem; the message gives a specific failure mode (e.g., "Mega responded but version mismatch", "RTC not detected at 0x68").
+
+When done, stop the bench tool and restart the daemon:
+
+```
+# Ctrl-C the bench tool
+sudo systemctl start zerotxd.service
+```
+
+This step is the most thorough "is the build healthy?" check available. If every probe passes here, the hardware side of the build is solid.
+
+### 8.5 SITL flight scenario
+
+End-to-end functional validation with INAV SITL as the simulated FC. Per `docs/howto/bench-test-sitl.md`, SITL acts as the FC, X-Plane (or the standalone INAV SITL with a stub flight model) provides aerodynamics, and ZeroTX talks raw CRSF to SITL over TCP via the `-fc-tcp-addr` flag.
+
+**What this exercises**: daemon channel-intent loop, mixer, arm state machine, CRSF telemetry decoder, HUD, HUB75 panel firehose, audio (alarms + TTS), recorder, post-flight narration, geo lookup, optional mwp tee + map view.
+
+**What this does NOT exercise**: RP2040 firmware (idle in SITL mode), real CRSF over RF, range, packet loss patterns, hardware arm key, vibration / sensor noise, real ELRS link to a real receiver. Section 8.3 covered the RP2040 + ELRS path; Section 8.6 covers fault injection across the chain.
+
+Follow `docs/howto/bench-test-sitl.md` for the one-time INAV SITL setup (clone, build, configure eeprom for CRSF on UART3, launch flow). Highlights:
+
+- SITL maps each configured INAV UART to TCP port 5760 + (uart-1). UART3 lands on TCP 5762.
+- Launch SITL on the workstation; verify it's listening on 5762.
+- Stop `zerotxd`, edit the systemd unit to add `-fc-tcp-addr <workstation_ip>:5762`, restart.
+- Load an EdgeTX model YAML via `-model` if you have one for this aircraft.
+
+End-to-end test flow with SITL running:
+
+1. **Boot the case**, watch the kiosks load.
+2. **Click "Proceed to flight"** on the `/status` kiosk. HUD and Map kiosks transition out of pre-flight.
+3. **Joystick → arm channel high**, verify the arm state machine transitions through DISARMED → READY → ARMED only if the configured pre-arm gates are satisfied (joystick centered, telemetry receiving, model loaded, etc.). The Mega's VFD and the HUB75 panel reflect the state.
+4. **Throttle up via joystick**: SITL receives the channel values via CRSF and feeds them to the simulated FC; the simulated aircraft responds; telemetry comes back; HUD updates the airspeed, attitude, altitude, battery values.
+5. **Audio narration triggers**: configurable thresholds (e.g., battery percentage crossing 30%, GPS fix acquired) should produce narrated audio through the case speaker.
+6. **Map updates**: as the simulated GPS position moves, the Map kiosk re-centers and the track line extends.
+7. **Disarm via joystick** (arm channel low + safety conditions): VFD and panel show DISARMED.
+
+Run a full simulated flight from arm to disarm. Pass criterion: every subsystem responds correctly to the simulated state, no audio missing, no kiosk freezes, no daemon errors in the journal. If anything misbehaves, capture the journal and fix the offending subsystem before progressing.
+
+Remove the `-fc-tcp-addr` flag from the unit when done (SITL is bench-only); daemon falls back to reading from the RP2040 wire (Section 8.6 exercises that path).
+
+### 8.6 Failsafe chain bench test
+
+The most critical test in this section. With the case powered, daemon running, joystick connected, and the real ELRS module connected to the pole cable (but no aircraft attached), each subsection deliberately injects a fault and verifies the safe behavior.
+
+Reference timing from the architecture: HOLD triggers ~200 ms after heartbeat loss; FAILSAFE (CRSF emission stops) ~600 ms after that; ELRS-side RX_LOSS adds ~150 ms more, for a total chain of ~950 ms. The bench tests below time each step.
+
+#### 8.6.1 Joystick disconnect
+
+With daemon running and CRSF emitting at the RP2040 (green LED):
+
+1. Move the joystick to a non-idle position (some throttle, some stick offset). Confirm the RP2040 is sending those values (check daemon log for channel intent values, or use `zerotx-bench` channel monitor).
+2. **Unplug the joystick** from the front-panel USB-A.
+3. Within ~100 ms (perceptually immediate), the daemon should detect the joystick removal and switch to "safe" channels (whatever the disarmed / idle default is per the model). RP2040 status LED stays green; the daemon is still healthy.
+4. Plug the joystick back in. Daemon re-binds. Stick values are restored.
+
+Pass: no panic, no daemon crash, channels safely retreat to idle within ~100 ms, recovery on reconnect is automatic.
+
+Fail: if the daemon crashes on joystick disconnect, the failsafe is the wrong layer (it'll work, but it shouldn't be needed for a graceful disconnect). Fix the daemon.
+
+#### 8.6.2 Daemon SIGKILL
+
+With daemon running and CRSF emitting:
+
+1. From SSH:
+   ```
+   sudo kill -KILL $(pgrep zerotxd)
+   ```
+2. Within ~200 ms, the RP2040 stops receiving heartbeats. Status LED transitions: **green → amber rapid blink (HOLD)**. CRSF still emitting (holding last channels).
+3. ~600 ms after HOLD, status LED transitions to **red rapid blink (FAILSAFE)**. CRSF emission stops entirely.
+4. ELRS module detects RX loss within ~150 ms after CRSF stops. The module's own indicator shows the RX_LOSS state (varies by ELRS firmware).
+5. systemd auto-restarts the daemon (`Restart=on-failure` in the unit). After daemon restart, RP2040 resumes receiving heartbeats; LED returns to green; CRSF emission resumes.
+
+Pass: full chain (green → amber-blink → red-blink → CRSF stop → ELRS RX_LOSS) within ~950 ms. Daemon recovery on systemd restart within ~5 seconds.
+
+Fail: any of the LED transitions don't fire, CRSF doesn't stop, or systemd doesn't restart the daemon. The RP2040 watchdog chain is the safety floor; if it doesn't trigger, fix the firmware (Section 5.1) before any further bench work.
+
+#### 8.6.3 Pi power-cycle
+
+With daemon running and CRSF emitting, **unplug the 12V input at the rear panel** (most thorough simulation of catastrophic Pi failure):
+
+1. Pi loses power immediately. Within ~200 ms the RP2040 also loses power (USB power is fed from the same Pi-internal 5V rail in some configurations; from the powered hub in others). If the RP2040 stays powered (uncommon if your wiring follows Section 4.2), the daemon-loss timing of 8.6.2 applies and FAILSAFE triggers at ~800 ms.
+2. ELRS module also loses power (it's on the same 12V rail via the e-stop NC contacts).
+3. The downstream effect: ELRS RX loses signal, the receiver-side (FC or simulated aircraft) sees RX_LOSS and triggers its own failsafe.
+
+Pass: complete case power-off causes complete CRSF cessation. ELRS module dark. Receiver-side failsafe behavior matches the FC's configured RX_LOSS handling.
+
+Restore power; everything cold-boots per Section 7.3.
+
+#### 8.6.4 Pole cable disconnect
+
+With daemon running and CRSF emitting normally to the ELRS module:
+
+1. **Pull the pole cable** at either the case's bulkhead or the pole-end project box / ELRS module.
+2. The ELRS module loses CRSF input immediately. Its own RX_LOSS handling activates (~150 ms).
+3. The daemon is unaffected: from its perspective, channel intents are still flowing. The RP2040 still emits CRSF, but it's emitting into a disconnected cable.
+4. **Reconnect the cable**: ELRS module re-acquires the CRSF stream within ~50 ms.
+
+This test confirms the failsafe chain has a layer below the daemon: even if everything case-side is healthy, a broken cable still triggers a safe shutdown on the aircraft side.
+
+Pass: ELRS module responds to cable disconnect within ~150 ms; recovers within ~50 ms on reconnect.
+
+### 8.7 Hardware kill via e-stop
+
+The e-stop's NC (normally-closed) contacts gate the ELRS module's 12V supply. Pressing the e-stop opens those contacts, dropping power to the ELRS module immediately and unconditionally. The Pi, daemon, kiosks, and MCUs are unaffected (they're upstream of the e-stop).
+
+With case fully running and ELRS module healthy:
+
+1. Press the e-stop mushroom.
+2. **ELRS module loses power immediately** (<10 ms). Its indicators go dark. CRSF transmission stops from the RF side regardless of what the case is doing.
+3. Daemon, kiosks, audio, MCUs all continue running. The daemon may log "no telemetry from FC" if it was getting any; otherwise no log changes.
+4. **Twist-release the e-stop** to restore the NC contacts. ELRS module powers back up, boots, re-acquires the CRSF stream from the RP2040 within seconds.
+
+Pass: e-stop press → ELRS dead in <10 ms. Twist-release → ELRS recovers automatically.
+
+This is the "operator panicked and hit the big red button" path. It works at a different layer than the failsafe chain (8.6): the failsafe chain is automatic on software/hardware fault, the e-stop is manual on operator decision. Both must work independently.
+
+Critical note: if the e-stop kills more than the ELRS module (e.g., if pressing it powers down the Pi too), your wiring has the e-stop on the wrong rail. Revisit Section 4.2 and Section 4.7.
+
+### 8.8 Antenna tracker self-test (if fitted)
+
+Skip if you didn't install the optional ESP32-S3 antenna tracker.
+
+The tracker has been bench-flashed (Section 5.4) and NVS-configured with station GPS and servo trims/limits. Now it's installed in the pole-end project box, wired between the case-end MAX490 and the ELRS module's CRSF input, with servos attached.
+
+Power up the case and pole-end project box. With daemon running and CRSF flowing through the tracker:
+
+1. **Byte-pump verification**: connect to the tracker's USB-C native USB port (this is the calibration interface; not the CRSF in/out). Run `pio device monitor` and issue `> stats`. Confirm the byte-pump task on core 1 is alive (pump rate matches the daemon's emit rate). The tracker is transparent to the daemon, so this is the only way to verify it's actually pumping bytes through.
+2. **Parser verification**: with SITL telemetry flowing (Section 8.5), the tracker's parser on core 0 sees GPS frames passing through. Issue `> stats` again; the GPS frames count should increment over time. If it stays at zero, the parser isn't seeing valid frames; either telemetry isn't reaching the tracker, or the parser implementation has a bug.
+3. **Az/el computation**: with simulated aircraft GPS position moving (via SITL), issue `> az-el` (or whatever the tracker's command is for the current az/el output). Values should change as the aircraft GPS position moves.
+4. **Servo movement**: issue `> servo-test` or similar. The tracker should drive the pan and tilt servos through their range (within configured limits). Visual confirmation that the servos respond.
+5. **Calibration sanity**: with the case-side / station GPS configured per 5.4.4 and the simulated aircraft position somewhere known, az/el output should match what the geometry says. If your station is at the origin and the simulated aircraft is 100 m due north and 50 m up, az should be ~0° (north), el should be ~26.5° (atan2(50, 100)). Off by tens of degrees means calibration is wrong; revisit 5.4.4.
+
+Pass: bytes pump, GPS frames parsed, az/el matches geometry, servos drive smoothly.
+
+Disconnect the calibration USB-C; the tracker stays operational via its CRSF in/out path alone.
+
+### 8.9 Recording and replay round-trip
+
+The daemon records every flight to `~/zerotx/recordings/*.db` (SQLite) when recording is enabled. The `zerotx-replay` tool reads those files and prints a flight summary.
+
+End-to-end test:
+
+1. With daemon running and SITL connected (Section 8.5), perform a short simulated flight (~30 seconds: arm, throttle up, fly around, disarm).
+2. Stop daemon: `sudo systemctl stop zerotxd.service`. Recording finalizes.
+3. List recordings:
+   ```
+   ls -la ~/zerotx/recordings/
+   ```
+   The most recent `.db` file is the flight you just simulated.
+4. Replay it on the workstation (replay tool is cross-platform; doesn't need the Pi):
+   ```
+   scp <pi_host>:~/zerotx/recordings/<filename>.db /tmp/
+   /path/to/zerotx-replay /tmp/<filename>.db
+   ```
+5. Expected output: session metadata (start/end time, model name), telemetry statistics (frames received, gaps, etc.), chronological event log (arm transitions, threshold crossings, etc.), and grouped audio/alarm events.
+
+Pass: recording exists, contains data, replay tool parses and prints meaningful summary. The flight's events (arm, throttle change, disarm) should be visible in the replay output.
+
+Fail: missing recording (recorder didn't activate; check daemon flags and `-recordings-dir` path), empty file (recorder activated but no frames were ingested; SITL link was broken), replay parse error (recording schema mismatch with replay tool; rebuild replay tool from same repo state).
+
+This round-trip exercises the full data lifecycle: telemetry in → daemon → recorder writes → replay reads → summary. Real post-flight workflow uses the same path, so getting this right on bench saves debugging time later.
+
+### 8.10 Acceptance: bench-ready means field-ready
+
+Quick reference. If every row passes, the system is cleared for field deployment.
+
+| Test | Pass criterion |
+|---|---|
+| ELRS module on bench (8.3) | Module reaches "transmitting" state; multimeter confirms cable continuity |
+| zerotx-bench probes (8.4) | Every device tab reports OK; no WARN or FAIL |
+| SITL flight scenario (8.5) | Full arm → fly → disarm cycle, all subsystems responding, no daemon errors |
+| Joystick disconnect (8.6.1) | Daemon transitions to safe channels in ~100 ms; no crash |
+| Daemon SIGKILL (8.6.2) | Full chain in ~950 ms: green → amber-blink → red-blink → CRSF stop → ELRS RX_LOSS. systemd auto-restart works. |
+| Pi power-cycle (8.6.3) | Complete case power-off → complete CRSF cessation → ELRS dark |
+| Pole cable disconnect (8.6.4) | ELRS responds within ~150 ms; recovers in ~50 ms |
+| E-stop hardware kill (8.7) | ELRS power-cut in <10 ms; Pi/daemon/kiosks unaffected |
+| Antenna tracker (8.8, optional) | Byte pump alive, GPS frames parsed, az/el matches geometry, servos drive smoothly |
+| Recording/replay round-trip (8.9) | Recording exists, replay produces a meaningful summary |
+
+**Any failure → do not field-test.** Fault-inject another time, find the broken link, fix it, re-run the failed test. The bench is the cheapest place to find broken safety behavior.
+
+Once Section 8 passes, the build is operationally ready. Subsequent sections cover troubleshooting (Section 9) and reference appendices (B-H).
 
 ## 9. Troubleshooting (build-time)
 
