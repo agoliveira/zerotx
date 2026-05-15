@@ -2202,13 +2202,17 @@ ExecStart=/usr/local/bin/zerotxd \
     -api 127.0.0.1:8080 \
     -port /dev/zerotx-rp2040 \
     -iohub-port /dev/zerotx-mega \
+    -display-port /dev/zerotx-esp32 \
     -web-dir /home/<user>/zerotx/pi/daemon/web \
     -recordings-dir /home/<user>/zerotx/recordings \
     -sounds-dir /home/<user>/zerotx/sounds \
     -piper-binary /home/<user>/zerotx/third_party/piper/piper \
+    -voices-dir /home/<user>/zerotx/third_party/voices \
     -model /home/<user>/zerotx/configs/big_talon_zerotx.yml \
+    -maptiles-dir /home/<user>/zerotx/maptiles \
     -site-lat -22.91 -site-lon -47.06 \
     -gps-port /dev/ttyAMA1 \
+    -gps-baud 9600 \
     -heartbeat-gpio 17
 
 Restart=on-failure
@@ -2221,7 +2225,7 @@ RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/<user>/zerotx/recordings /tmp /run /var/run
+ReadWritePaths=/home/<user>/zerotx/recordings /home/<user>/.cache/zerotx /tmp /run /var/run
 PrivateTmp=yes
 
 [Install]
@@ -2232,9 +2236,13 @@ WantedBy=multi-user.target
 
 Substitute your username for `<user>` throughout. Adjust:
 - `-site-lat` and `-site-lon` to your home field
-- `-model` to your active EdgeTX model YAML (drop the flag if you don't use one yet)
-- `-gps-port /dev/ttyAMA1` — drop this flag if no Pi-attached GPS is fitted
+- `-model` to your active model YAML (drop the flag if you don't use one yet)
+- `-display-port /dev/zerotx-esp32` — drop if no HUB75 panel is fitted
+- `-maptiles-dir` — drop if you don't have a PMTiles archive (falls back to online tile proxy)
+- `-gps-port /dev/ttyAMA1` and `-gps-baud 9600` — drop both flags if no Pi-attached GPS is fitted
 - `-heartbeat-gpio 17` — drop this flag if no heartbeat LED is fitted
+
+Run the daemon with `-h` for the full current flag list. See Appendix C for per-flag semantics.
 
 Enable and start:
 
