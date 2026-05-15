@@ -943,30 +943,774 @@ The full first-boot verification (daemon up, kiosks loading, MCU subsystems resp
 
 ## 6. Pi 400 provisioning
 
-### Pi OS Lite image to USB SSD
-### Boot order EEPROM tweak
-### First boot: user, hostname, locale
-### Networking: Ethernet/Wi-Fi, masking blocking targets
-### Base packages
-### Go toolchain
-### Piper TTS install and voice fetch (en + pt)
-### Audio: ALSA, USB DAC selection
-### Hardware overlays
-#### I2C and DS3231 RTC
-#### GPS UART
-#### Heartbeat LED (optional)
-### udev rules for MCUs (RP2040, Mega, ESP32, ESP32-S3)
-### Auto-login on tty1
-### .xinitrc kiosk launcher (HUD + Map, dual display)
-### Daemon binary deploy
-### zerotxd systemd user unit
-### Pi 400 optimizations
+This section provisions the Pi 400 from a brick to a running ZeroTX host: Pi OS Lite to USB SSD, base packages, Go toolchain (optional), Piper TTS, audio, hardware overlays (RTC, GPS, heartbeat), udev rules, auto-login on tty1, kiosks via `~/.xinitrc`, daemon binary, and a systemd unit. Designed for the smallest practical install: no desktop, no greeter, no extras the daemon doesn't need. Pi OS Bookworm Lite (64-bit) is the assumed distribution; other versions are not tested.
+
+Throughout this section, `<user>` is the username chosen during imaging. Pick one and stick with it; the daemon systemd unit, the home-directory paths, and the auto-login override all assume one consistent user account. The hostname in this manual is `zerotx`; choose your own if you prefer.
+
+### 6.1 OS image to USB SSD
+
+ZeroTX boots from a USB SSD, not an SD card. The SSD is faster, more reliable, and supports the larger working set the daemon and kiosks need.
+
+On the provisioning machine:
+
+1. Install `rpi-imager`.
+2. Connect the SSD via USB.
+3. Launch `rpi-imager`.
+4. Choose:
+   - **Device:** Raspberry Pi 400
+   - **OS:** Raspberry Pi OS **Lite** (64-bit), Bookworm or current stable. **Not** the desktop image.
+   - **Storage:** the USB SSD (be careful to pick the right device).
+5. Open advanced options (gear icon). Set:
+   - **Hostname:** `zerotx` (or your choice)
+   - **SSH:** enabled, public key auth (paste your key)
+   - **Username:** `<user>` (your choice; will be referenced in this manual as `<user>`)
+   - **Password:** any (you'll mostly use SSH key auth)
+   - **Wi-Fi credentials:** optional. Set if you want network for setup. Field operation does not require Wi-Fi.
+   - **Locale, keyboard layout, timezone:** set appropriately
+6. Write the image. Eject when done. Plug the SSD into one of the Pi 400's USB 3.0 ports.
+
+### 6.2 Boot order EEPROM tweak
+
+The Pi 400 default `BOOT_ORDER=0xf41` (SD, then USB, then loop) already falls through to USB when no SD card is inserted; ZeroTX boots from the SSD without any EEPROM change. To skip the SD probe and shave a couple of seconds off cold boot:
+
+```
+sudo rpi-eeprom-config --edit
+```
+
+Set:
+
+```
+BOOT_ORDER=0xf14
+```
+
+Read right-to-left: 4 = USB, 1 = SD, f = restart loop. Save and reboot.
+
+Verify:
+
+```
+vcgencmd bootloader_config | grep BOOT_ORDER
+```
+
+### 6.3 First boot
+
+After first boot, SSH in (or use the keyboard/HDMI directly):
+
+```
+sudo apt update
+sudo apt -y full-upgrade
+sudo timedatectl set-timezone America/Sao_Paulo   # or your zone
+sudo hostnamectl set-hostname zerotx
+sudo reboot
+```
+
+Confirm the SSD is the root filesystem (not the SD card path that wouldn't exist anyway since there's no SD):
+
+```
+findmnt /
+```
+
+Should report a USB-attached `nvme0n1pX` or `sdaX`, not `mmcblk0pX`.
+
+Confirm swap is sane:
+
+```
+df -h /
+free -h
+```
+
+If swap is missing or undersized:
+
+```
+sudo dphys-swapfile swapoff
+sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+sudo dphys-swapfile setup
+sudo dphys-swapfile swapon
+```
+
+### 6.4 Networking: non-blocking
+
+Field use means no Wi-Fi available. Without changes, `multi-user.target` waits up to 90 seconds for `*-wait-online.service` to give up. Disable both services so cold-boot to operational kiosks isn't blocked on a network that's never coming up:
+
+```
+sudo systemctl disable --now NetworkManager-wait-online.service
+sudo systemctl mask NetworkManager-wait-online.service
+sudo systemctl disable --now systemd-networkd-wait-online.service
+sudo systemctl mask systemd-networkd-wait-online.service
+```
+
+The daemon's systemd unit (Section 6.15) uses `Wants=network.target` rather than `network-online.target`, so it does not block on network either. Online features (tile fetches, weather, NTP) degrade gracefully when offline.
+
+### 6.5 Disable unused services
+
+Pi OS Lite ships fewer services than the desktop image, but a few common ones still load:
+
+```
+for svc in bluetooth.service hciuart.service \
+           triggerhappy.service \
+           ModemManager.service \
+           avahi-daemon.service avahi-daemon.socket \
+           cups.service cups-browsed.service ; do
+    sudo systemctl disable --now "$svc" 2>/dev/null || true
+done
+```
+
+The `2>/dev/null || true` swallows "service not found" for the ones that aren't installed on Lite. The script is idempotent across image variants.
+
+Skip the `bluetooth.service` and `hciuart.service` entries if you actually use Bluetooth on this Pi.
+
+### 6.6 Base packages
+
+Kiosk and audio packages:
+
+```
+sudo apt -y install \
+    xserver-xorg-core xserver-xorg-input-libinput \
+    xserver-xorg-video-fbdev xserver-xorg-video-vc4 \
+    xinit x11-xserver-utils \
+    unclutter \
+    chromium-browser \
+    alsa-utils \
+    curl ca-certificates
+```
+
+What that pulls in:
+
+- `xserver-xorg-core`, `xinit`: the X server and `startx`
+- `xserver-xorg-input-libinput`: input driver (needed even if no keyboard at runtime)
+- `xserver-xorg-video-fbdev`, `xserver-xorg-video-vc4`: video drivers; the right one is auto-selected at start
+- `x11-xserver-utils`: provides `xset` and `xrandr`
+- `unclutter`: hides the cursor when idle
+- `chromium-browser`: the only kiosk renderer
+- `alsa-utils`: `aplay`, `amixer` for the audio path
+- `curl`, `ca-certificates`: health-check probe in `.xinitrc`, plus any HTTPS the daemon does
+
+Notably absent: no Wayfire, no labwc, no LXDE, no greetd, no plymouth, no display manager. X starts from the user's shell on tty1 and Chromium does its own window management.
+
+Build-time and utility packages (only needed if you intend to build the daemon or firmware on the Pi itself; otherwise skip):
+
+```
+sudo apt -y install \
+    build-essential git pkg-config \
+    libusb-1.0-0-dev libudev-dev \
+    wget jq xdotool
+```
+
+PlatformIO for occasional firmware reflash from the Pi (optional):
+
+```
+pip install --user --break-system-packages platformio
+```
+
+### 6.7 Go toolchain
+
+Required only if you build the daemon on the Pi. Cross-compiling from a workstation (Section 0.4) is the recommended path and skips this section.
+
+Use upstream Go, not the apt version. The apt package is typically a major release behind, and on some Debian/Ubuntu derivatives `apt install golang-go` silently installs `gccgo` which doesn't parse modern `go.mod` files.
+
+```
+GO_VERSION=1.25.10
+cd /tmp
+curl -L -O https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-arm64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh
+sudo chmod +x /etc/profile.d/go.sh
+source /etc/profile.d/go.sh
+go version
+```
+
+Pinned to 1.25.10 here as known-good. The daemon's `go.mod` has both a `go 1.25.0` floor (minimum) and a `toolchain go1.25.10` directive (auto-fetch target if your installed Go is older). Installing any Go >= 1.21 above will work; installing 1.25.10 up front saves the auto-fetch round trip.
+
+### 6.8 Piper TTS install and voice fetch
+
+Piper is third-party and lives under `~/zerotx/third_party/piper/`, alongside the ONNX voice models in `~/zerotx/third_party/voices/`.
+
+```
+mkdir -p ~/zerotx/third_party/piper
+cd ~/zerotx/third_party/piper
+```
+
+Fetch the Piper release for arm64. Filename and version vary by release; check `https://github.com/rhasspy/piper/releases` and adjust:
+
+```
+PIPER_VERSION=2023.11.14-2
+PIPER_TARBALL=piper_linux_aarch64.tar.gz
+curl -L -O https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/${PIPER_TARBALL}
+tar xzf ${PIPER_TARBALL}
+rm ${PIPER_TARBALL}
+```
+
+**TODO**: confirm Piper version and tarball name on next refresh of this manual.
+
+Voice models: `scripts/fetch-voices.sh` in the repo is the supported way to install them. It puts the `.onnx` + `.onnx.json` files under `~/zerotx/third_party/voices/`. For an ad-hoc smoke test you can also fetch one model manually:
+
+```
+mkdir -p ~/zerotx/third_party/voices
+cd ~/zerotx/third_party/voices
+curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
+curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
+```
+
+For Portuguese narration, the en + pt voice pair is the canonical pair; the daemon's narrator selects between them based on configured language. Adjust paths in `scripts/fetch-voices.sh` to install both.
+
+Smoke test once the audio path (Section 6.9) is up:
+
+```
+echo "ZeroTX online" | ~/zerotx/third_party/piper/piper \
+  --model ~/zerotx/third_party/voices/en_US-amy-medium.onnx \
+  --output_file /tmp/test.wav
+aplay /tmp/test.wav
+```
+
+### 6.9 Audio
+
+The case audio path: Pi → USB DAC (plugged into the powered USB hub) → analog line out → audio amplifier (on the 12V rail) → speaker. ALSA is the kernel-side interface; PulseAudio is not required for the daemon's audio pipeline, but is installable if you prefer.
+
+List available cards:
+
+```
+aplay -l
+```
+
+The USB DAC should show as a `card N` entry where N is typically 1 or 2 (the onboard audio is `card 0` unless disabled, and 0 indexing depends on enumeration order). Pick the DAC's card index and set ALSA default in `~/.asoundrc`:
+
+```
+pcm.!default { type hw card 1 device 0 }
+ctl.!default { type hw card 1 }
+```
+
+(Adjust `card N` to the index aplay reports for your DAC.)
+
+System volume (assuming card 1):
+
+```
+amixer -c 1 set PCM 80%
+sudo alsactl store
+```
+
+`alsactl store` persists the volume across reboots.
+
+Onboard Pi audio can be disabled if you want only the USB DAC to enumerate. Edit `/boot/firmware/config.txt`:
+
+```
+dtparam=audio=off
+```
+
+(Or leave `dtparam=audio=on` and just point `.asoundrc` at the DAC; both approaches work, the explicit-disable removes ambiguity.)
+
+Verify audio path end-to-end:
+
+```
+speaker-test -t sine -f 440 -l 1
+```
+
+Should produce a 1-second 440 Hz tone through the DAC → amp → speaker.
+
+**TODO:** confirm the DAC card index after final assembly and update `~/.asoundrc`.
+
+### 6.10 Hardware overlays
+
+Edits to `/boot/firmware/config.txt` enable Pi-side peripherals (RTC, GPS UART, heartbeat LED, GPU memory split). After editing, reboot. Some apply on next boot regardless; the RTC and GPS specifically require reboot.
+
+#### 6.10.1 I2C and DS3231 RTC
+
+The Pi 400 has no battery-backed RTC of its own; without network the system clock resets to a default value at every boot. A DS3231 module on the I2C bus gives ZeroTX accurate timestamps in flight recordings without network access at the field.
+
+Enable I2C:
+
+```
+sudo raspi-config nonint do_i2c 0
+sudo apt -y install i2c-tools
+```
+
+Reboot or `sudo modprobe i2c-dev`. Verify:
+
+```
+ls /dev/i2c-1
+i2cdetect -y 1
+```
+
+`i2cdetect` should show the bus with no devices yet (DS3231 not wired or not powered).
+
+Wire the DS3231 module: VCC to header pin 1 (3V3), GND to header pin 6, SDA to header pin 3 (GPIO 2), SCL to header pin 5 (GPIO 3). Some modules ship with an EEPROM at 0x57; that's harmless and unused.
+
+After wiring, confirm detection:
+
+```
+i2cdetect -y 1
+```
+
+Address `0x68` should show. Add the kernel overlay so the RTC is exposed as a hardware clock device:
+
+```
+sudo sed -i '/^dtparam=i2c_arm=on/a dtoverlay=i2c-rtc,ds3231' /boot/firmware/config.txt
+```
+
+Or hand-edit `/boot/firmware/config.txt` and add `dtoverlay=i2c-rtc,ds3231` near the existing `dtparam` lines.
+
+Disable the userspace fake-hwclock that would otherwise compete:
+
+```
+sudo apt-get -y remove fake-hwclock
+sudo update-rc.d -f fake-hwclock remove
+sudo systemctl disable fake-hwclock
+```
+
+Edit `/lib/udev/hwclock-set` and comment out the three lines that return early when `systemd` is in use:
+
+```
+#if [ -e /run/systemd/system ] ; then
+#    exit 0
+#fi
+```
+
+The kernel's `hctosys` already handles the RTC-to-system sync at boot; the udev rule is harmless to leave intact on most setups but comment-out is the conservative move documented in the kernel RTC howto.
+
+Reboot. Verify the RTC is recognized:
+
+```
+sudo dmesg | grep -i rtc
+sudo hwclock -r
+```
+
+`dmesg` should show `rtc-ds1307 ... registered as rtc0`. `hwclock -r` should print the current time. If the RTC battery is fresh and the chip has never been written, the time will be wrong; set it from the network-synced kernel clock once (do this while online):
+
+```
+sudo hwclock -w
+```
+
+After this, the kernel reads the RTC at boot before chrony or any network is available, so flight recordings get accurate timestamps even with no network at the field.
+
+#### 6.10.2 GPS UART (optional)
+
+ZeroTX supports an optional Pi-attached serial GPS module (u-blox M6, M7, M10, or any NMEA TTL device) on UART3 (header pins 7/29). The daemon parses NMEA in-process and exposes a state snapshot to other subsystems. Failure to open the device is non-fatal: the daemon logs and continues, and consumers fall back to other position sources.
+
+Wire the module: GPS VCC to header pin 1 (3V3) or pin 4 (5V, depending on the module's input range), GPS GND to header pin 6 or 9, GPS TX to header pin 29 (GPIO 5, UART3 RX), GPS RX to header pin 7 (GPIO 4, UART3 TX). Most modules are 3V3-compatible on both rails; check the datasheet before connecting 5V power.
+
+Enable UART3 in the Pi's device tree:
+
+```
+echo 'dtoverlay=uart3' | sudo tee -a /boot/firmware/config.txt
+```
+
+Reboot. After boot the device appears as `/dev/ttyAMA1`. (The Pi's primary mini-UART, `/dev/ttyAMA0`, stays where it is and is normally used by Bluetooth or the serial console.)
+
+Verify raw NMEA flows:
+
+```
+ls /dev/ttyAMA*
+sudo cat /dev/ttyAMA1
+```
+
+If you see garbage rather than readable text, the baud is probably wrong. Common GPS baud rates: 9600 (default for u-blox M6/M7/M10), 38400, 115200. Set explicitly:
+
+```
+stty -F /dev/ttyAMA1 9600 raw -echo
+sudo cat /dev/ttyAMA1
+```
+
+Lines beginning with `$GP...` or `$GN...` arriving at 1 Hz (default) or faster mean the GPS is talking.
+
+Daemon flags (added to the systemd unit in Section 6.15):
+
+```
+-gps-port /dev/ttyAMA1
+-gps-baud 9600
+```
+
+Default `-gps-port` is empty (disabled). When set, the daemon opens the port at startup and runs an internal NMEA parser. The reader silently absorbs malformed sentences and rate-limits parse-error logs (one per minute) so a flaky cable doesn't flood the journal.
+
+#### 6.10.3 Heartbeat LED (optional)
+
+A small LED on a Pi GPIO pin gives at-a-glance feedback that `zerotxd` is alive. Wire a low-current LED + ~1k resistor from header pin 11 (GPIO 17) to any ground pin (e.g., pin 9). Active-high: pin 11 high turns the LED on.
+
+The daemon enables the heartbeat with `-heartbeat-gpio 17`. Default is `-1` (disabled), so the daemon runs identically without a breakout.
+
+Verify with the GPIO line tool while the daemon is stopped:
+
+```
+sudo apt -y install gpiod
+gpioget gpiochip0 17
+gpioset gpiochip0 17=1   # LED on
+gpioset gpiochip0 17=0   # LED off
+```
+
+When the daemon runs with `-heartbeat-gpio 17`, the LED blinks at 1 Hz while the 50 Hz mapper loop is healthy and goes dark on hang.
+
+Optional but worth fitting: gives one-bit confidence that the Pi side is running, independent of whether the kiosks are visible. Add `gpu_mem=128` and any other config.txt tweaks in the same edit pass; see Section 6.16.
+
+### 6.11 udev rules for MCUs
+
+The daemon launches against `/dev/serial/by-id/` paths, which are vendor-stable on their own. udev SYMLINKs are optional but ergonomic, especially when scripts or systemd units need short paths.
+
+Create `/etc/udev/rules.d/99-zerotx.rules`:
+
+```
+# RP2040 CRSF generator
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", \
+  ATTRS{serial}=="<RP2040_SERIAL>", SYMLINK+="zerotx-rp2040"
+
+# Mega 2560 IO board
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0042", \
+  SYMLINK+="zerotx-mega"
+
+# ESP32 panel driver
+SUBSYSTEM=="tty", ATTRS{idVendor}=="<ESP32_VID>", ATTRS{idProduct}=="<ESP32_PID>", \
+  SYMLINK+="zerotx-esp32"
+
+# ESP32-S3 antenna tracker (optional; only needed if calibrating via USB on the Pi)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="<S3_VID>", ATTRS{idProduct}=="<S3_PID>", \
+  SYMLINK+="zerotx-tracker"
+```
+
+Replace the `<...>` placeholders with the actual values from your hardware. Find them by plugging each MCU into the Pi (one at a time, to avoid ambiguity) and running:
+
+```
+udevadm info --query=property --name=/dev/ttyACM0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_SERIAL_SHORT'
+```
+
+The RP2040-Zero in particular has a unit-specific serial number; pin the exact one in the rule so a replacement board (different serial) doesn't silently take the symlink.
+
+Reload udev:
+
+```
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+After replug or reboot, verify:
+
+```
+ls -l /dev/zerotx-*
+```
+
+The symlinks should point at the appropriate `/dev/ttyACM*` or `/dev/ttyUSB*` device nodes.
+
+### 6.12 Auto-login on tty1
+
+The Pi needs to land in a shell session on tty1 with no greeter so `~/.bash_profile` (Section 6.13) can fire `startx` automatically.
+
+Drop a getty override:
+
+```
+sudo systemctl edit getty@tty1
+```
+
+Editor opens. Add:
+
+```
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin <user> --noclear %I $TERM
+```
+
+Save and exit. The empty `ExecStart=` line is required: it clears the inherited value, then the second one replaces it. Substitute your username for `<user>`.
+
+Reload:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl restart getty@tty1
+```
+
+Reboot to verify login lands on tty1 as `<user>` without prompting.
+
+### 6.13 .xinitrc kiosk launcher
+
+In `~/.bash_profile` (create if it doesn't exist), trigger `startx` on tty1:
+
+```
+[ -f ~/.bashrc ] && . ~/.bashrc
+
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx
+fi
+```
+
+Only on tty1, only when no X session is already running. Other ttys (e.g., SSH) get a normal shell.
+
+`startx` runs `~/.xinitrc`. This file is the entire X session: no window manager, just disable screensaver, position the displays, wait for the daemon, launch two Chromium kiosks. Create `~/.xinitrc`:
+
+```
+#!/bin/sh
+# Disable screensaver, DPMS, and screen blanking. Without these the
+# kiosks would dim themselves after a few minutes of no input.
+xset s off
+xset -dpms
+xset s noblank
+
+# Hide the mouse cursor after 1s idle. Even though there's no mouse
+# at runtime, X draws a cursor at startup and it sits there.
+unclutter -idle 1 -root &
+
+# Position the two displays side by side. The output names depend on
+# how the kernel labels the Pi 400's two micro-HDMI ports. Run
+# `xrandr` once to see what your hardware reports (typical: HDMI-1
+# and HDMI-2, or HDMI-A-1 and HDMI-A-2). Adjust the names below.
+xrandr --output HDMI-1 --auto --pos 0x0 \
+       --output HDMI-2 --auto --right-of HDMI-1
+
+# Wait for the daemon's HTTP server. zerotxd.service starts in
+# parallel with the X session, so the kiosks would otherwise fail
+# to load on the first try and depend on Chromium's own retry. A
+# couple of curl probes is faster and quieter.
+until curl -s -o /dev/null http://127.0.0.1:8080/api/v1/health ; do
+    sleep 0.5
+done
+
+# Common Chromium flags shared by both kiosks.
+common_flags="--kiosk --noerrdialogs --disable-infobars \
+    --disable-translate --no-first-run --no-default-browser-check \
+    --disable-features=TranslateUI \
+    --disable-component-extensions-with-background-pages \
+    --disable-background-networking \
+    --disable-renderer-backgrounding \
+    --disable-extensions \
+    --disk-cache-size=33554432"
+
+# HUD on the left display. Each kiosk needs its own user-data-dir;
+# Chromium locks the profile and refuses to launch a second instance
+# against the same one. /tmp is tmpfs so the dirs vanish on reboot,
+# which is what we want for a stateless kiosk.
+#
+# Both kiosks land on /status first. The operator clicks "Proceed
+# to flight" once the system check is satisfied; the daemon flips
+# the syscheck gate, both pages observe the transition over the
+# WebSocket stream, and each navigates to the path encoded in its
+# ?dest= query (?dest=hud -> /hud/, ?dest=map -> /map/). A daemon
+# reboot resets the gate so the operator sees /status again on
+# next boot.
+chromium-browser $common_flags \
+    --user-data-dir=/tmp/chromium-hud \
+    --window-position=0,0 --window-size=1920,1080 \
+    "http://127.0.0.1:8080/status/?dest=hud" &
+
+# Map on the right display. Adjust the X offset to match the left
+# display's width.
+chromium-browser $common_flags \
+    --user-data-dir=/tmp/chromium-map \
+    --window-position=1920,0 --window-size=1920,1080 \
+    "http://127.0.0.1:8080/status/?dest=map" &
+
+# Keep the X session alive as long as either kiosk is running. If
+# both exit, X exits and the user gets dropped back to the shell on
+# tty1, at which point .bash_profile re-launches startx.
+wait
+```
+
+Make it executable:
+
+```
+chmod +x ~/.xinitrc
+```
+
+**Display arrangement:** if your displays land in different positions or different resolutions than the script assumes, SSH in while X is running and check actual output names and modes:
+
+```
+DISPLAY=:0 xrandr
+```
+
+Edit `~/.xinitrc` to match (output names, `--auto` vs explicit `--mode 1920x1080`, `--pos` and `--window-position`/`--window-size` values).
+
+**HUD/Map mapping:** if the HUD lands on the Map physical screen and vice versa, swap the two `--window-position` lines in `.xinitrc` rather than relabeling the cables. The kiosk-to-display assignment is purely a software config; cables stay as wired.
+
+### 6.14 Daemon binary deploy
+
+Cross-compile from a workstation (preferred; keeps the Go toolchain off the Pi):
+
+```
+# On the workstation, in the repo:
+GOOS=linux GOARCH=arm64 go build -o /tmp/zerotxd ./pi/daemon/cmd/zerotxd
+scp /tmp/zerotxd <user>@<pi-host>:/tmp/
+
+# On the Pi:
+sudo install -m 0755 /tmp/zerotxd /usr/local/bin/zerotxd
+```
+
+The daemon expects a working-directory layout under `~/zerotx/`:
+
+```
+~/zerotx/
+  pi/daemon/web/          # web UI static assets (HUD + Map kiosks)
+  third_party/piper/       # piper binary (from Section 6.8)
+  third_party/voices/      # piper voice models
+  recordings/              # flight recordings written here
+  sounds/                  # pre-baked alarm samples
+  configs/                 # EdgeTX model YAML files
+  maptiles/                # PMTiles files for offline tile serving
+```
+
+If your repo lives elsewhere, adjust the paths in the systemd unit (Section 6.15) accordingly.
+
+### 6.15 zerotxd systemd unit
+
+Create `/etc/systemd/system/zerotxd.service`:
+
+```
+[Unit]
+Description=ZeroTX daemon
+Wants=network.target
+After=network.target
+
+[Service]
+Type=simple
+User=<user>
+WorkingDirectory=/home/<user>
+ExecStart=/usr/local/bin/zerotxd \
+    -api 127.0.0.1:8080 \
+    -port /dev/zerotx-rp2040 \
+    -iohub-port /dev/zerotx-mega \
+    -web-dir /home/<user>/zerotx/pi/daemon/web \
+    -recordings-dir /home/<user>/zerotx/recordings \
+    -sounds-dir /home/<user>/zerotx/sounds \
+    -piper-binary /home/<user>/zerotx/third_party/piper/piper \
+    -model /home/<user>/zerotx/configs/big_talon_zerotx.yml \
+    -site-lat -22.91 -site-lon -47.06 \
+    -gps-port /dev/ttyAMA1 \
+    -heartbeat-gpio 17
+
+Restart=on-failure
+RestartSec=5
+
+# Resource hygiene: the daemon doesn't need elevated privileges and
+# shouldn't touch root-owned files. ProtectSystem= and friends guard
+# against accidents in development; remove if they conflict with a
+# specific feature added later.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/<user>/zerotx/recordings /tmp /run /var/run
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`Wants=network.target` (not `network-online.target`) is the non-blocking line. The daemon doesn't need internet to start; weather and tile fetches degrade gracefully when offline.
+
+Substitute your username for `<user>` throughout. Adjust:
+- `-site-lat` and `-site-lon` to your home field
+- `-model` to your active EdgeTX model YAML (drop the flag if you don't use one yet)
+- `-gps-port /dev/ttyAMA1` — drop this flag if no Pi-attached GPS is fitted
+- `-heartbeat-gpio 17` — drop this flag if no heartbeat LED is fitted
+
+Enable and start:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable --now zerotxd.service
+```
+
+Verify:
+
+```
+systemctl status zerotxd.service
+journalctl -u zerotxd -f
+```
+
+Should be `active (running)`. Logs should show the daemon opening the RP2040 and Mega ports, starting its HTTP server on 8080, and beginning the mapper loop.
+
+### 6.16 Pi 400 optimizations
+
+Reduce CPU load and tighten boot. Two Chromium kiosks on a Pi 400 sit around 70-80% CPU; the optimizations below trim that, mostly by trimming GPU/CPU contention and reducing background work.
+
 #### GPU memory split
-#### Disable unused services
+
+`/boot/firmware/config.txt`:
+
+```
+gpu_mem=128
+```
+
+128 MB to the GPU helps both Chromium kiosks run smoothly. Combine with the RTC/UART/audio overlays from Section 6.10 in one edit pass.
+
 #### CPU governor
+
+For consistent performance under the kiosk load:
+
+```
+echo 'performance' | sudo tee /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+```
+
+This applies to one CPU; the kernel propagates the policy across all four cores. To persist across reboot, either install `cpufrequtils` (apt) and edit `/etc/default/cpufrequtils`, or drop a small unit:
+
+```
+sudo tee /etc/systemd/system/cpu-governor.service <<EOF
+[Unit]
+Description=Set CPU governor to performance
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable cpu-governor.service
+```
+
 #### Browser flags
-#### tmpfs for noisy directories
-### SSD backup procedure
+
+Already included in the `common_flags` variable in `~/.xinitrc` (Section 6.13). Listed here for reference:
+
+```
+--disable-features=TranslateUI
+--disable-component-extensions-with-background-pages
+--disable-background-networking
+--disable-renderer-backgrounding
+--disable-extensions
+--disk-cache-size=33554432
+```
+
+#### tmpfs for noisy directories (optional)
+
+Trades durability for write reduction. With a USB SSD, this is mostly belt-and-suspenders.
+
+`/etc/fstab`:
+
+```
+tmpfs /tmp                tmpfs defaults,noatime,size=512M       0 0
+tmpfs /var/log            tmpfs defaults,noatime,size=64M        0 0
+```
+
+Note: `journalctl` history is lost on reboot if `/var/log` is tmpfs. ZeroTX's own log buffer (the `/api/v1/logs` endpoint) doesn't depend on disk-persisted journals, so this is fine.
+
+#### Boot speed measurement
+
+Once everything is wired, measure:
+
+```
+systemd-analyze
+systemd-analyze blame | head -20
+systemd-analyze critical-chain
+```
+
+Typical Pi 400 + Pi OS Lite + this setup: 18-25 seconds from kernel start to `multi-user.target`, plus 3-5 seconds for X + Chromium to reach the kiosk pages. Total cold boot to operational kiosks: roughly 25-30 seconds.
+
+If `systemd-analyze blame` flags a service taking >5 s and you don't need it, mask it. Common culprits on Lite:
+
+- `apt-daily.service`, `apt-daily-upgrade.service` — disable if the Pi is rarely online
+- `man-db.service` — slow first-run, mask
+- `e2scrub_all.service` — mask
+- `dpkg-db-backup.service` — mask
+
+Mask with `sudo systemctl mask <name>`. Re-run `systemd-analyze blame` to confirm the bottleneck moved.
+
+### 6.17 SSD backup
+
+Once provisioning is complete and the system is verified working (the verification checklist lives in Section 7), image the SSD on another machine:
+
+```
+# On a workstation, with the SSD plugged in via USB:
+sudo dd if=/dev/<ssd_device> of=zerotx-bootstrap-$(date +%Y%m%d).img bs=4M status=progress
+gzip zerotx-bootstrap-$(date +%Y%m%d).img
+```
+
+Store the compressed image off-Pi (NAS, cloud backup, secondary SSD, whatever you trust).
+
+This is the canonical baseline for cloning to a fresh SSD. Re-image after any major Pi-side change: kernel update, daemon dependency change, audio reconfig, addition of new udev rules, etc. The cost is ~30 minutes; the value is "back to a known good state in 15 minutes when something gets corrupted at the field."
 
 ## 7. First-boot verification
 

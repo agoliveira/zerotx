@@ -4,7 +4,7 @@
 
 Day-to-day procedures: launch the system, fly with it, recover from common failures. Audience is me at the box, in the field or on the bench, wanting it to work.
 
-For architecture see `docs/ARCHITECTURE.md`. For wiring see `docs/CONNECTIONS.md`. For first-time provisioning see `docs/BOOTSTRAP.md`.
+For architecture see `docs/ARCHITECTURE.md`. For wiring see the builder's manual Section 4 (`docs/manuals/BUILDER.md`). For first-time provisioning see the builder's manual Section 6.
 
 ## Cold start sequence
 
@@ -16,7 +16,7 @@ For architecture see `docs/ARCHITECTURE.md`. For wiring see `docs/CONNECTIONS.md
    - ESP32: HUB75 panel briefly shows firmware version, then transitions to IDLE.
    - RP2040: hardware watchdog active; no visible indicator beyond USB enumeration.
 5. Pi reaches autostart. Chromium kiosks launch on both LCDs.
-6. Daemon autostarts (systemd unit, see `docs/BOOTSTRAP.md`), connects to all USB devices, transitions panel to IDLE.
+6. Daemon autostarts (systemd unit, see builder's manual Section 6.15), connects to all USB devices, transitions panel to IDLE.
 
 Expected end state: VFD shows ready text, panel in IDLE mode, HUD shows "no telemetry" or last cached state, Map centered on home.
 
@@ -128,7 +128,7 @@ Mode changes are made via radio, not via GCS.
 
 ## Antenna tracker (optional, extended configuration only)
 
-The pole-end ESP32-S3 antenna tracker is an optional add-on used in the extended cable configuration (see `docs/CONNECTIONS.md`). When present, it is autonomous: once configured for the site, it tracks the aircraft based on CRSF GPS frames it sees passing through on the wired link. The daemon is not involved; tracker behavior survives Pi reboots and daemon restarts. In default cable configuration there is no tracker on the line and this section can be skipped.
+The pole-end ESP32-S3 antenna tracker is an optional add-on used in the extended cable configuration (see the builder's manual Section 4.7.2 and 4.7.3). When present, it is autonomous: once configured for the site, it tracks the aircraft based on CRSF GPS frames it sees passing through on the wired link. The daemon is not involved; tracker behavior survives Pi reboots and daemon restarts. In default cable configuration there is no tracker on the line and this section can be skipped.
 
 ### First-time site setup
 
@@ -332,7 +332,7 @@ Symptom: Map shows blank tiles outside São Paulo state.
 
 Diagnose: `tilewarm` only prefetches around current position; the bulk pmtiles file at `maptiles/sp-state-sat.pmtiles` only covers SP state.
 
-Fix: for in-state gaps, let `tilewarm` catch up. For out-of-state coverage, build new pmtiles for the target area on `stan` (see `tools/maps/` and `docs/BOOTSTRAP.md`).
+Fix: for in-state gaps, let `tilewarm` catch up. For out-of-state coverage, build new pmtiles for the target area on `stan` (see `tools/maps/`).
 
 ## Diagnostic tools
 
@@ -485,8 +485,7 @@ Verify in Map browser: zoom to a known coordinate, confirm imagery loads.
 ## See also
 
 - `docs/ARCHITECTURE.md`: system overview
-- `docs/CONNECTIONS.md`: physical wiring and topology
-- `docs/BOOTSTRAP.md`: first-time Pi provisioning, systemd unit, udev rules
+- `docs/manuals/BUILDER.md`: physical wiring (Section 4), Pi provisioning (Section 6), pinout reference (Appendix A)
 - `docs/protocols/display.md`: HUB75 panel command grammar
 - `docs/DECISIONS.md`: locked decisions
 - `docs/ROADMAP.md`: pinned and backlog items

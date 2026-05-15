@@ -8,7 +8,7 @@ For locked decisions that should not be re-litigated, see `docs/DECISIONS.md`.
 
 Items deferred to a specific later moment, not abandoned.
 
-- **Pi 400 CPU optimization**: currently 70-80% load with two browsers. Profile per-component, evaluate the optimization flags listed in `docs/BOOTSTRAP.md`, measure each in isolation. Goal: comfortable headroom for telemetry and TTS bursts.
+- **Pi 400 CPU optimization**: currently 70-80% load with two browsers. Profile per-component, evaluate the optimization flags listed in the builder's manual Section 6.16, measure each in isolation. Goal: comfortable headroom for telemetry and TTS bursts.
 - **Stan-as-datahub V2**: replay tool architecture pinned for later. Stan would host replay sessions for offline analysis and bench testing without involving the live daemon.
 - **Daemon-side semantic consumers for IO board events**: LDR-driven auto-brightness, buzzer alarm pattern engine, encoder UI binding, button event semantics. Plumbing exists in `iohub`; consumers don't yet.
 - **`PRAGMA busy_timeout=5000`** in `tools/maps/sat-download/main.go`. SQLite write contention during long downloads.
@@ -18,7 +18,7 @@ Items deferred to a specific later moment, not abandoned.
 Smaller items, off the critical path. Append as they surface.
 
 - Power regulator topology fully documented in the builder's manual Section 4.2: replace TODO sections with measured values once the build is final.
-- ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into `docs/BOOTSTRAP.md`.
+- ESP32 udev `idVendor` and `idProduct` confirmed for the specific board in use, plugged into the builder's manual Section 6.11.
 - VFD brightness control: if CU20025ECPB-W1J exposes a software-readable contrast or brightness line, wire it to ambient light (LDR) alongside the planned panel auto-brightness.
 
 ## Open questions

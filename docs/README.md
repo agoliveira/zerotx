@@ -10,7 +10,6 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | future-me, 18 months out | system overview, components, data flows, daemon subsystem map |
 | [OPERATIONS.md](OPERATIONS.md) | me at the box | cold start, daemon launch, pre-flight, recovery procedures |
-| [BOOTSTRAP.md](BOOTSTRAP.md) | me reflashing the Pi | bare-metal provisioning from blank SSD |
 | [DECISIONS.md](DECISIONS.md) | future-me | locked decisions, do not re-litigate |
 | [ROADMAP.md](ROADMAP.md) | future-me | pinned work, B-tier backlog, open questions |
 
@@ -25,7 +24,7 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 
 ## Reference docs
 
-- [manuals/BUILDER.md](manuals/BUILDER.md): builder's manual (case BOM in Section 2, wiring in Section 4, full pinout reference in Appendix A)
+- [manuals/BUILDER.md](manuals/BUILDER.md): builder's manual (case BOM in Section 2, wiring in Section 4, Pi provisioning in Section 6, full pinout reference in Appendix A)
 - [edgetx-yaml-notes.md](edgetx-yaml-notes.md): EdgeTX model YAML format notes
 - [howto/bench-test-sitl.md](howto/bench-test-sitl.md): INAV SITL plus X-Plane bench setup
 
