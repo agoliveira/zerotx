@@ -4097,9 +4097,457 @@ banks when planning future expansions (I2S DAC, additional UARTs, etc.)
 rather than picking pins by free-from-function logic alone.
 
 ### B. USB device IDs and udev rule templates
+
+Canonical reference for the per-MCU udev rules. Section 6.11 walks the install steps; this appendix is the lookup target when you need to verify or recreate the rules from scratch.
+
+#### B.1 Known USB IDs
+
+| MCU / Board | Vendor ID | Product ID | Notes |
+|---|---|---|---|
+| RP2040-Zero (Waveshare, official Pico) | `2e8a` | `000a` | Pico CDC interface. Serial number is unit-specific; pin the exact serial in the rule. |
+| Arduino Mega 2560 R3 (official) | `2341` | `0042` | Some clones report different VID/PID; verify each unit. |
+| Arduino Mega 2560 R3 (clone with CH340) | `1a86` | `7523` | Common CH340 USB-serial bridge clone. |
+| ESP32 DevKit V1 (Silicon Labs CP2102 bridge) | `10c4` | `ea60` | Most common ESP32 dev board USB-serial bridge. |
+| ESP32 DevKit V1 (WCH CH9102 bridge) | `1a86` | `55d4` | Alternative bridge used in some clones. |
+| ESP32-S3 DevKit-C-1 (native USB) | `303a` | `1001` | When flashed via the native-USB port. |
+| ESP32-S3 DevKit-C-1 (UART bridge) | varies | varies | Same as ESP32 DevKit V1 depending on which UART chip is fitted. |
+
+Confirm any board's actual IDs before pinning them in a udev rule:
+
+```
+udevadm info --query=property --name=/dev/ttyACM0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_SERIAL_SHORT'
+```
+
+Or list all USB devices with their IDs:
+
+```
+lsusb
+```
+
+#### B.2 Canonical udev rules file
+
+`/etc/udev/rules.d/99-zerotx.rules` (full annotated version):
+
+```
+# ZeroTX MCU udev rules.
+# Place at /etc/udev/rules.d/99-zerotx.rules.
+# After editing, reload with:
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+# RP2040 CRSF generator: pin the specific board's serial so a replacement
+# board (different serial) doesn't silently inherit the symlink.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", \
+  ATTRS{serial}=="REPLACE_WITH_ACTUAL_SERIAL", SYMLINK+="zerotx-rp2040"
+
+# Arduino Mega 2560 (R3 official). No serial filter; multiple Megas on
+# the same host would collide on this rule, but the build assumes one.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0042", \
+  SYMLINK+="zerotx-mega"
+
+# Arduino Mega 2560 clone (CH340 bridge variant). Uncomment if applicable.
+#SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", \
+#  SYMLINK+="zerotx-mega"
+
+# ESP32 DevKit V1 (CP2102 bridge variant).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
+  SYMLINK+="zerotx-esp32"
+
+# ESP32-S3 antenna tracker (optional). Only relevant if doing USB-CDC
+# calibration on the Pi (rare; usually done from workstation).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", \
+  SYMLINK+="zerotx-tracker"
+```
+
+Replace `REPLACE_WITH_ACTUAL_SERIAL` with the value from `udevadm info` for your specific RP2040 board.
+
+If you have a CH340-bridge Mega instead of an official R3, swap the commented and uncommented rules.
+
+#### B.3 Verifying rules took effect
+
+After reload:
+
+```
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+ls -l /dev/zerotx-*
+```
+
+Expected output (with all four MCUs plugged in):
+
+```
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-rp2040  -> ttyACM0
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-mega    -> ttyACM1
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-esp32   -> ttyUSB0
+lrwxrwxrwx 1 root root 7 ... /dev/zerotx-tracker -> ttyACM2
+```
+
+Missing symlinks indicate rule mismatch; see Section 9.3.
+
 ### C. zerotxd.service unit reference
-### D. Daemon config files (paths, schemas, examples)
+
+Canonical reference for the systemd unit. Section 6.15 walks the install. This appendix is the lookup target.
+
+#### C.1 Canonical unit body
+
+`/etc/systemd/system/zerotxd.service`:
+
+```
+[Unit]
+Description=ZeroTX daemon
+Wants=network.target
+After=network.target
+
+[Service]
+Type=simple
+User=<user>
+WorkingDirectory=/home/<user>
+ExecStart=/usr/local/bin/zerotxd \
+    -api 127.0.0.1:8080 \
+    -port /dev/zerotx-rp2040 \
+    -iohub-port /dev/zerotx-mega \
+    -display-port /dev/zerotx-esp32 \
+    -web-dir /home/<user>/zerotx/pi/daemon/web \
+    -recordings-dir /home/<user>/zerotx/recordings \
+    -sounds-dir /home/<user>/zerotx/sounds \
+    -piper-binary /home/<user>/zerotx/third_party/piper/piper \
+    -voices-dir /home/<user>/zerotx/third_party/voices \
+    -model /home/<user>/zerotx/configs/big_talon_zerotx.yml \
+    -maptiles-dir /home/<user>/zerotx/maptiles \
+    -site-lat -22.91 -site-lon -47.06 \
+    -gps-port /dev/ttyAMA1 \
+    -gps-baud 9600 \
+    -heartbeat-gpio 17
+
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/<user>/zerotx/recordings /home/<user>/.cache/zerotx /tmp /run /var/run
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### C.2 Key flag semantics
+
+| Flag | Purpose |
+|---|---|
+| `-api <addr>` | API server bind address. `127.0.0.1:8080` keeps it local-only. Empty disables the API entirely. |
+| `-port` | RP2040 USB-CDC device. Auto-detect if empty; explicit symlink path is more reliable. |
+| `-iohub-port` | Mega 2560 USB-CDC device. `log` substitutes a logging scaffold (development). Empty disables the IO hub. |
+| `-display-port` | HUB75 panel ESP32 USB-CDC device. Empty disables panel output. |
+| `-fc-tcp-addr` | INAV SITL endpoint. Replaces the RP2040 wire path when set (bench/dev mode). |
+| `-model` | EdgeTX-derived ZeroTX model YAML. Defines channels, switches, mixes, alerts. |
+| `-recordings-dir` | Flight recordings directory. Must be writable by `<user>`. Listed in `ReadWritePaths`. |
+| `-sounds-dir` | EdgeTX-compatible audio sample directory. `<dir>/<lang>/<sample>.wav` layout. |
+| `-sounds-lang` | Subdirectory under `-sounds-dir` (e.g., `en`, `pt`). Default `en`. |
+| `-piper-binary` | Path to Piper TTS executable. Empty disables on-demand TTS. |
+| `-voices-dir` | Piper voice files (`.onnx` + `.onnx.json`). |
+| `-maptiles-dir` | PMTiles archive directory for offline map tiles. Empty falls back to online proxy. |
+| `-site-lat`, `-site-lon` | Configured flight site as decimal degrees. Fallback origin when no GPS lock. |
+| `-gps-port`, `-gps-baud` | Optional Pi-attached GPS NMEA source. Empty disables (default). |
+| `-heartbeat-gpio` | Pi GPIO line for the heartbeat LED. `-1` disables (default). |
+| `-no-audio` | Disable audio playback entirely. |
+| `-no-recordings` | Disable flight recording entirely. |
+| `-no-weather` | Disable weather subsystem entirely. |
+| `-no-tilewarm` | Disable opportunistic satellite tile pre-warm. |
+| `-v` / `-v-logic` | Verbose logging. |
+
+This is not the full flag list. Run the daemon with `-h` for the complete current set (the flag list evolves with the daemon).
+
+#### C.3 Reload procedure
+
+After any edit to the unit:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl restart zerotxd.service
+journalctl -u zerotxd.service -f
+```
+
+Watch for "active (running)" in the journal.
+
+#### C.4 Common modifications
+
+- **Add SITL bench mode**: add `-fc-tcp-addr <workstation_ip>:5762` to the ExecStart. Remove when SITL testing is done.
+- **Disable map tiles for headless test**: add `-no-online-tiles` and either point `-maptiles-dir` at an empty directory or leave it empty.
+- **Reduce log volume**: remove `-v` and `-v-logic` flags.
+
+### D. Daemon config files
+
+The daemon reads several config files from the user's home directory. This appendix lists them.
+
+#### D.1 EdgeTX model YAML (`~/zerotx/configs/<model>.yml`)
+
+The daemon's model definition is loosely derived from EdgeTX model files. It defines:
+
+- **Channels** (1-16): name, source (joystick axis, switch, constant), processing (rate, expo, weight).
+- **Switches**: physical (case button, encoder) and logical (gate combinations of physical state).
+- **Mixes**: channel computations combining sources, switches, and inputs.
+- **Alerts**: telemetry-threshold-triggered audio/visual events. Configurable severity (info/notice/warning/critical) and threshold.
+- **Per-flight metadata**: model name, image (bitmap path), aircraft type.
+
+See `docs/edgetx-yaml-notes.md` for the schema details. The reference model in the repo is `configs/big_talon_zerotx.yml`; new models follow the same format.
+
+#### D.2 IO HAL JSON (`~/.config/zerotx/iohal.json`)
+
+Mega 2560 pin map and per-pin polarity flags. Optional; only needed if your wiring differs from the compiled-in defaults (Appendix A.2). Written by `tools/zerotx-iohal-config -export` and pushed back by the same tool with a JSON file argument.
+
+Schema (`configs/iohal.example.json` in the repo):
+
+```
+{
+  "pins": {
+    "vfd0_rs": { "pin": 30 },
+    "vfd0_en": { "pin": 31 },
+    "vfd0_d4": { "pin": 32 },
+    "button_0": { "pin": 38 },
+    "led_0":    { "pin": 44, "flags": ["active_low"] },
+    "relay_0":  { "pin": 22 },
+    "ws_data":  { "pin": 49 }
+  }
+}
+```
+
+Keys map to `HalPinId` enum members in `firmware/io/src/hal.h`. Each entry has a `pin` (Mega pin number) and optional `flags` (array; currently supports `active_low` for inverted-polarity outputs).
+
+The HAL EEPROM keeps the canonical state; the JSON file is for off-line editing and version control.
+
+#### D.3 Network class file (`~/.config/zerotx/netclass.json`)
+
+Operator-declared network class. The daemon adjusts its network behavior (tile prefetch aggressiveness, weather refresh rate, telemetry tee policies) based on whether it's on Home (your network at home), Field (mobile / tethered / unknown), or Lab (development). Schema is two keys:
+
+```
+{
+  "class": "Home",
+  "ssid": "your-home-ssid"
+}
+```
+
+`class` is one of `Home`, `Field`, `Lab`. `ssid` is optional; daemon does best-effort SSID detection if absent. Default is "Home" if the file is missing.
+
+#### D.4 Hardware baseline (`/etc/zerotx/hardware-baseline.yaml`)
+
+Captured by `zerotx-bench`, this YAML records the expected hardware state (which MCUs, what versions, what peripherals). The daemon compares against this at startup and surfaces mismatches as preflight blockers.
+
+Generate with:
+
+```
+sudo systemctl stop zerotxd
+sudo /tmp/zerotx-bench -capture-baseline > /tmp/hardware-baseline.yaml
+sudo mv /tmp/hardware-baseline.yaml /etc/zerotx/hardware-baseline.yaml
+sudo systemctl start zerotxd
+```
+
+Empty or missing file disables self-check (the `-hardware-baseline ""` flag).
+
+#### D.5 Sounds directory (`~/zerotx/sounds/`)
+
+EdgeTX-compatible audio sample directory. Layout:
+
+```
+~/zerotx/sounds/
+  en/
+    armed.wav
+    disarmed.wav
+    low_battery.wav
+    rth.wav
+    <event>.wav
+  pt/
+    armed.wav
+    ...
+```
+
+The daemon plays `<sounds-dir>/<sounds-lang>/<event>.wav` when triggered by an alert. The `-sounds-lang` flag picks the language subdirectory.
+
+`scripts/fetch-voices.sh` doesn't populate these (it fetches Piper TTS voices for narration, not pre-baked event samples). Populate manually or copy from an EdgeTX sounds pack.
+
+#### D.6 Recordings directory (`~/zerotx/recordings/`)
+
+SQLite databases, one per flight. Filename format: `flight-<timestamp>.db`. Schema is internal to the daemon's recorder package; the `zerotx-replay` tool is the supported reader.
+
+`-keep-recordings <N>` retains the N most recent recordings; older ones are deleted on save. Default 10.
+
 ### E. Wiring diagrams and case-layout reference
-### F. Schematic and source file inventory (what's in the repo, where)
+
+> **Placeholder.** This appendix is intended to hold the canonical wiring diagrams (SVG schematic-style drawings) and case-layout drawings (mechanical drawings showing panel cutouts, component placement, cable routing). It depends on Section 3 (Mechanical assembly) being complete, which is deferred until first physical build with the 3D-printed panels fitted.
+>
+> In the interim:
+> - **Topology block diagram**: `docs/images/topology.svg`, embedded in Section 1.
+> - **Per-component pin reference**: Appendix A.
+> - **Per-subsystem wiring text**: Section 4.
+>
+> When Section 3 lands, this appendix will be populated with the matching mechanical and schematic-level drawings.
+
+### F. Schematic and source file inventory
+
+Repository tour for builders looking for "where does X live?"
+
+#### F.1 Top-level layout
+
+```
+~/zerotx/
+├── README.md             Repository overview
+├── SAFETY.md             Safety conventions and procedures
+├── CHANGELOG.md          Project-wide changelog
+├── LICENSE               License
+├── Makefile              Top-level convenience targets
+├── configs/              Daemon config examples (EdgeTX YAML, HAL JSON)
+├── docs/                 Project documentation
+│   └── manuals/          The Builder's Manual (this document) and User Manual
+├── firmware/             MCU firmware source
+│   ├── crsf/             RP2040 CRSF generator (cmake + pico-sdk)
+│   ├── io/               Mega 2560 IO board (PlatformIO)
+│   ├── display/          ESP32 HUB75 panel driver (PlatformIO)
+│   └── tracker/          ESP32-S3 antenna tracker (PlatformIO)
+├── geo/                  Geographic data sources for post-flight narration
+├── pi/                   Pi-side Go code
+│   └── daemon/           zerotxd source (cmd/zerotxd) and packages
+├── scripts/              Helper scripts (voice fetch, build helpers)
+├── sounds/               Reference audio samples (EdgeTX-compatible layout)
+└── tools/                Host-side and Pi-side Go tools
+    ├── zerotx-bench      Hardware diagnostic web UI (bench-only)
+    ├── zerotx-iohal-config   Mega HAL configurator
+    ├── zerotx-replay     Flight recording summariser
+    ├── build-geo.sh      Geographic database builder
+    ├── fetch-hud-fonts.sh    HUD font fetcher
+    ├── maps/             PMTiles tile-build pipeline
+    └── run-daemon-desktop.sh    Convenience launcher for desktop dev
+```
+
+#### F.2 Documentation map
+
+| File | Audience | Scope |
+|---|---|---|
+| `README.md` (top) | new visitor | repo overview, what ZeroTX is, quickstart pointers |
+| `SAFETY.md` | every reader | safety conventions, e-stop, failsafe chain summary |
+| `CHANGELOG.md` | maintainer / users | project-wide change history |
+| `docs/manuals/BUILDER.md` | someone building or maintaining the hardware | this manual |
+| `docs/manuals/USER.md` | operator at the box | (planned) operations, pre-flight, in-flight, post-flight |
+| `docs/ARCHITECTURE.md` | maintainer | system overview, component responsibilities, design rationale |
+| `docs/OPERATIONS.md` | me at the box | cold start, daemon launch, pre-flight, recovery |
+| `docs/DECISIONS.md` | future-me | locked decisions, why-we-chose-this records |
+| `docs/ROADMAP.md` | maintainer | pinned items, backlog, open questions |
+| `docs/README.md` (in docs/) | navigator | index of docs/ contents |
+| `docs/edgetx-yaml-notes.md` | model author | schema notes for model YAML files |
+| `docs/howto/bench-test-sitl.md` | bench tester | INAV SITL setup details |
+| `docs/protocols/display.md` | firmware author | HUB75 panel wire protocol |
+| `firmware/<sub>/README.md` | firmware author | per-MCU build/flash, source layout, design notes |
+| `tools/<sub>/README.md` | tool author | per-tool build/run, design notes |
+
+#### F.3 Source file map for the firmware
+
+| File | What it generates |
+|---|---|
+| `firmware/crsf/CMakeLists.txt` | RP2040 build |
+| `firmware/crsf/src/main.c` | RP2040 main entry point |
+| `firmware/crsf/src/crsf.c` | CRSF frame packing/parsing |
+| `firmware/crsf/src/ipc.c` | USB-CDC IPC protocol with daemon |
+| `firmware/crsf/src/status_led.c` | WS2812 status LED driver |
+| `firmware/crsf/src/input_arm.c` | Arm key input |
+| `firmware/crsf/src/input_momentary.c` | Momentary push-button input |
+| `firmware/io/platformio.ini` | Mega 2560 build (atmelavr) |
+| `firmware/io/src/main.cpp` | Mega main entry / loop / dispatcher |
+| `firmware/io/src/hal.h`, `hal.cpp` | Mega HAL (pin map, EEPROM persistence) |
+| `firmware/io/src/<subsystem>.h`, `<subsystem>.cpp` | Per-Mega subsystem (vfd, glcd, button, led, relay, ws2813, ldr, buzzer, servo, encoder, lcd) |
+| `firmware/display/platformio.ini` | ESP32 build (espressif32) |
+| `firmware/display/src/main.cpp` | ESP32 firmware (single .cpp; renderer + protocol parser) |
+| `firmware/tracker/platformio.ini` | ESP32-S3 build (espressif32) |
+| `firmware/tracker/src/*.cpp` | ESP32-S3 firmware (byte pump core 1, parser core 0, az/el math, servo PWM, NVS, calibration console) |
+
+#### F.4 Source file map for the daemon and tools
+
+| File | What it generates |
+|---|---|
+| `pi/daemon/cmd/zerotxd/main.go` | zerotxd binary entry point and flag parsing |
+| `pi/daemon/<package>/*.go` | Per-subsystem packages (mapper, recorder, narrator, weather, ipc, crsf, joystick, vfd, panel, gps, heartbeat, etc.) |
+| `pi/daemon/web/` | Embedded web GUI (HUD, Map, /status, /logs) |
+| `tools/zerotx-bench/main.go` | bench tool entry; subsystem probes in `probe_*.go` |
+| `tools/zerotx-iohal-config/main.go` | HAL config tool |
+| `tools/zerotx-replay/main.go` | replay tool |
+
+#### F.5 Generated artifacts
+
+Build outputs (not in repo; produced by the toolchains):
+
+| Source | Build artifact |
+|---|---|
+| `firmware/crsf/` | `firmware/crsf/build/zerotx-fw.uf2` |
+| `firmware/io/` | `firmware/io/.pio/build/megaatmega2560/firmware.hex` |
+| `firmware/display/` | `firmware/display/.pio/build/<env>/firmware.bin` |
+| `firmware/tracker/` | `firmware/tracker/.pio/build/<env>/firmware.bin` |
+| `pi/daemon/` (cross to arm64) | `/tmp/zerotxd-pi` (built per Section 0.10) |
+| `tools/<sub>/` | `tools/<sub>/<sub>` |
+
 ### G. Glossary
+
+Terms used throughout this manual.
+
+| Term | Definition |
+|---|---|
+| **ARM (state)** | The state of the FC where motors will spin and the aircraft will respond to channel inputs. ZeroTX's arm state machine gates this with multiple pre-arm conditions. |
+| **BOOTSEL** | RP2040's boot-selection mode, entered by holding BOOT during USB plug-in. Exposes the chip as a USB mass-storage volume for drag-and-drop UF2 flashing. |
+| **CRSF** | Crossfire Serial Protocol. The wire protocol between the case (RP2040) and the ELRS module, carrying channel intents (case → module) and telemetry (module → case). Default baud 400000. |
+| **CRSF GPS frame** | A specific CRSF telemetry frame carrying the aircraft's GPS position. Used by the antenna tracker to compute az/el. |
+| **DAC** | Digital-to-Analog Converter. The USB audio device plugged into the powered hub; converts the daemon's digital audio stream into the analog line-level signal feeding the amplifier. |
+| **e-stop** | Emergency stop. The physical mushroom-button on the case that, when pressed, immediately interrupts power to the ELRS module via NC contacts. Independent of software. |
+| **ELRS** | ExpressLRS. The radio system used. The ZeroTX case houses an ELRS TX module that receives CRSF from the RP2040 and broadcasts to the receiver on the aircraft. |
+| **EdgeTX** | Open-source transmitter firmware. ZeroTX's model YAML format is loosely derived from EdgeTX's model files. |
+| **failsafe** | Aircraft-side: the FC behavior when it loses RX signal (drop motors, land, RTH, etc., per FC config). System-side: the chain of events triggered by ZeroTX losing daemon heartbeat (HOLD → FAILSAFE → CRSF stop → ELRS RX_LOSS). |
+| **FC** | Flight Controller. The board on the aircraft (typically running INAV or Betaflight) that receives CRSF and drives motors and surfaces. |
+| **HAL** | Hardware Abstraction Layer. The Mega's pin-map and per-pin polarity-flags system. Stored in EEPROM, runtime-configurable via `zerotx-iohal-config`. |
+| **HOLD (state)** | RP2040 state after ~200ms of no daemon heartbeat. Still emitting CRSF (holding last channel values), but ~600ms away from FAILSAFE. |
+| **HUB75** | LED matrix panel interface. The ZeroTX panel uses two chained P2.5 64x32 HUB75 panels driven by the ESP32. |
+| **INAV** | Flight controller firmware. The intended FC for ZeroTX aircraft. |
+| **iohub** | Daemon-side term for the Mega 2560 IO board. |
+| **kiosk** | A Chromium browser running in `--kiosk` mode, displaying a daemon-served page on a fixed display. ZeroTX runs two: HUD and Map. |
+| **maptiles** | Map tile imagery, served either from a PMTiles archive on disk (offline) or via the daemon's online tile proxy (when network is available). |
+| **MAX490** | RS-422 transceiver IC. Required for the antenna-tracker configuration; optional for cable runs >5m. |
+| **mwp** | Mission Planner companion (the "Mission with palette"). Optional tee target for CRSF telemetry. |
+| **NVS** | Non-Volatile Storage. ESP32-S3 / tracker's persistent settings store; holds station GPS, servo trims, servo limits. |
+| **PENDING (state)** | RP2040 state at boot, before the daemon has connected. Amber solid status LED. |
+| **PMTiles** | Single-file format for raster or vector map tiles. Used for offline tile serving. |
+| **Pi 400** | Raspberry Pi 400 (the keyboard-form-factor Pi 4). The ZeroTX brain. |
+| **RP2040** | Raspberry Pi RP2040 microcontroller. Specifically the Waveshare RP2040-Zero used in this build. The CRSF generator / safety co-processor. |
+| **RS-422** | A differential serial signaling standard. Used in ZeroTX's extended cable configuration for the tracker path. |
+| **RX_LOSS** | ELRS / receiver-side condition when no valid CRSF frames are received within the RX timeout. Triggers the FC's failsafe behavior. |
+| **safety co-processor** | Term used for the RP2040: it runs the autonomous watchdog and timing for the failsafe chain, independent of the Pi/daemon. |
+| **SITL** | Software In The Loop. INAV SITL is a simulated FC running on a workstation; ZeroTX talks to it over TCP for bench testing. |
+| **station GPS** | The GPS coordinates configured into the antenna tracker as its fixed origin for az/el calculations. Set in NVS via the calibration console. |
+| **TTS** | Text-To-Speech. ZeroTX uses Piper (https://github.com/rhasspy/piper) for on-demand TTS narration. |
+| **udev** | Linux device-management subsystem. Creates and manages `/dev/*` symlinks at device plug-in. ZeroTX uses udev rules to map MCU USB-CDC devices to stable `/dev/zerotx-*` symlinks. |
+| **UF2** | USB Flashing Format. The file format used by the RP2040 BOOTSEL flash path. |
+| **VFD** | Vacuum Fluorescent Display. The Noritake CU20025ECPB-W1J 2x20 display on the case panel. |
+
 ### H. Changelog
+
+Builder's Manual revision history. Project-wide changes live in `CHANGELOG.md` at the repo root.
+
+#### v1.0 (current)
+
+Initial complete revision. Created by absorbing the previously-scattered docs (`docs/hardware-bom.md`, `docs/CONNECTIONS.md`, `docs/hardware-pinout.md`, `docs/BOOTSTRAP.md`, `docs/BOOTSTRAP-minimal.md`) into a single, standalone reference. Source docs deleted from the repo as their content landed here.
+
+Sections drafted: 0 (workstation prep), 1 (system overview), 2 (BOM), 4 (wiring), 5 (firmware flashing), 6 (Pi provisioning), 7 (first-boot verification), 8 (bench test), 9 (troubleshooting), and Appendices A, B, C, D, F, G, H.
+
+Sections deferred: 3 (mechanical assembly) and Appendix E (wiring diagrams and case-layout reference). Both depend on first physical build with 3D-printed panels; will be backfilled then.
+
+Locked decisions baked into v1.0:
+
+- Single 12VDC input only; no internal PSU or UPS
+- Powered USB hub with two 12V→5V bucks (Pi, hub)
+- MAX490 required only for inline antenna tracker; optional otherwise
+- 3D-printed panels primary, cut acrylic optional fallback
+- Pi OS Bookworm Lite (64-bit) only
+- Pi-side daemon as system unit, not user unit
+- Kiosks via `~/.xinitrc` on tty1 auto-login (no display manager)
+- `Wants=network.target` (not `network-online.target`) for non-blocking boot
+- RP2040 toolchain: pico-sdk + arm-gcc-none-eabi + cmake + picotool
+- USB DAC on powered hub as canonical audio path
+
+#### Future changes
+
+Append new entries at the top of this appendix. Format: version, date, change summary. Significant design or wiring changes should also update `docs/DECISIONS.md` at the repo level so they're discoverable independently of the manual.
