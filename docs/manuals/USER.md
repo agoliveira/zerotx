@@ -364,15 +364,323 @@ The tracker's behavior is autonomous and survives Pi reboots / daemon restarts. 
 
 ## 5. Post-flight
 
-> **Placeholder.** Section to be filled in next patch in the USER.md series.
+You've landed. This section covers the procedures from "stick disarm" to "recordings safe on disk."
+
+### 5.1 Disarm and cooldown
+
+1. **Land the aircraft.** Standard landing per your model's mission profile.
+2. **Disarm** via the inverse handshake: arm key UP combined with throttle low. The audio narrator announces "Disarmed." The HUD shows DISARMED state. The HUB75 panel transitions to POSTFLIGHT.
+3. **Wait ~30 seconds** for POSTFLIGHT to time out and the panel to return to IDLE. During POSTFLIGHT the daemon finalizes the recording file and runs any post-flight processing (geographic enrichment, recording summary, etc.).
+
+Don't immediately power down. The next subsection explains why.
+
+### 5.2 Recording flush behavior
+
+Recordings flush to disk as the daemon runs, but the final finalization (closing the SQLite file properly, writing metadata) happens at POSTFLIGHT and at daemon stop.
+
+Default location: `~/zerotx/recordings/flight-<timestamp>.db`. Override with `-recordings-dir` flag (see Builder's Manual Appendix C). Disable entirely with `-no-recordings`.
+
+Retention: the 10 most-recent recordings by default (`-keep-recordings N`). Older recordings auto-delete on save. If you want to preserve a specific flight, copy it off the Pi before the next flight.
+
+**Important:** pulling power before the daemon shuts down cleanly can leave the recording file in an inconsistent state. SQLite is resilient but not bulletproof. Use the shutdown sequence in Section 6.6.
+
+### 5.3 Recording review with zerotx-replay
+
+The `zerotx-replay` tool reads a recording file and prints a flight summary: session metadata, telemetry statistics, the chronological event log, and audio/alarm events grouped together. It does **not** re-evaluate analysis (no re-running narrator, no re-running alert rules); the recordings already capture what the daemon decided at the time.
+
+```
+$ zerotx-replay ~/zerotx/recordings/flight-<timestamp>.db
+```
+
+The tool is a separate Go module that builds standalone on any desktop or server without the daemon's hardware-specific dependencies. You can copy the `.db` files off the Pi to a workstation for analysis:
+
+```
+$ scp <pi_host>:~/zerotx/recordings/flight-*.db /tmp/
+$ /path/to/zerotx-replay /tmp/flight-<timestamp>.db
+```
+
+What the summary tells you:
+
+- Total flight duration (arm to disarm)
+- Telemetry frame statistics (received, dropped, gaps)
+- Mode transitions with timestamps
+- Threshold crossings (battery, altitude, distance)
+- Alarm/audio events
+- Any errors the daemon logged in flight
+
+This is your post-flight debrief data. Useful for: confirming the planned flight matched the actual flight, spotting issues you didn't notice in flight, retrospective analysis of failures.
+
+### 5.4 Geographic enrichment
+
+If the daemon was launched with `-geo-db <path>` (an offline place-name database built by `tools/build-geo.sh`), post-flight narration enriches the flight summary with place names: "Flew over Itu, peak altitude 850m AMSL at 14:23." This happens during POSTFLIGHT phase, before the recording is finalized.
+
+The geo database is built once on a workstation with internet access and copied to the Pi. Field operation doesn't require an internet connection for enrichment to work.
+
+To disable enrichment: omit the `-geo-db` flag from the daemon launch. The narrator skips the geo-enrichment step and the post-flight summary uses raw coordinates.
 
 ## 6. Field operations
 
-> **Placeholder.** Section to be filled in next patch in the USER.md series.
+Operating in the field — at a site away from your build bench. This section covers everything that's specific to deploying, operating, and packing up the case at a location.
+
+### 6.1 Site setup
+
+A typical site setup:
+
+1. **Place the case** on a stable surface (table, vehicle tailgate, dedicated stand). The case is heavy enough that wind won't tip it; orient it so:
+   - You face the kiosks comfortably.
+   - The keylock and e-stop are reachable without crossing your body.
+   - The pole bulkhead is on the appropriate side for your antenna pole placement.
+2. **Run the pole cable** from the case bulkhead to where the antenna pole will stand. Avoid kinks and tight bends; the cable carries CRSF (single-wire or RS-422 differential) and any cable damage degrades the link.
+3. **Set up the antenna pole** at the appropriate location. The ELRS module's antenna should have a clear path to the aircraft's flight area, ideally with no obstructions in the line-of-sight angle the aircraft will operate within.
+4. **Connect the pole cable** at the pole end (project box if extended config; ELRS module directly if default config).
+5. **Connect the 12V source** to the rear panel. Verify the source can sustain the case's runtime needs (see 6.2).
+6. **Run the cold start sequence** (Section 2).
+
+If you're at a familiar site, you may have notes on where the pole goes relative to the case, what angle gives the best link, where the sun is at the planned flight time. Keep a per-site notebook entry; ZeroTX itself doesn't store this.
+
+### 6.2 Power management
+
+The case runs on 12VDC at the rear panel jack. No internal battery; no internal UPS. **Power loss = case off.** Plan accordingly.
+
+**Power source options:**
+
+| Source | Pros | Cons | Notes |
+|---|---|---|---|
+| SLA battery + charger pack | Independent, predictable runtime | Heavy (7-12 kg for useful capacity), needs maintenance | Most common field option. Pick a 12V 12-18 Ah battery for ~3-5 hours of runtime. |
+| LiFePO4 battery | Lighter, longer cycle life | More expensive; needs a 12V-compatible LiFePO4 to avoid voltage swing | Modern alternative. 12V 20Ah is comfortable. |
+| Vehicle 12V (cigarette lighter / dedicated wiring) | Convenient if at the vehicle | Vehicle electrical noise may affect audio; vehicle off = case off | Use a dedicated outlet, not the cigarette lighter for high-current draws. |
+| Bench supply | Steady, configurable | Tethered to AC | For bench testing and home-field flying near AC power. |
+
+**Runtime budget:** the case draws roughly 2-4 A at 12V depending on what's active (peak ~6 A with all kiosks rendering, audio playing, panel at max brightness, MCUs running). For a 12V 12Ah SLA, expect ~3 hours of usable runtime before the SLA dips below cutoff voltage.
+
+**Voltage thresholds:**
+
+- ZeroTX's internal regulators handle 11-14V comfortably. Below 11V the 5V bucks start brownout-resetting MCUs; below 10.5V the Pi 400 itself drops out.
+- If using an SLA, **stop flying before the battery dips below 11.5V** — your aircraft going into failsafe due to ground-station brownout is a worst-case failure.
+
+**Hot-swapping power:** the case does not support hot-swap. Powering down between source changes is mandatory (run the shutdown sequence in 6.6).
+
+### 6.3 Cable handling and stress points
+
+The pole cable is the single most failure-prone item on a field deployment. It gets stepped on, tripped over, sun-baked, repeatedly bent at the same points. Habits that prolong it:
+
+- **Cable strain relief.** At both ends (case bulkhead, pole-end project box or ELRS), the cable should not hang under its own weight from the connector. Route it so the weight goes through a sleeve or zip-tie attached to the case/pole, not through the connector contacts.
+- **Avoid running cable across walking paths.** When unavoidable, tape it down and flag the location.
+- **Coil for transport.** Loose-coil (not figure-8) when packing; tight coils cause kinks that degrade signal integrity over time.
+- **Inspect connectors before each session.** A bent pin is a coin flip on link reliability.
+- **5m default; longer means extended configuration.** If you need >5m, you should already be running RS-422 with MAX490 transceivers per the extended config (Builder's Manual Section 4.7.2). Long runs of single-wire CRSF at 400kbaud are unreliable past ~5m.
+
+If a cable fails mid-flight (you see RX_LOSS at the aircraft), see Section 7.4.
+
+### 6.4 Wind and weather thresholds
+
+ZeroTX itself doesn't care about weather (it's a static ground station). But the daemon surfaces weather-aware alerts (if `-no-weather` isn't set) that inform your operational decisions:
+
+| Alert | Default threshold | Configurable flag | Meaning |
+|---|---|---|---|
+| `wind_gust_high` | gusts > 30 km/h | `-wx-max-gust-kmh` | Strong gusts; small aircraft will struggle |
+| `wind_speed_high` | sustained > 20 km/h | `-wx-max-wind-kmh` | Sustained wind exceeds typical safe operating |
+| `wind_shear_high` | 80m wind direction differs from surface by >45° AND speed ratio >2 | `-wx-shear-dir-deg`, `-wx-shear-speed-ratio` | Significant shear; aircraft may behave unexpectedly at altitude |
+| `precip_imminent` | precipitation probability > 60% in next 3 hours | `-wx-precip-pct` | Rain or wet conditions coming |
+| `near_sunset` | within 30 minutes of sunset | `-wx-near-sunset-min` | Light degrading; consider RTH timing |
+| `golden_hour_active` | sun elevation < 6° | `-wx-golden-elev-deg` | Glare and visibility concerns |
+
+These alerts narrate via audio when they trigger. Don't fly when they do without explicit awareness. The daemon doesn't *block* flight on weather (that's the operator's call), but it does shout about it.
+
+You can adjust thresholds per site if needed (e.g., a coastal site with more wind tolerance). Edit the daemon flags in the systemd unit and reload.
+
+### 6.5 Updating components
+
+Field updates (between flights, at the site) work for the daemon and Pi-side software. **Firmware updates** (MCU reflashing) generally require a workstation; defer firmware updates to bench time.
+
+**Daemon update (if you've pushed a new build to git):**
+
+```
+$ cd ~/zerotx
+$ git pull
+$ scripts/build-daemon.sh
+$ sudo systemctl restart zerotxd.service
+```
+
+Build script outputs to `bin/zerotxd`. To rebuild everything (daemon + tools + firmware), run `make` at the repo root. In the field, only the daemon usually needs touching.
+
+**Firmware update at the bench** (covered for reference; not a field procedure):
+
+- ESP32 panel: `cd ~/zerotx/firmware/display && pio run -t upload`
+- Mega IO: `cd ~/zerotx/firmware/io && pio run -t upload`
+- RP2040 CRSF: build the `.uf2` (see `firmware/crsf/README.md`), BOOTSEL the RP2040, copy the file
+- ESP32-S3 tracker: `cd ~/zerotx/firmware/tracker && pio run -t upload`
+
+All firmware update flows are covered in Builder's Manual Section 5. In the field with no laptop, you can't do them; carry a known-good SSD image (see Builder's Manual Section 6.17) as the field-recovery option instead.
+
+### 6.6 End-of-day shutdown
+
+**Order matters.** Don't pull power before the daemon shuts down — recordings need to flush, USB-CDC buffers need to drain.
+
+1. **Stop the daemon cleanly:** `sudo systemctl stop zerotxd.service`. Wait for the journal to confirm clean exit (`Stopped ZeroTX daemon`).
+2. **Wait for clean exit.** Recording flush completes; serial buffers drain. Typically ~2 seconds.
+3. **Shut down the Pi:** `sudo poweroff`. Wait for the Pi to shut down (LCDs go dark, SSD activity LED stops).
+4. **Flip the keylock to OFF.** 12V rail drops to zero.
+5. **Disconnect the 12V source** (unplug battery, disconnect bench supply, etc.).
+6. **Disconnect the pole cable** at both ends. Coil for transport.
+7. **Pack the pole** (collapse if telescoping; bag the ELRS module separately).
+8. **Stow the case.** Protect the front panel from impacts and the rear ports from debris.
+
+Doing this in reverse order (power off, then daemon stop) loses the last few seconds of recording data and risks USB-CDC buffer corruption. Don't do it.
 
 ## 7. Recovery procedures
 
-> **Placeholder.** Section to be filled in next patch in the USER.md series.
+Things sometimes go wrong in flight or right at the field. This section covers the fast-action scenarios where you need to act now, not return to the bench.
+
+For pre-flight or bench-side issues, see Section 8 (Run-time troubleshooting). For deep build-time recovery (MCU bootloader corruption, etc.), see Builder's Manual Section 9.
+
+### 7.1 Failsafe triggered at the field
+
+Your aircraft just engaged its failsafe behavior (RTH, descend, level, whatever the FC is configured for). What do you do?
+
+**First: don't panic.** Failsafe behaviors are designed to bring the aircraft home or down safely. Let the FC do its job. Your job is to figure out **why** it triggered.
+
+**Possible triggers (in rough probability order):**
+
+1. **Range / link degradation:** the aircraft flew far enough that link quality dropped below the FC's RX_LOSS threshold. Check the HUD's last-known link quality and distance. Most common cause.
+2. **Pole cable broken:** the cable between case and pole became disconnected or damaged. ELRS module went dark from the case's perspective; aircraft saw RX_LOSS.
+3. **Ground station fault:** daemon crashed, Pi rebooted, RP2040 stopped emitting. Check the kiosks: are they showing live state, or are they frozen? Are they showing `/status` again (which means daemon was reset)?
+4. **E-stop pressed:** accidentally tripped. The e-stop's mushroom is usually obvious if pressed (latched position).
+5. **Aircraft-side issue:** receiver fault, ELRS module on aircraft glitch, antenna issue. ZeroTX can't tell you this from the ground.
+
+**Action while the aircraft is failsafing:**
+
+- Track its course visually. Failsafe is usually RTH; the aircraft will return.
+- If the kiosks are frozen, **don't reboot anything** — even with daemon dead, the aircraft is autonomously RTH'ing. Adding chaos doesn't help.
+- Once the aircraft is back overhead, the ground station MUST be alive again for you to take manual control. So *if* the daemon is dead, restart it before the aircraft is back in range:
+  ```
+  sudo systemctl restart zerotxd.service
+  ```
+- Wait for the kiosks to reload, RP2040 LED to go green, ELRS module to indicate link restored.
+- Disarm via the joystick when you have control again.
+
+If the trigger was the ground station (#3 or #4 above), don't fly again until you understand why and have fixed it. Re-arming and re-launching with a flaky ground station risks a worse failsafe next time.
+
+### 7.2 Lost aircraft
+
+No telemetry, no visual. The aircraft is somewhere out there and you don't know where.
+
+**Last known position:** the Map kiosk's track line ends at the last received GPS frame. That's your search starting point.
+
+**Heading and altitude trend:** the HUD's last-known values give you a vector. If the aircraft was descending when telemetry died, the search radius is smaller than if it was cruising.
+
+**Time since last contact:** the longer it's been, the larger the search area. Aircraft tend to keep moving in a roughly straight line until something interrupts them (battery, terrain, structural failure).
+
+**Recovery steps:**
+
+1. Note the time. Glance at your watch or phone.
+2. Note last-known position from the Map kiosk before anything else changes.
+3. Note last-known altitude, heading, and battery from the HUD.
+4. If your model has GPS-based RTH and there's still battery, the aircraft *may* still be RTH'ing without telemetry coming back. Wait 30-60 seconds at the home position before assuming lost.
+5. If clearly lost, mark the last-known position on a paper map or phone GPS. Plan a search pattern based on heading, time, terrain.
+6. **Don't power down the ground station yet** — if the aircraft comes back into range, telemetry resumes and you'll see it instantly.
+
+This is an operational concern, not a ZeroTX failure mode. The system can't recover a lost aircraft for you; it can only give you the last data it had.
+
+### 7.3 Daemon dies mid-flight (Pi up, kiosks dark)
+
+You see: the Pi 400 is on (HDMIs receiving signal, but content is frozen or black), the RP2040 LED has transitioned from green → amber-blink → red-blink (FAILSAFE), audio narration stopped, no new telemetry on either kiosk.
+
+**The failsafe chain has already triggered.** The aircraft saw RX_LOSS within ~950ms of daemon death and is now engaged in its own failsafe behavior.
+
+**Action:**
+
+1. **Don't panic.** The chain works. The aircraft is autonomously RTH'ing or whatever its FC configures.
+2. **Restart the daemon:**
+   ```
+   sudo systemctl restart zerotxd.service
+   ```
+   If you can SSH in, do that. If not, you may need to plug a USB keyboard into the front-panel USB-A and switch to a tty via Ctrl+Alt+F2 then `sudo systemctl restart zerotxd.service`.
+3. **Watch for the RP2040 LED to return to green.** That confirms daemon is back and CRSF is emitting.
+4. **Wait for kiosks to refresh.** They may need a Ctrl+R if they cached an error state.
+5. **Confirm telemetry returns.** When the aircraft is back in range (RTH'ing), telemetry comes back through the link; HUD repopulates.
+6. **Take manual control via the joystick** to land normally.
+
+If the daemon won't restart, see Section 8.4.
+
+### 7.4 Lost telemetry mid-flight (link alive, no data)
+
+You see: kiosks are alive, RP2040 LED green, ELRS module appears to be transmitting. But the HUD shows frozen telemetry values; the Map's aircraft icon hasn't updated in seconds.
+
+The link is up but no FC data is arriving. Possibilities:
+
+- **Aircraft-side telemetry stalled:** FC isn't sending telemetry frames (could be FC config change, FC fault, receiver fault). Aircraft is still receiving channels from you; it's only the return path that's broken.
+- **ELRS module on the aircraft glitched:** uncommon; usually transient.
+- **Tracker (extended config) stopped pumping bytes:** ground-station-side telemetry path is broken.
+
+**Action:**
+
+1. **Keep flying.** If channels are reaching the aircraft (i.e., it still responds to your stick inputs), you can fly it home by visual line-of-sight even without telemetry.
+2. **If you can't see the aircraft, fly home via memory/skill.** You've lost the GPS readout on the Map but the FC is still receiving inputs.
+3. **Land as soon as practical.**
+4. **Diagnose post-flight.** Don't fly more until you know why telemetry stalled.
+
+If telemetry is degrading slowly (link quality dropping rather than abrupt freeze), that's a range issue; fly closer and the link will recover.
+
+### 7.5 Tracker stopped tracking (extended config)
+
+Tracker reports `hold` or `no-telem` in the HUD's link panel. The pole-end gimbal is frozen.
+
+**The link is unaffected.** The tracker is transparent in the byte-pump path; even if it's not parsing GPS frames, CRSF still flows through. You can keep flying. The only loss is the autonomous antenna pointing.
+
+**Action:**
+
+- **Continue the current flight** if visible/in-range. The tracker's failure isn't aircraft-side.
+- **Mark the issue mentally** for post-flight investigation.
+- **Bench-side diagnosis:** see Section 7.6 if it's a complete firmware failure (byte-pump broken), or just calibration/parser issue (handled at the bench per Builder's Manual Section 5.4.4).
+
+### 7.6 Tracker firmware failure (extended config; need bypass)
+
+The tracker is the problem: byte pump broken, no CRSF reaches the ELRS module from the case, telemetry doesn't return. Aircraft has failsafed because nothing is coming back from the link.
+
+You're at the field. You need to bypass the tracker physically.
+
+**Planned bypass jumper (TODO, not yet implemented):** a hardware bypass jumper in the project box that routes the cable's RS-422 pair directly to the ELRS module's CRSF input, skipping the tracker. When this lands, you set the jumper and continue.
+
+**Until the jumper exists:** manual bypass requires opening the project box and physically rewiring the cable directly to the ELRS module's CRSF connector. This is a field operation only if you have a screwdriver and 2 minutes. Otherwise, **the flight is over** until you can do the bypass at the bench.
+
+This is a known limitation of the current build. The jumper item is on the roadmap.
+
+### 7.7 Map tile gaps mid-flight
+
+You see: the aircraft has flown into an area where the Map kiosk shows blank/white tiles. No coverage.
+
+**Cause:** the offline PMTiles archive (`maptiles/sp-state-sat.pmtiles` for the SP-state default; per `-maptiles-dir` flag) only covers a specific region. If you're at a site outside that region, you have no tile coverage there.
+
+**Action in flight:**
+
+- The aircraft icon and track line still render — they don't need tiles. You can fly by them and the HUD; the Map's geographic context is just gone.
+- **`tilewarm` may catch up if you're online.** If the Pi has internet (Wi-Fi or LTE tether), the daemon's tile-warm subsystem opportunistically fetches tiles around the aircraft's position and caches them. Watch for tiles to fill in as you fly.
+
+**Action between flights:**
+
+- **For in-state gaps:** let `tilewarm` catch up (online, given time).
+- **For out-of-state coverage:** build new PMTiles for the target area at home (workstation, not field), per `tools/maps/` documentation. Copy the file to the Pi's `~/zerotx/maptiles/` and update `-tileset-osm-file` / `-tileset-sat-file` flags if needed.
+
+**Prevention:** check map coverage at the site before takeoff. If the Map kiosk is blank around your planned flight area, you're flying without map context. Acceptable for some pilots, not for others — your call.
+
+### 7.8 Mid-flight peripheral failure
+
+A peripheral (VFD, panel, audio, kiosk) dies mid-flight but everything else is fine. The flight can continue because the failed item isn't on the safety path.
+
+**Triage by what failed:**
+
+| Failed | Critical? | Action |
+|---|---|---|
+| VFD blank or stuck | No | Continue. Auxiliary indicator only. |
+| HUB75 panel dark | No | Continue. Glance-at-a-distance indicator only. |
+| Audio silent | Marginal | Continue but with extra HUD attention; you're flying blind to narration cues. Land as soon as practical. |
+| One kiosk dark | Possible | Continue if you can pilot from the remaining kiosk. Land if both kiosks are needed. |
+| Both kiosks dark | Yes | If channels are still reaching the aircraft, fly it home visually. Otherwise treat as 7.3 (daemon-equivalent failure). |
+| Heartbeat LED dark | No | Continue. Indicator only. |
+| ELRS module indicator dark | Yes | Aircraft is in failsafe; treat as 7.1. |
+
+The rule: peripherals that affect operator awareness (kiosks, audio) are higher-priority to recover. Peripherals that just report state (VFD, panel, heartbeat LED) are not flight-critical.
 
 ## 8. Run-time troubleshooting
 
