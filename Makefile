@@ -5,7 +5,7 @@
 
 SHELL := /usr/bin/env bash
 
-.PHONY: all daemon firmware tools run run-idle flash test test-daemon clean distclean help
+.PHONY: all daemon firmware tools manuals run run-idle flash test test-daemon clean distclean help
 
 all: daemon tools firmware
 
@@ -17,6 +17,9 @@ tools:
 
 firmware:
 	@scripts/build-firmware.sh
+
+manuals:
+	@scripts/build-manuals.sh
 
 run: daemon
 	@scripts/run-daemon.sh $(ARGS)
@@ -63,6 +66,7 @@ help:
 	@echo "  make daemon     build the Go daemon"
 	@echo "  make tools      build the auxiliary Go tools"
 	@echo "  make firmware   build the RP2040 firmware"
+	@echo "  make manuals    build PDF versions of the manuals (pandoc + xelatex)"
 	@echo "  make run        run daemon with Big Talon defaults"
 	@echo "  make run-idle   run daemon in IDLE (no model, no joystick)"
 	@echo "  make flash      copy .uf2 to RPI-RP2 (requires BOOTSEL)"
