@@ -5,10 +5,9 @@ marked **have** are already in hand. Items marked **buy** still need to be
 sourced. Final dimensions, part numbers, and brands are decided at
 procurement time.
 
-![Case layout reference](case-layout.svg)
-
-
-Layout reference: see `case-layout.svg` next to this file.
+> **Case layout diagram:** removed. The mechanical layout is in flux. A
+> replacement diagram will be added once panel positions and the lid/
+> body division are finalized post first physical build.
 
 ## Design summary
 
