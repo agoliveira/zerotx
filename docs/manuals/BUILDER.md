@@ -37,59 +37,11 @@ The defaults are conservative: hardware kill in series with the module DC feed, 
 
 ### Topology block diagram
 
-```
-                              AIRCRAFT
-                                 ^
-                                 |  RF (ELRS)
-                                 |
-                          +------+------+
-                          |  ELRS TX    |   externally pole-mounted
-                          +------+------+
-                                 |
-                                 |  single-wire CRSF (default config)
-                                 |  + 12V + GND, 5m shielded cable
-                                 |
-+ZeroTX case ====================|===========================================+
-|                                |                                           |
-|                                v                                           |
-|                          +-----+----+                                      |
-|                          | RP2040   |  CRSF endpoint                       |
-|                          +-----+----+                                      |
-|                                ^                                           |
-|                                | USB-CDC                                   |
-|                                v                                           |
-|       +----------------------- + -------------------------------+          |
-|       |                  zerotxd  (Go daemon)                   |          |
-|       |          on Raspberry Pi 400, Pi OS Lite                |          |
-|       |    + two Chromium kiosks (HUD, Map) on dual HDMI        |          |
-|       |    + ALSA audio out (samples + Piper TTS)               |          |
-|       +---+----------+-----------+------------+-----------------+          |
-|           |          |           |            |                            |
-|           | USB-CDC  | USB-CDC   | USB HID    | HDMI x2                    |
-|           v          v           |            v                            |
-|       +---+----+ +---+----+      |       +----+-----+                      |
-|       | Mega   | | ESP32  |      |       | HUD LCD  |                      |
-|       | 2560   | | panel  |      |       | Map LCD  |   in case lid        |
-|       | IO hub | | driver |      |       +----------+                      |
-|       +--+--+--+ +---+----+      |                                         |
-|          |  |        |           |                                         |
-|     +----+  |        v           v                                         |
-|     |       |    +---+-------+  +-----------------+                        |
-|     v       v    | HUB75     |  | USB joystick    |                        |
-|   VFD,    panel  | 128x32    |  | (Thrustmaster)  |                        |
-|   GLCD    buttons| LED panel |  | front-panel USB |                        |
-|   on      (6/10) +-----------+  +-----------------+                        |
-|   front          (front panel)                                             |
-|   panel                                                                    |
-|                                                                            |
-+============================================================================+
+![ZeroTX topology](../images/topology.svg)
 
-Optional, not pictured: extended cable configuration replaces the single-wire
-CRSF run with RS-422 (MAX490 pair on each end), which enables an inline
-ESP32-S3 antenna tracker between the cable's pole end and the ELRS module.
-The tracker byte-pumps frames transparently and is invisible to the daemon.
-See Section 4 for cable choices and Section 5 for tracker firmware.
-```
+The case interior groups into four bands: the lid LCDs at the top, the Pi 400 brain in the middle, the three MCU satellites below it, and the front-panel surfaces driven by Mega and ESP32 along the bottom. The USB joystick plugs in externally via a front-panel USB-A jack. The single-wire CRSF cable exits the case to the externally-mounted ELRS TX module on a pole. Bidirectional arrows mark links where data flows both ways (USB-CDC to the MCUs, CRSF to the ELRS module); unidirectional arrows mark display-only or input-only paths (HDMI to the LCDs, USB HID from the joystick, drive lines from Mega and ESP32 to their panel surfaces).
+
+The diagram shows the **default** cable configuration. The **extended** cable configuration replaces the single-wire CRSF run with an RS-422 differential pair (MAX490 transceivers on each end) and adds an inline ESP32-S3 antenna tracker between the cable's pole end and the ELRS module. The tracker byte-pumps frames transparently and is invisible to the daemon. Cable choices in Section 4, tracker firmware in Section 5.
 
 ### Subsystem responsibilities
 
