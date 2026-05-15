@@ -684,22 +684,411 @@ The rule: peripherals that affect operator awareness (kiosks, audio) are higher-
 
 ## 8. Run-time troubleshooting
 
-> **Placeholder.** Section to be filled in next patch in the USER.md series.
+Failures you encounter while operating the system: pre-flight stuck, peripheral misbehaving, daemon-side glitch. Parallel to Builder's Manual Section 9 but focused on "I'm at the box trying to fly" rather than "I'm at the bench trying to build."
+
+For mid-flight scenarios (something happened while flying), see Section 7. For deep recovery (MCU bricked, requires opening the case for ICSP/SWD work), see Builder's Manual Section 9.12.
+
+### 8.1 "Proceed to flight" stays disabled
+
+Symptom: both kiosks sit on `/status` after boot; the Proceed button is greyed out; the hint reads `Blocked by: device down: <name>`.
+
+Diagnose by reading the blocker name:
+
+- **`device down: rp2040`** — the RP2040 isn't sending heartbeats. Either the USB-CDC link to the Pi is wedged, or the RP2040 itself is in a reset loop. Check `ls /dev/serial/by-id/ | grep -i pico` and `journalctl -u zerotxd | grep ipc`. If the device path is present but heartbeats aren't arriving, suspect firmware (see 8.4 RP2040 reset loop).
+- **`device down: hdmi-displays`** — one or both HDMI cables aren't reporting `connected` in `/sys/class/drm`. The daemon needs both kiosk displays attached. Quick check:
+  ```
+  for f in /sys/class/drm/card*-HDMI-*/status; do echo $f $(cat $f); done
+  ```
+
+Fix: address the named blocker. The status page re-polls every 2 seconds, so a fresh `connected` state propagates within a couple of seconds. If everything looks right but the button stays disabled, ask the daemon what it thinks:
+
+```
+$ curl -s http://127.0.0.1:8080/api/v1/preflight | jq '.blockers, .devices'
+```
+
+The page enforces the gate visually; the daemon also enforces server-side. `POST /api/v1/syscheck/dismiss` returns HTTP 409 with the blocker list when not ready, so a stale page that somehow lets you click will still be refused.
+
+### 8.2 Pi won't reach kiosks
+
+Symptom: both LCDs show Pi boot output stuck for >60 seconds, or land at a tty1 shell prompt and never start X.
+
+Diagnose:
+
+- **Boot stuck at kernel messages:** SSH in (or plug a USB keyboard) and check `dmesg | tail -50`. Usually a hardware issue (USB device failing enumeration, etc.) or a corrupted SSD filesystem.
+- **Boot reached login but X never started:** `~/.bash_profile` didn't fire `startx` on tty1. Confirm the file exists and has the conditional `startx` block (Builder's Manual Section 6.13). If recent change, syntax error.
+- **X started but Chromium didn't:** check `~/.xsession-errors`. Common causes: `xrandr` output names changed kernel version; Chromium binary missing or upgraded.
+
+Fix: restart X manually from a USB keyboard:
+
+```
+sudo pkill -KILL Xorg
+# .bash_profile re-runs startx on the next shell session
+```
+
+If X repeatedly fails: it's a configuration issue. Back to Builder's Manual Section 6.13.
+
+### 8.3 Daemon won't start
+
+Symptom: `zerotxd` exits immediately, or systemd shows failed state, or kiosks show `/status` but with no daemon-side state.
+
+Diagnose: read the journal.
+
+```
+$ journalctl -u zerotxd.service -n 50 --no-pager
+```
+
+Common causes (in rough frequency order):
+
+- **Device path missing:** Mega or RP2040 not enumerated. See 8.1 above for the syscheck angle, or check directly:
+  ```
+  $ ls /dev/serial/by-id/
+  $ ls -l /dev/zerotx-*
+  ```
+  If symlinks don't resolve, udev rule issue (Builder's Manual Section 9.3).
+- **Piper binary path wrong:** `-piper-binary /home/<user>/zerotx/third_party/piper/piper` must point at the executable. `ls -la` it.
+- **Model YAML malformed:** if you edited the model file recently, syntax error or schema mismatch. Try launching with no `-model` flag temporarily; if that works, the model file is the issue.
+- **API port already bound:** another process on `127.0.0.1:8080`. Find with `sudo ss -tlnp | grep :8080`; kill it or change the `-api` flag.
+
+Fix: address the specific error from the journal. If it's a transient issue (USB renumbering, etc.), just retry:
+
+```
+$ sudo systemctl restart zerotxd.service
+```
+
+If the daemon enters a restart loop (failing every ~5 seconds per the `Restart=on-failure / RestartSec=5` config), the issue is persistent and won't fix itself with retries.
+
+### 8.4 Mega didn't enumerate
+
+Symptom: daemon log shows `-iohub-port` device not found; VFD dark; panel buttons unresponsive.
+
+Diagnose:
+
+```
+$ ls -l /dev/serial/by-id/ | grep -i mega
+$ dmesg | tail
+```
+
+If absent, the kernel never saw the Mega. Check USB cable to hub, hub power, Mega power LED.
+
+Fix:
+
+1. **Replug Mega USB** at the powered hub.
+2. **Power-cycle the hub** if replug didn't work.
+3. **If still absent**, suspect Mega bootloader corruption; reflash via Builder's Manual Section 5.2 (workstation). For deep bootloader recovery, Builder's Manual Section 9.12.
+
+### 8.5 ESP32 panel dark or scrambled
+
+Symptom: HUB75 panel shows no output, garbage, or wrong colors.
+
+Diagnose:
+
+- **ESP32 USB enumeration:** `ls /dev/serial/by-id/`
+- **Daemon log:** `journalctl -u zerotxd | grep -i display`
+- **Visual:** ESP32 power LED
+
+Fix by symptom:
+
+- **Dark panel, ESP32 enumerated:** daemon not sending commands. Restart daemon. If panel stays dark, check daemon log for the display subsystem state.
+- **Dark panel, ESP32 not enumerated:** replug ESP32 USB at the hub. If absent, suspect ESP32 firmware crash; reflash from workstation (Builder's Manual Section 5.3).
+- **Wrong colors or scrambled:** shift register signal integrity. Open the case, check the HUB75 IDC ribbon for loose pins, reseat. If persistent, suspect ribbon damage or 5V rail sag under load.
+- **Isolation test:** `bin/disptest --help` (workstation/bench tool, sends test patterns directly to the ESP32 over USB-CDC).
+
+### 8.6 RP2040 CRSF watchdog reset loop
+
+Symptom: RP2040 device path keeps disappearing and reappearing every few seconds; daemon log shows repeated port reconnects.
+
+Diagnose: the hardware watchdog inside the firmware resets the chip when a critical loop stalls. Common causes:
+
+- **USB-CDC starvation:** the Pi side is too slow at draining the channel buffer; firmware hits the watchdog.
+- **Firmware bug:** a specific code path stalls under specific input.
+- **Brown-out on 5V:** under-voltage during peripheral activity.
+
+Fix:
+
+- **Check 5V rail under load** with a multimeter at the buck output. If sagging significantly during the moments when the resets happen, your power supply or wiring has a current limit issue.
+- **Replug USB** at the dedicated Pi port (not through the hub if possible) to rule out hub-side issues.
+- **If persistent**, reflash via BOOTSEL mode (Builder's Manual Section 5.1.2). Persistent reset loop after a clean reflash is a firmware bug to file as an issue.
+
+### 8.7 LCD shows no signal
+
+Symptom: HUD or Map LCD black, "no signal" message.
+
+Diagnose: HDMI cable seated, LCD powered, Pi config has both displays enabled.
+
+Fix:
+
+1. **Reseat micro-HDMI** on Pi side and HDMI on LCD side. The micro-HDMI is fragile; a small wiggle from cable strain can break the contact.
+2. **Confirm via `xrandr`** (SSH into the running Pi) that the Pi sees both outputs:
+   ```
+   $ DISPLAY=:0 xrandr
+   ```
+3. **If only one LCD shows in xrandr**, suspect that cable or that specific Pi 400 micro-HDMI port. Try a known-good cable; if still missing, suspect the Pi 400's port itself (rare, requires hardware swap).
+
+### 8.8 VFD blank or garbled
+
+Symptom: VFD shows no characters, random characters, or last state frozen.
+
+Diagnose:
+
+- Mega enumerated? See 8.4.
+- VFD power present? Multimeter at the VFD's VCC.
+- Daemon log shows `vfd` subsystem errors? `journalctl -u zerotxd | grep -i vfd`.
+
+Fix by symptom:
+
+- **Blank**: check VFD 5V power. Cycle Mega to reinit HD44780.
+- **Garbled (random characters that change with activity)**: 4-bit interface timing issue or loose contrast pin. Reseat VFD ribbon.
+- **Katakana characters where ASCII should appear**: floating D7 data line. Builder's Manual Section 9.7 covers the diagnostic; bench-side fix.
+- **Frozen on last state**: daemon stopped pushing updates. Check daemon state and the vfd subsystem log.
+
+### 8.9 Audio silent
+
+Symptom: no alarm sounds, no TTS, panel events not narrated.
+
+Diagnose:
+
+- **ALSA basic test:** `aplay /usr/share/sounds/alsa/Front_Center.wav` produces sound? If yes, ALSA is fine; daemon-side audio routing is the issue.
+- **Daemon log:** `journalctl -u zerotxd | grep -i 'narrator\|audio'`
+
+Fix:
+
+- **`aplay` produces no sound:** ALSA card index is wrong, USB DAC unpowered, amp unpowered, or speaker disconnected. Check `~/.asoundrc` against `aplay -l`. Builder's Manual Section 6.9 covers the audio path.
+- **`aplay` works but daemon is silent:** confirm `-piper-binary` path matches and is executable. If Piper itself runs but produces no audio, ALSA-side default sink isn't what the daemon thinks. Restart daemon after fixing.
+
+### 8.10 Joystick not detected
+
+Symptom: daemon log shows `joystick` no device matching `-joystick-name`; control inputs don't reach the radio.
+
+Diagnose:
+
+```
+$ ls /dev/input/by-id/
+$ lsusb
+```
+
+The joystick must appear in both. If absent: not enumerating.
+
+Fix:
+
+- **Replug joystick** at the powered hub (or front-panel USB-A).
+- **Confirm `-joystick-name`** substring still matches the device name. Defaults to `Thrustmaster`; if you swapped joysticks, the new name may not match.
+- **If still absent**, the joystick itself or the cable is bad. Try a known-good USB device in the same port to rule out the port.
+
+### 8.11 GPS not detected
+
+Symptom: `-gps-port` is set, but the daemon log shows `GPS: ... (continuing without)` at startup, or no `GPS: <port> @<baud>` confirmation line.
+
+Diagnose:
+
+- **Device exists?** `ls /dev/ttyAMA*`. Should show `ttyAMA1` if UART3 overlay is enabled.
+- **NMEA flowing at the right baud?** `sudo cat /dev/ttyAMA1` should produce `$GP...` / `$GN...` lines once per second. If garbage, baud is wrong; set explicitly with `stty -F /dev/ttyAMA1 9600 raw -echo`.
+- **Kernel-level UART issues:** `sudo dmesg | grep -i serial`
+- **Overlay in config?** `grep dtoverlay /boot/firmware/config.txt` should show `uart3`. If absent, edit and reboot.
+
+Fix: most often the wrong device path or baud rate. M6/M7/M10 ship at 9600. Check the breakout wiring: GPS TX must land on the Pi's RX (GPIO 5, header pin 29), GPS RX on the Pi's TX (GPIO 4, header pin 7). A swapped pair shows up as "I can read garbage but the GPS doesn't seem to react"; the daemon logs NMEA parse errors at most once per minute.
+
+This is a non-blocking subsystem: a misconfigured or absent GPS doesn't stop the rest of the daemon. Consumers fall back to `-site-lat` / `-site-lon` or other position sources.
+
+### 8.12 Heartbeat LED stuck or dark
+
+Symptom: `-heartbeat-gpio` is set, but the LED is dark, solid on, or stuck.
+
+Diagnose by current state:
+
+- **Dark, daemon running:** either the 50Hz mapper loop is hung past the 1.5s freshness window (genuine hang; check `journalctl -u zerotxd -f` for the last log line), or the GPIO chip / line is wrong (try `gpioinfo gpiochip0 | grep zerotx-heartbeat` to confirm the line was claimed).
+- **Solid on (rare):** the toggle goroutine itself died after writing high. Restart the daemon. If reproducible, file as a bug — by construction this shouldn't happen.
+- **Solid on, daemon not running:** GPIO line is open-collector floating high; harmless. The daemon will retake it and resume blinking on next start.
+
+Fix: restart the daemon. If the failure mode is "dark while daemon running," the actual problem is upstream of the LED — investigate as a daemon hang.
+
+### 8.13 Web UI won't load or WebSocket dropping
+
+Symptom: HUD or Map browser blank; console shows fetch errors or WebSocket disconnects.
+
+Diagnose:
+
+```
+$ curl http://127.0.0.1:8080/api/logs    # daemon API responding?
+$ systemctl status zerotxd.service       # daemon running?
+$ journalctl -u zerotxd | grep -i netclass    # network classification visible?
+```
+
+Fix:
+
+- **Daemon down:** see 8.3.
+- **Daemon up, browser-side issue:** restart the daemon (forces a clean WebSocket establishment), then reload the kiosk in the browser (Ctrl+R if keyboard accessible; else restart the X session by killing Xorg).
+
+### 8.14 Diagnostic tools
+
+When you need to look deeper, the tools at `bin/` and `tools/` help.
+
+All compiled outputs live in `~/zerotx/bin/`. Source for the daemon and its companion commands is under `pi/daemon/cmd/`; standalone tools are under `tools/`. Every binary accepts `-h` or `--help`.
+
+| Tool | Purpose |
+|---|---|
+| `bin/zerotxd` | The daemon itself. |
+| `bin/disptest` | HUB75 panel test harness. Sends test patterns to the ESP32 directly over USB-CDC. |
+| `bin/zerotx-inspect` | Live state inspector. Reads from the running daemon API; useful for verifying daemon-side state when kiosks misbehave. |
+| `bin/zerotx-axes` | Joystick axis calibration and live monitor. |
+| `bin/geobuild` | Offline geographic database builder (used at bench during initial provisioning). |
+| `bin/zerotx-iohal-config` | HAL pin and flag configurator for Mega IO. |
+| `tools/zerotx-bench/` | Hardware diagnostic web UI (bench-only; refuses to start while `zerotxd` is running). |
+| `bin/zerotx-replay` | Replays recorded flight telemetry (used post-flight). |
+
+`zerotx-bench` deserves a special note: it's the most comprehensive diagnostic available. Stop the daemon (`sudo systemctl stop zerotxd`), run the bench tool, walk through every probe. If a probe reports WARN or FAIL where you expected OK, that's almost certainly your root cause. See Builder's Manual Section 8.4 for the workflow.
 
 ## Appendices
 
 ### A. Daemon flag quick reference
 
-> **Placeholder.** Will mirror the Builder's Manual Appendix C, but framed for operational adjustments (which flags to add/remove for different sites, modes, scenarios). To be filled in next patch.
+Operational subset of the daemon flags. For the full canonical reference see Builder's Manual Appendix C.
+
+**Flags you adjust per site:**
+
+| Flag | Purpose |
+|---|---|
+| `-site-lat`, `-site-lon` | Configured flight site. Update when changing sites. Decimal degrees. |
+| `-model` | Active aircraft model (YAML file in `configs/`). Update when changing aircraft. |
+
+**Flags you toggle for specific scenarios:**
+
+| Flag | When to use |
+|---|---|
+| `-no-audio` | Demo or testing where audio narration would be distracting. Don't fly muted. |
+| `-no-recordings` | Throwaway flights, demos. |
+| `-no-weather` | If weather subsystem is failing repeatedly and you want it out of the way. |
+| `-no-tilewarm` | If tile prefetch is hogging bandwidth on a slow link. |
+| `-no-online-tiles` | Field operation with no uplink; forces offline-only tile serving. |
+| `-fc-tcp-addr` | SITL bench testing. Pointer to INAV SITL endpoint. Remove for real-radio operation. |
+| `-v` | Verbose logging. Add when debugging; remove when stable. |
+| `-v-logic` | Also log logic switch state changes (more verbose). |
+| `-hardware-baseline ""` | Disable the hardware-baseline self-check entirely. |
+
+**Flags configured at build time and rarely changed:**
+
+| Flag | Purpose |
+|---|---|
+| `-api 127.0.0.1:8080` | API server bind. Local-only; should not change. |
+| `-port /dev/zerotx-rp2040` | RP2040 USB-CDC device path. Set by udev. |
+| `-iohub-port /dev/zerotx-mega` | Mega 2560 device path. |
+| `-display-port /dev/zerotx-esp32` | HUB75 panel ESP32 device path. |
+| `-web-dir /home/<user>/zerotx/pi/daemon/web` | Web GUI assets. |
+| `-recordings-dir`, `-sounds-dir`, `-piper-binary`, `-voices-dir` | Set per Builder's Manual Section 6 install paths. |
+| `-maptiles-dir` | PMTiles archive directory. |
+| `-gps-port`, `-gps-baud` | Pi-attached GPS (optional). |
+| `-heartbeat-gpio` | Heartbeat LED (optional). |
+
+Run `zerotxd -h` to see the current full flag list.
 
 ### B. Audio cues catalog
 
-> **Placeholder.** Catalog of every audio narration line the daemon produces, mapped to its trigger condition. To be filled in next patch.
+The daemon narrates events at four audio thresholds (`info`, `notice`, `warning`, `critical`). The default `-audio-threshold notice` means `info`-level events are silent unless explicitly elevated.
+
+**Arm state machine narration:**
+
+| Event | Audio cue |
+|---|---|
+| ARMED | "Armed" |
+| DISARMED | "Disarmed" |
+| Arm failed: throttle not low | "Throttle not low" |
+| Arm failed: arm key not down | "Arm key not down" |
+| Arm failed: not ready | "Not ready" |
+
+**Telemetry-threshold alarms (configurable in the model YAML):**
+
+| Event | Audio cue (default) | Severity |
+|---|---|---|
+| Low battery threshold 1 (e.g. 30%) | "Battery at 30 percent" | warning |
+| Low battery threshold 2 (e.g. 15%) | "Battery low" | critical |
+| GPS fix acquired | "GPS lock" | notice |
+| GPS fix lost | "GPS lost" | warning |
+| Link quality degraded | "Link weak" | warning |
+| Telemetry lost | "Telemetry lost" | critical |
+| RTH triggered | "Returning to home" | critical |
+
+**Flight mode transitions** (announced for each FC-side mode change):
+
+| Event | Audio cue |
+|---|---|
+| ANGLE mode | "Angle" |
+| HORIZON mode | "Horizon" |
+| MANUAL mode | "Manual" |
+| RTH mode | "Return to home" |
+| Other FC-defined modes | Mode name as announced |
+
+**Weather alerts** (if `-no-weather` is not set):
+
+| Event | Audio cue |
+|---|---|
+| `wind_gust_high` | "High gusts" |
+| `wind_speed_high` | "Wind high" |
+| `wind_shear_high` | "Wind shear detected" |
+| `precip_imminent` | "Precipitation imminent" |
+| `near_sunset` | "Approaching sunset" |
+| `golden_hour_active` | "Golden hour" |
+
+**Periodic narration** (configurable via `-narrate-interval` and `-narrate-content`):
+
+If enabled, the daemon narrates a configurable subset of flight values at the configured interval. Example with `-narrate-preset compact` (battery + distance + altitude):
+
+> "Battery 78 percent. Distance 1.2 kilometers. Altitude 120 meters."
+
+Customize via `-narrate-content "battery,distance,altitude,speed,link,mode,time-aloft"` or one of the presets (`compact`, `full`).
+
+Exact wording is sourced from the daemon's narrator package (`pi/daemon/narrator/*.go`). The strings above are illustrative; the actual phrasing may be lightly different and is subject to revision.
 
 ### C. Glossary
 
-> **Placeholder.** Operator-facing subset of the Builder's Manual Appendix G. To be filled in next patch.
+Operator-facing terms. For the full glossary including build-time terminology see Builder's Manual Appendix G.
+
+| Term | Definition |
+|---|---|
+| **ARM / DISARM** | The state of the aircraft's flight controller. ARMED means motors will spin on throttle. ZeroTX gates ARMED with a three-input handshake; see 3.6. |
+| **CRSF** | Crossfire Serial Protocol. The wire format between the case (RP2040) and the ELRS module, carrying channel intents and telemetry. |
+| **e-stop** | Emergency stop. The physical mushroom-button on the case that cuts power to the ELRS module immediately and unconditionally. |
+| **ELRS** | ExpressLRS. The radio system used. The case houses an ELRS TX module. |
+| **failsafe** | The aircraft's behavior when it loses radio input. Configured per-FC; common options are RTH, descend, level, motors-off. |
+| **FC** | Flight controller. The board on the aircraft running INAV or similar. |
+| **HUD** | Heads-Up Display. The left kiosk by default; shows live telemetry. |
+| **kiosk** | A Chromium browser in `--kiosk` mode displaying a daemon page on one of the case's two HDMIs. HUD kiosk and Map kiosk. |
+| **mapper loop** | The daemon's 50 Hz channel computation loop. The heartbeat LED reflects its health. |
+| **narration** | Audio cues spoken via Piper TTS in response to events or periodically. |
+| **NMEA** | Standard format for GPS data sentences (`$GPRMC`, `$GNGGA`, etc.). |
+| **PMTiles** | Single-file format for offline map tile imagery. ZeroTX serves Map kiosk tiles from PMTiles archives. |
+| **PostFlight / PreFlight** | Panel states reflecting workflow phase; not strict daemon-enforced gates. |
+| **Pi 400** | The Raspberry Pi 400 inside the case. ZeroTX's main computer. |
+| **RTH** | Return To Home. An aircraft flight mode that autonomously navigates back to the home position. |
+| **RX_LOSS** | Receiver-side condition: no valid CRSF input within the FC's RX timeout window. Triggers the FC's failsafe. |
+| **SITL** | Software In The Loop. INAV running on a workstation as a simulated FC. Used for bench testing. |
+| **TTS** | Text-To-Speech. ZeroTX uses Piper. |
+| **VFD** | Vacuum Fluorescent Display. The 2x20 character display on the case panel above the HUB75. |
+| **tilewarm** | The daemon's tile-prefetch subsystem. Opportunistically fetches map tiles around the aircraft position when online. |
+| **zerotxd** | The daemon. The main user-space program tying everything together. |
+| **zerotx-replay** | Post-flight analysis tool. Reads recording `.db` files and prints summaries. |
+| **zerotx-bench** | Bench-only diagnostic tool. Probes every device the Pi can see and reports state. |
 
 ### D. Changelog
 
-> **Placeholder.** Version history of this manual. v0.1 entry on creation.
+User Manual revision history. Project-wide changes live in `CHANGELOG.md` at the repo root. Significant operational decisions should also update `docs/DECISIONS.md`.
+
+#### v1.0 (current)
+
+Initial complete revision. Created by absorbing the previously-canonical `docs/OPERATIONS.md` into this single, standalone manual for the daily operator. OPERATIONS.md deleted in the same patch series.
+
+Sections drafted: 1 (system overview, operator-level), 2 (cold start), 3 (pre-flight), 4 (in-flight), 5 (post-flight), 6 (field operations), 7 (recovery procedures), 8 (run-time troubleshooting), and Appendices A through D.
+
+Build-time MCU recovery content (ICSP, SWD) from OPERATIONS.md was moved to Builder's Manual Section 9.12, not absorbed here, because it's bench/build-time territory.
+
+Locked operational decisions baked into v1.0:
+
+- Standalone discipline: USER.md and BUILDER.md are independent; each carries the operator/builder context it needs.
+- Three-input arm handshake (T-low + arm-key-down + momentary-press), inverse-handshake disarm.
+- Two devices gate "Proceed to flight": RP2040 link, both HDMI displays.
+- 12VDC source-agnostic; no internal battery.
+- Shutdown sequence is strict: daemon-stop → Pi poweroff → keylock OFF → power source disconnect.
+- Recordings retention: 10 most-recent by default.
+- Failsafe chain timing: ~950ms total worst-case from joystick disconnect to aircraft RX_LOSS.
+
+#### Future changes
+
+Append new entries at the top of this appendix. Format: version, date, change summary. Major operational changes (new field workflows, threshold changes, recovery procedure updates) should land here. Aircraft-specific or model-specific operational notes belong in the model YAML, not in this manual.

@@ -3352,6 +3352,91 @@ Sometimes the symptom doesn't match any of the above, or the diagnostics all pas
    - Output of `git log --oneline -5` so the maintainer can correlate with code state
 5. **As a last resort, regenerate the Pi from SSD backup** (Section 6.17). If you have a known-good backup from after Section 8 passed, restoring it is often faster than debugging a degraded state.
 
+### 9.12 MCU recovery (last resort)
+
+When the normal upload paths fail — Mega refuses USB programming, or the RP2040 won't enter BOOTSEL — these procedures restore the chip via the debug interface. Both assume physical access to the board, which may require opening the case.
+
+Distinguish "needs recovery" from "needs reflash":
+
+- Normal failures (firmware crash loop, watchdog reset, daemon can't talk to it) usually still respond to USB programming. Try the standard `pio run -t upload` first (Section 5.2 / 5.3 / 5.4) or the BOOTSEL drag-and-drop path for RP2040 (Section 5.1.2).
+- True recovery is for when the bootloader itself is corrupted (Mega) or the BOOTSEL button can't physically reach the operator (sealed case, broken switch). Until that's the case, use the normal path.
+
+#### Mega 2560: ICSP recovery
+
+Symptoms that warrant ICSP: the Mega doesn't enumerate as a USB serial device at all when connected, OR enumerates briefly then drops, OR `avrdude` reports "stk500v2_ReceiveMessage(): timeout" with the bootloader. The USB-to-serial chip (16U2/8U2) is fine — the AVR has lost its bootloader.
+
+What you need:
+
+- An ISP programmer: USBasp (~$5, most common), Arduino-as-ISP (any Uno/Nano with the ArduinoISP sketch), or an Atmel-ICE. The ZeroTX repo doesn't bundle a specific one — use whatever's at hand.
+- A 6-pin (2×3) ICSP cable matching the programmer to the Mega's ICSP header.
+- `avrdude` installed (`sudo apt install avrdude`).
+- The Mega2560 bootloader hex: `/usr/share/arduino/hardware/arduino/avr/bootloaders/stk500v2/stk500boot_v2_mega2560.hex` (Arduino IDE distribution) or the matching path under `~/.arduino15` for a PlatformIO/arduino-cli install.
+
+Mega ICSP header location: the 2×3 pin header labeled "ICSP" adjacent to the ATmega2560 chip (not the 16U2's ICSP, which is a separate 2×3 header near the USB jack). On the standard Mega R3 board layout it sits between the digital pins 50-53 block and the chip itself. **TODO**: confirm whether this header is accessible without unmounting the Mega from the case.
+
+Procedure (USBasp shown; substitute `-c` value for other programmers):
+
+```
+# Verify the programmer sees the chip
+avrdude -p atmega2560 -c usbasp -P usb -v
+
+# Restore the bootloader (path may vary per Arduino install)
+avrdude -p atmega2560 -c usbasp -P usb \
+  -U flash:w:/usr/share/arduino/hardware/arduino/avr/bootloaders/stk500v2/stk500boot_v2_mega2560.hex:i \
+  -U lock:w:0x0F:m
+
+# Restore fuses to Arduino defaults (only if fuses were touched;
+# do NOT run blindly, wrong fuses can semi-brick the chip)
+avrdude -p atmega2560 -c usbasp -P usb \
+  -U lfuse:w:0xFF:m -U hfuse:w:0xD8:m -U efuse:w:0xFD:m
+```
+
+After the bootloader is back, the Mega should enumerate normally over USB. Reflash the IO firmware via the standard path (Section 5.2.2: `pio run -t upload` in `firmware/io/`).
+
+Caveats:
+
+- USBasp clones sometimes need `-B 4` (slow SPI) for the first read on a chip with unknown fuses.
+- The Mega's ICSP header is 5V — don't connect a 3.3V-only programmer without a level shifter.
+- If `avrdude` reports the chip signature as `0x000000` or `0xffffff`, the SPI lines aren't connecting cleanly. Check the cable orientation; the pin-1 indicator on the cable must match the pin-1 indicator on the Mega's ICSP header.
+
+#### RP2040: SWD recovery
+
+Symptoms that warrant SWD: the BOOTSEL button is physically inaccessible (sealed case, broken switch, soldered out), OR the chip is so hung that holding BOOTSEL during a power cycle doesn't expose it as a USB mass-storage device. Most "firmware crash" cases don't need SWD — the watchdog will reset into a normal state and the daemon can recover.
+
+What you need:
+
+- A SWD probe: another Pico flashed with [`picoprobe`](https://github.com/raspberrypi/picoprobe) firmware is the cheapest option (~$4). CMSIS-DAP, J-Link, or a Raspberry Pi's GPIO with openocd also work.
+- A 3-wire connection (SWCLK, SWDIO, GND) from the probe to the RP2040.
+- `openocd` with RP2040 support: `sudo apt install openocd` on Ubuntu 22.04+ ships a recent-enough version, otherwise build from the official rp2040 branch.
+- The firmware .uf2 from `firmware/crsf/build/zerotx-fw.uf2` (or equivalent location after a successful Pico SDK build).
+
+RP2040 SWD pad location: on the Pico the SWD pads (SWCLK, GND, SWDIO) are exposed on the underside of the board near the USB connector, marked as pads rather than a header. **TODO**: confirm whether these pads are wired out to anywhere accessible inside the ZeroTX case — if not, recovery requires unmounting the Pico.
+
+Procedure (picoprobe as the SWD source):
+
+```
+# One-shot flash from a built .uf2
+openocd -f interface/cmsis-dap.cfg -c "adapter speed 5000" \
+  -f target/rp2040.cfg \
+  -c "program firmware/crsf/build/zerotx-fw.uf2 verify reset exit"
+```
+
+Or, if working with a .elf instead:
+
+```
+openocd -f interface/cmsis-dap.cfg -c "adapter speed 5000" \
+  -f target/rp2040.cfg \
+  -c "program firmware/crsf/build/zerotx-fw.elf verify reset exit"
+```
+
+After flash succeeds, the RP2040 reboots into the new firmware. If the BOOTSEL access issue was the only problem, USB programming works again afterward via the normal `cp firmware.uf2 /media/$USER/RPI-RP2/` path on the next firmware update.
+
+Caveats:
+
+- Hold the RP2040's RESET line low while connecting the SWD probe if the chip is in an active crash loop, otherwise openocd may not get a clean halt.
+- `picoprobe` firmware on the source Pico has to match the probe-target protocol the openocd config expects (`cmsis-dap.cfg` for newer picoprobe builds, `raspberrypi-swd.cfg` for the older serial-protocol version).
+- Don't share the SWD probe's USB connection with another openocd instance; serialize attempts.
+
 ## Appendices
 
 ### A. Full pinout reference
@@ -4435,9 +4520,8 @@ Repository tour for builders looking for "where does X live?"
 | `SAFETY.md` | every reader | safety conventions, e-stop, failsafe chain summary |
 | `CHANGELOG.md` | maintainer / users | project-wide change history |
 | `docs/manuals/BUILDER.md` | someone building or maintaining the hardware | this manual |
-| `docs/manuals/USER.md` | operator at the box | (planned) operations, pre-flight, in-flight, post-flight |
+| `docs/manuals/USER.md` | operator at the box | cold start, pre-flight, in-flight, post-flight, field operations, run-time troubleshooting |
 | `docs/ARCHITECTURE.md` | maintainer | system overview, component responsibilities, design rationale |
-| `docs/OPERATIONS.md` | me at the box | cold start, daemon launch, pre-flight, recovery |
 | `docs/DECISIONS.md` | future-me | locked decisions, why-we-chose-this records |
 | `docs/ROADMAP.md` | maintainer | pinned items, backlog, open questions |
 | `docs/README.md` (in docs/) | navigator | index of docs/ contents |

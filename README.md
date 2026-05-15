@@ -99,7 +99,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/model/load \
 curl -s http://127.0.0.1:8080/api/v1/preflight | jq
 ```
 
-For the full deployed launch (model, joystick, RP2040 port, IO board port, site coordinates, tile prefetch) see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+For the full deployed launch (model, joystick, RP2040 port, IO board port, site coordinates, tile prefetch) see the User Manual ([`docs/manuals/USER.md`](docs/manuals/USER.md)) Section 3 and Appendix A.
 
 ## Documentation
 

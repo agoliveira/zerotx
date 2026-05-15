@@ -307,7 +307,7 @@ Wiring detail for both configurations is in the builder's manual Section 4.7 (`d
 - `firmware/tracker/README.md`: ESP32-S3 antenna tracker firmware
 - `firmware/crsf/README.md`: CRSF endpoint firmware
 - `docs/manuals/BUILDER.md`: physical wiring (Section 4) and topology (Section 1)
-- `docs/OPERATIONS.md`: launch and recovery procedures
+- `docs/manuals/USER.md`: launch and recovery procedures
 - `docs/manuals/BUILDER.md`: bare-metal Pi 400 provisioning (Section 6)
 - `docs/DECISIONS.md`: locked architectural decisions
 - `docs/ROADMAP.md`: pinned and backlog items

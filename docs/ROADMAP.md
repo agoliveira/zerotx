@@ -35,4 +35,4 @@ Decisions that need to be made but haven't been. Resolve and migrate to `docs/DE
 ## See also
 
 - `docs/DECISIONS.md`: locked decisions
-- `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/BOOTSTRAP.md`, `docs/manuals/BUILDER.md`: docs containing TODO markers that may graduate to roadmap items
+- `docs/ARCHITECTURE.md`, `docs/manuals/USER.md`, `docs/manuals/BUILDER.md`: docs containing TODO markers that may graduate to roadmap items

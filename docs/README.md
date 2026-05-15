@@ -9,7 +9,7 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 | Doc | Audience | What's in it |
 |---|---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | future-me, 18 months out | system overview, components, data flows, daemon subsystem map |
-| [OPERATIONS.md](OPERATIONS.md) | me at the box | cold start, daemon launch, pre-flight, recovery procedures |
+| [manuals/USER.md](manuals/USER.md) | me at the box | cold start, daemon launch, pre-flight, recovery procedures |
 | [DECISIONS.md](DECISIONS.md) | future-me | locked decisions, do not re-litigate |
 | [ROADMAP.md](ROADMAP.md) | future-me | pinned work, B-tier backlog, open questions |
 
