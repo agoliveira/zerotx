@@ -27,13 +27,13 @@ Expected end state: VFD shows ready text, panel in IDLE mode, HUD shows "no tele
 Under systemd autostart the daemon comes up automatically. Manual launch (development or recovery):
 
 ```
-cd ~/zerotx/pi/daemon
+cd ~/zerotx
 ./bin/zerotxd \
   -api 127.0.0.1:8080 \
   -model configs/big_talon_zerotx.yml \
   -joystick-name Thrustmaster \
-  -piper-binary $HOME/zerotx/bin/piper/piper \
-  -web-dir web \
+  -piper-binary $HOME/zerotx/third_party/piper/piper \
+  -web-dir pi/daemon/web \
   -port /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66138935F3C4824-if00 \
   -iohub-port /dev/serial/by-id/<MEGA> \
   -site-lat -22.91 -site-lon -47.06 \
@@ -336,25 +336,29 @@ Fix: for in-state gaps, let `tilewarm` catch up. For out-of-state coverage, buil
 
 ## Diagnostic tools
 
-Binaries in `pi/daemon/cmd/`. All accept `-h` or `--help`.
+All compiled outputs live in `/bin/` at the repo root. Source for the daemon and its companion commands is under `pi/daemon/cmd/`; standalone tools are under `tools/`. Every binary accepts `-h` or `--help`.
 
 - `bin/zerotxd`: the daemon itself
 - `bin/disptest`: HUB75 panel test harness, sends test patterns to ESP32
 - `bin/zerotx-inspect`: live state inspector, reads from running daemon API
 - `bin/zerotx-axes`: joystick axis calibration and live monitor
 - `bin/geobuild`: offline geographic data builder (used during BOOTSTRAP)
-- `tools/zerotx-iohal-config/`: HAL pin and flag configurator for Mega IO
+- `bin/zerotx-iohal-config`: HAL pin and flag configurator for Mega IO
+- `bin/zerotx-bench`: hardware diagnostic web UI (bench-only)
+- `bin/zerotx-replay`: replays recorded flight telemetry
 
 ## Updating components
 
 ### Daemon
 
 ```
-cd ~/zerotx/pi/daemon
+cd ~/zerotx
 git pull
-go build -o bin/zerotxd ./cmd/zerotxd
+scripts/build-daemon.sh
 sudo systemctl restart zerotxd.service
 ```
+
+The build script outputs to `bin/zerotxd`. To rebuild everything (daemon + tools + firmware), run `make` at the repo root.
 
 ### ESP32 panel firmware
 

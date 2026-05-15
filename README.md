@@ -55,10 +55,14 @@ zerotx/
 ### Daemon (on a Linux dev machine or the Pi itself)
 
 ```sh
-cd pi/daemon
 sudo apt-get install -y libsdl2-dev   # native SDL2 headers
-go mod tidy                           # first time only, generates go.sum
-go build -o bin/zerotxd ./cmd/zerotxd
+scripts/build-daemon.sh               # outputs ./bin/zerotxd
+```
+
+Or build everything (daemon, Go tools, RP2040 firmware) at once:
+
+```sh
+make
 ```
 
 ### RP2040 firmware
@@ -74,7 +78,6 @@ See [`firmware/display/README.md`](firmware/display/README.md) and [`firmware/io
 Minimal launch with no MCUs attached, useful for verifying the build:
 
 ```sh
-cd pi/daemon
 ./bin/zerotxd -api 127.0.0.1:8080
 ```
 

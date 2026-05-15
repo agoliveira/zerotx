@@ -140,9 +140,11 @@ Pinned to 1.25.10 here as a known-good. The daemon's `go.mod` carries both a `go
 
 ## Piper TTS
 
+The Piper binary is third-party; it lives under `third_party/`, alongside the ONNX voice models that `scripts/fetch-voices.sh` will populate later.
+
 ```
-mkdir -p ~/zerotx/bin/piper
-cd ~/zerotx/bin/piper
+mkdir -p ~/zerotx/third_party/piper
+cd ~/zerotx/third_party/piper
 ```
 
 Fetch the Piper release for arm64. Filename and version vary by release; check `https://github.com/rhasspy/piper/releases` and adjust:
@@ -155,9 +157,11 @@ tar xzf ${PIPER_TARBALL}
 rm ${PIPER_TARBALL}
 ```
 
-Voice model (en_US-amy-medium):
+Voice models live one directory up; `scripts/fetch-voices.sh` is the supported way to install them (it puts the `.onnx` + `.onnx.json` files under `~/zerotx/third_party/voices/`). For an ad-hoc smoke test you can also fetch one model manually:
 
 ```
+mkdir -p ~/zerotx/third_party/voices
+cd ~/zerotx/third_party/voices
 curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
 curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
 ```
@@ -165,8 +169,8 @@ curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy
 Smoke test:
 
 ```
-echo "ZeroTX online" | ~/zerotx/bin/piper/piper \
-  --model ~/zerotx/bin/piper/en_US-amy-medium.onnx \
+echo "ZeroTX online" | ~/zerotx/third_party/piper/piper \
+  --model ~/zerotx/third_party/voices/en_US-amy-medium.onnx \
   --output_file /tmp/test.wav
 aplay /tmp/test.wav
 ```
@@ -485,11 +489,11 @@ Wants=network-online.target
 Type=simple
 User=adilson
 WorkingDirectory=/home/adilson/zerotx/pi/daemon
-ExecStart=/home/adilson/zerotx/pi/daemon/bin/zerotxd \
+ExecStart=/home/adilson/zerotx/bin/zerotxd \
   -api 127.0.0.1:8080 \
   -model configs/big_talon_zerotx.yml \
   -joystick-name Thrustmaster \
-  -piper-binary /home/adilson/zerotx/bin/piper/piper \
+  -piper-binary /home/adilson/zerotx/third_party/piper/piper \
   -web-dir web \
   -port /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66138935F3C4824-if00 \
   -iohub-port /dev/serial/by-id/<MEGA> \

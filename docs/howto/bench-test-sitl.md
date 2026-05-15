@@ -102,13 +102,13 @@ UART3 (port 5762) is the CRSF endpoint ZeroTX will dial.
 ### 3. ZeroTX daemon
 
 ```bash
-cd ~/zerotx/pi/daemon
+cd ~/zerotx
 ./bin/zerotxd \
   -api 127.0.0.1:8080 \
   -model configs/big_talon_zerotx.yml \
   -joystick-name Thrustmaster \
-  -piper-binary $HOME/zerotx/bin/piper/piper \
-  -web-dir web \
+  -piper-binary $HOME/zerotx/third_party/piper/piper \
+  -web-dir pi/daemon/web \
   -fc-tcp-addr 127.0.0.1:5762
 ```
 
