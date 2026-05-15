@@ -15,15 +15,319 @@
 
 ## 0. Build workstation prep
 
-### Host OS requirements
-### Git and SSH
-### Cloning the ZeroTX repo
-### Go toolchain
-### PlatformIO + Arduino core packages
-### picotool (RP2040)
-### rpi-imager
-### Piper build / fetch dependencies
-### Verification: build daemon, build all four firmwares from clean clone
+A Linux workstation set up to build the daemon and all four firmwares from a clean clone. After this section, you have working toolchains for: Go (daemon, host-side tools), PlatformIO (Mega 2560, both ESP32 variants), pico-sdk + arm-gcc + cmake (RP2040), and rpi-imager (Pi 400 SSD imaging). Everything in Sections 5 and 6 assumes this work is done.
+
+You don't need the case, MCUs, or Pi yet. Section 0 is pure software prep that can happen weeks before any hardware arrives.
+
+### 0.1 Host requirements
+
+Supported: **Ubuntu 24.04 LTS** or **Debian 12** (Bookworm), 64-bit (`x86_64` or `aarch64`).
+
+Storage: ~20 GB for toolchains and build artifacts (PlatformIO frameworks alone are ~1 GB). RAM: 8 GB minimum, 16 GB comfortable. Internet for the initial toolchain downloads (~2 GB total across all installs).
+
+Throughout this section, commands assume `bash` and `apt`. If you're on a Debian-derivative not listed above, the apt invocations should still work, but the package versions may diverge in ways the verification step (Section 0.10) will flag.
+
+macOS and Windows are not covered. Go cross-compile to arm64-linux works fine on any host OS, but the firmware toolchains (specifically pico-sdk and PlatformIO's AVR/ESP32 plugins) have host-specific quirks that aren't documented here. Linux is the supported path.
+
+### 0.2 Git and SSH
+
+```
+sudo apt update
+sudo apt -y install git openssh-client
+```
+
+Configure git:
+
+```
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+
+Generate an SSH key for GitHub if you don't have one:
+
+```
+ssh-keygen -t ed25519 -C "your-zerotx-build-workstation"
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add the public key to your GitHub account (Settings → SSH and GPG keys → New SSH key). Test:
+
+```
+ssh -T git@github.com
+```
+
+Should respond with `Hi <username>! You've successfully authenticated...`.
+
+If you only intend to clone (read-only) and never push, HTTPS cloning works without SSH setup, but every other workflow in this manual assumes you can push and pull, so do the SSH key now.
+
+### 0.3 Clone the ZeroTX repo
+
+```
+cd ~
+git clone git@github.com:agoliveira/zerotx.git
+cd zerotx
+```
+
+(HTTPS alternative if you skipped 0.2's key setup: `git clone https://github.com/agoliveira/zerotx.git`.)
+
+Verify:
+
+```
+ls
+```
+
+Should show directories `pi/`, `firmware/`, `tools/`, `docs/`, plus root files like `README.md` and `SAFETY.md`.
+
+The repo lives at `~/zerotx` throughout the rest of this manual. Section 6.14 (daemon binary deploy) also assumes the Pi has a `~/zerotx` clone for static assets; you can either clone separately on each machine or rsync from the workstation. Cloning on both is the simpler workflow.
+
+### 0.4 Go toolchain
+
+The daemon and host-side tools (zerotx-iohal-config, zerotx-bench, zerotx-replay) are Go. Pinned at 1.25.x for the daemon's `go.mod`.
+
+Use upstream Go, not the apt version. The apt package is typically a major release behind, and on some Debian/Ubuntu derivatives `apt install golang-go` silently installs `gccgo` which doesn't parse modern `go.mod` files.
+
+```
+GO_VERSION=1.25.10
+cd /tmp
+curl -L -O https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh
+sudo chmod +x /etc/profile.d/go.sh
+source /etc/profile.d/go.sh
+go version
+```
+
+Should print `go version go1.25.10 linux/amd64`.
+
+(If your workstation is aarch64 itself, swap `linux-amd64` for `linux-arm64` in the URL.)
+
+The daemon's `go.mod` carries a `toolchain go1.25.10` directive, so any installed Go from 1.21 forward will auto-fetch 1.25.10 on first build. Installing it up front skips that round trip.
+
+### 0.5 PlatformIO
+
+PlatformIO drives the Mega 2560 (AVR), ESP32 (panel driver), and ESP32-S3 (tracker) builds. One package, three toolchains. It runs in Python virtualenvs and downloads its own framework packages on first use.
+
+```
+sudo apt -y install python3 python3-venv python3-pip
+pip install --user --break-system-packages platformio
+```
+
+The `--break-system-packages` flag is required on Bookworm/Ubuntu 24 because the user-site-packages location is otherwise marked managed-by-distro. PlatformIO works fine outside the system Python.
+
+Verify:
+
+```
+~/.local/bin/pio --version
+```
+
+Or add `~/.local/bin` to your `PATH`:
+
+```
+echo 'export PATH=$PATH:~/.local/bin' >> ~/.bashrc
+source ~/.bashrc
+pio --version
+```
+
+The first time you run `pio run` against any firmware project, PlatformIO downloads the relevant toolchain and framework (atmelavr for Mega, espressif32 for ESP32 variants). Expect a few hundred MB and several minutes. Subsequent builds are incremental.
+
+### 0.6 RP2040 build chain (pico-sdk + arm-gcc + cmake + picotool)
+
+The RP2040 firmware doesn't use PlatformIO; it uses cmake + pico-sdk + the ARM Embedded toolchain. Plus picotool for flashing.
+
+ARM toolchain and cmake:
+
+```
+sudo apt -y install \
+    cmake \
+    gcc-arm-none-eabi \
+    libnewlib-arm-none-eabi \
+    libstdc++-arm-none-eabi-newlib \
+    build-essential
+```
+
+Verify:
+
+```
+arm-none-eabi-gcc --version       # should report a recent gcc
+cmake --version                   # 3.13 or newer
+```
+
+pico-sdk (clone alongside the ZeroTX repo, not inside it):
+
+```
+cd ~
+git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git
+cd pico-sdk
+git submodule update --init
+```
+
+Export `PICO_SDK_PATH` so cmake can find it:
+
+```
+echo 'export PICO_SDK_PATH=$HOME/pico-sdk' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Verify:
+
+```
+echo $PICO_SDK_PATH    # should print /home/<user>/pico-sdk
+```
+
+picotool (for flashing without the BOOTSEL drag-and-drop dance, see Section 5.1.2):
+
+```
+sudo apt -y install libusb-1.0-0-dev
+cd /tmp
+git clone --depth 1 https://github.com/raspberrypi/picotool.git
+cd picotool
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+sudo install -m 0755 picotool /usr/local/bin/picotool
+picotool version
+```
+
+Should print picotool version info.
+
+If you prefer not to build picotool from source, recent Ubuntu/Debian ship a `picotool` apt package (`sudo apt -y install picotool`); the apt version may lag the upstream by a release, but works for flashing.
+
+### 0.7 rpi-imager
+
+For provisioning the Pi 400's USB SSD (Section 6.1).
+
+```
+sudo apt -y install rpi-imager
+```
+
+Or download the AppImage from `https://www.raspberrypi.com/software/` if your distro doesn't have a recent enough package.
+
+Verify:
+
+```
+rpi-imager --version
+```
+
+`rpi-imager` needs a connected SSD (via USB-to-SATA adapter or USB enclosure) to flash. You won't run it as part of Section 0's verification; it's just installed and ready for Section 6.
+
+### 0.8 Voice fetch dependencies
+
+ZeroTX's narrator uses Piper TTS with ONNX voice models. The models live under `~/zerotx/third_party/voices/` and are fetched via `scripts/fetch-voices.sh` in the repo. The script needs:
+
+```
+sudo apt -y install curl
+```
+
+(Almost certainly already installed.)
+
+Voice fetching can happen on the Pi (Section 6.8) or on the workstation and then synced to the Pi via rsync/scp. Doing it on the workstation lets you smoke-test voices before deploying:
+
+```
+cd ~/zerotx
+./scripts/fetch-voices.sh
+```
+
+This is optional at workstation-prep time; you can defer to Section 6.8 on the Pi.
+
+The Piper *binary* (not just voices) is fetched and installed on the Pi only, not on the workstation. The narrator runs as a daemon subprocess; the workstation never needs to invoke Piper directly for builds.
+
+### 0.9 USB device permissions
+
+When you flash MCUs from the workstation (Section 5), you need write access to `/dev/ttyACM*` and `/dev/ttyUSB*`. On Debian/Ubuntu, that's controlled by the `dialout` group.
+
+```
+sudo usermod -a -G dialout $USER
+```
+
+**Log out and log back in** for the group change to take effect. (Or reboot. New group membership is read at session start, not propagated to running processes.)
+
+Verify after re-login:
+
+```
+groups
+```
+
+Should list `dialout` among others.
+
+If you skip this, every `pio run --target upload` and `picotool` invocation needs `sudo`, which works but is ugly and risks running build steps as root.
+
+A more targeted alternative if you prefer not to put your user in `dialout`: add per-device udev rules with explicit `MODE="0666"` for the specific VID/PIDs of the MCUs. Not covered here; `dialout` is the simpler path for a development workstation.
+
+### 0.10 Verification build
+
+End of Section 0: clean clone, all toolchains in place. Run a full build of the daemon plus all four firmwares to confirm everything works.
+
+```
+cd ~/zerotx
+```
+
+Build the daemon (workstation-native binary, useful for desktop runs and tools):
+
+```
+cd pi/daemon
+go build -o /tmp/zerotxd-native ./cmd/zerotxd
+ls -la /tmp/zerotxd-native      # ~30 MB ELF
+```
+
+Cross-compile the daemon for Pi (arm64-linux):
+
+```
+GOOS=linux GOARCH=arm64 go build -o /tmp/zerotxd-pi ./cmd/zerotxd
+file /tmp/zerotxd-pi             # should report ARM aarch64
+```
+
+Build the host-side tools:
+
+```
+cd ~/zerotx/tools/zerotx-iohal-config
+go mod tidy
+go build
+ls -la zerotx-iohal-config       # binary present
+
+cd ~/zerotx/tools/zerotx-bench
+go build
+
+cd ~/zerotx/tools/zerotx-replay
+go build
+```
+
+Build the four firmwares:
+
+```
+# RP2040
+cd ~/zerotx/firmware/crsf
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+ls -la zerotx-fw.uf2             # UF2 artifact present
+
+# Mega 2560
+cd ~/zerotx/firmware/io
+pio run
+ls -la .pio/build/megaatmega2560/firmware.hex
+
+# ESP32 (HUB75 panel)
+cd ~/zerotx/firmware/display
+pio run
+ls -la .pio/build/*/firmware.bin
+
+# ESP32-S3 (tracker, optional)
+cd ~/zerotx/firmware/tracker
+pio run
+ls -la .pio/build/*/firmware.bin
+```
+
+If every command above completes without error and the listed artifacts exist, Section 0 is done. You have a fully working build environment.
+
+If any build fails, debug it now before moving to Section 5 / Section 6 where the same builds will be invoked under time pressure. Common failure modes:
+
+- `cmake: command not found` → Section 0.6
+- `PICO_SDK_PATH not set` → `source ~/.bashrc`, or re-run the `echo 'export...'` line
+- `pio: command not found` → Section 0.5, ensure `~/.local/bin` is on `PATH`
+- `go: command not found` → Section 0.4, ensure `/usr/local/go/bin` is on `PATH`
+- PlatformIO build hangs forever → first-build framework download in progress; let it finish (one-time, several minutes per platform)
+- `go mod tidy` reports network errors → either your network is restricting Go module proxy access or `GOPROXY` is set wrong; default `GOPROXY=https://proxy.golang.org,direct` works in most environments
 
 ## 1. System overview
 
