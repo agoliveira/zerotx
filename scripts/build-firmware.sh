@@ -54,7 +54,15 @@ if [[ -z "$UF2" && -n "$ELF" ]]; then
 fi
 
 if [[ -n "$UF2" ]]; then
-  say "Built: $REPO_ROOT/firmware/crsf/build/$(basename "$UF2")"
+  mkdir -p "$BIN_DIR"
+  cp "$UF2" "$BIN_DIR/"
+  if [[ -n "$ELF" ]]; then
+    cp "$ELF" "$BIN_DIR/"
+  fi
+  say "Built: $BIN_DIR/$(basename "$UF2")"
+  if [[ -n "$ELF" ]]; then
+    say "  +    $BIN_DIR/$(basename "$ELF") (for debugging / picotool)"
+  fi
 else
   warn "Build finished but no .uf2 found"
 fi

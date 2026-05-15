@@ -16,7 +16,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
-BIN="$REPO_ROOT/pi/daemon/bin/zerotxd"
+BIN="$BIN_DIR/zerotxd"
 [[ -x "$BIN" ]] || die "Daemon not built. Run scripts/build-daemon.sh first."
 
 API="${ZTX_API:-127.0.0.1:8080}"

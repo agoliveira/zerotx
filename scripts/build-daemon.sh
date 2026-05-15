@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the ZeroTX Go daemon into pi/daemon/bin/zerotxd.
+# Build the ZeroTX Go daemon into $BIN_DIR/zerotxd.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
@@ -12,8 +12,8 @@ if [[ ! -f go.sum ]]; then
 fi
 
 say "Building daemon"
-mkdir -p bin
-go build -o bin/zerotxd ./cmd/zerotxd
+mkdir -p "$BIN_DIR"
+go build -o "$BIN_DIR/zerotxd" ./cmd/zerotxd
 
-say "Built: $REPO_ROOT/pi/daemon/bin/zerotxd"
-"$REPO_ROOT/pi/daemon/bin/zerotxd" -h 2>&1 | head -1 || true
+say "Built: $BIN_DIR/zerotxd"
+"$BIN_DIR/zerotxd" -h 2>&1 | head -1 || true

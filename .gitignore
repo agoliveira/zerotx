@@ -1,8 +1,4 @@
 # Go build artifacts
-pi/daemon/bin/
-pi/daemon/zerotxd
-pi/daemon/*.test
-pi/daemon/*.out
 go.work
 go.work.sum
 
@@ -32,11 +28,14 @@ firmware/crsf/build/
 # Private working notes (Claude session journal)
 JOURNAL.md
 
-# TTS voice models (downloaded by scripts/fetch-voices.sh, ~130MB)
-/voices/
-
-# Piper TTS binary distribution (downloaded locally)
+# Compiled outputs: our binaries (daemon, tools, firmware artifacts)
+# all land in /bin/ via scripts/build-*.sh.
 /bin/
+
+# Downloaded third-party tools and data (Piper TTS binary, ONNX voice
+# models). Fetched by scripts/fetch-voices.sh and the operator's
+# manual Piper install step from docs/BOOTSTRAP.md.
+/third_party/
 
 # Geo place-name databases (built by tools/build-geo.sh, ~30-50MB
 # regional). Live data, not source. Build pipeline is in repo;
@@ -55,9 +54,23 @@ HANDOVER.md
 *.rej
 maptiles/
 
-# Compiled binaries (built locally, not version-controlled)
-/zerotx
+# Stray in-tree binaries from inline `go build` invocations. The
+# canonical output location is /bin/ above; these patterns catch
+# accidental local builds so they don't shadow the canonical artifacts.
+/pi/daemon/bin/
+/pi/daemon/zerotxd
+/pi/daemon/*.test
+/pi/daemon/*.out
+/pi/daemon/cmd/*/zerotxd
+/pi/daemon/cmd/*/disptest
+/pi/daemon/cmd/*/geobuild
+/pi/daemon/cmd/*/zerotx-axes
+/pi/daemon/cmd/*/zerotx-inspect
+/tools/zerotx-bench/zerotx-bench
+/tools/zerotx-iohal-config/zerotx-iohal-config
+/tools/zerotx-replay/zerotx-replay
 /tools/maps/sat-download/sat-download
+/zerotx
 
 # Daemon runtime state (not source)
 cache/

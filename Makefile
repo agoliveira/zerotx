@@ -5,12 +5,15 @@
 
 SHELL := /usr/bin/env bash
 
-.PHONY: all daemon firmware run run-idle flash test test-daemon clean distclean help
+.PHONY: all daemon firmware tools run run-idle flash test test-daemon clean distclean help
 
-all: daemon firmware
+all: daemon tools firmware
 
 daemon:
 	@scripts/build-daemon.sh
+
+tools:
+	@scripts/build-tools.sh
 
 firmware:
 	@scripts/build-firmware.sh
@@ -30,12 +33,13 @@ test-daemon:
 	@cd pi/daemon && go test -count=1 -race ./...
 
 # Remove build artifacts. Safe to run anytime; next build regenerates.
-# Covers: daemon (Go cache + bin/), CRSF firmware (Pico SDK CMake build),
-# PlatformIO firmware (io, display, tracker), Python bytecode caches.
+# All compiled outputs live in /bin/ now (daemon, tools, firmware .uf2/
+# .elf); CMake's intermediate tree stays under firmware/crsf/build/.
+# PlatformIO builds (firmware/io, firmware/tracker, firmware/display)
+# still produce their own .pio dirs in-tree.
 clean:
 	@echo "==> Cleaning build artifacts"
-	@rm -rf pi/daemon/bin
-	@rm -f  pi/daemon/zerotxd pi/daemon/*.test pi/daemon/*.out
+	@rm -rf bin
 	@rm -rf firmware/crsf/build
 	@rm -rf firmware/io/.pio firmware/display/.pio firmware/tracker/.pio
 	@find . -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -49,14 +53,15 @@ clean:
 # (HANDOVER.md, JOURNAL.md) are NOT touched -- those live outside the
 # clean/distclean scope.
 distclean: clean
-	@echo "==> Removing downloaded assets (voices, piper binary, tiles, geo DBs)"
-	@rm -rf voices bin maptiles
+	@echo "==> Removing downloaded assets (third_party, tiles, geo DBs)"
+	@rm -rf third_party maptiles
 	@rm -f  geo/*.db
 
 help:
 	@echo "Targets:"
-	@echo "  make            build daemon and firmware"
+	@echo "  make            build daemon, tools, and firmware"
 	@echo "  make daemon     build the Go daemon"
+	@echo "  make tools      build the auxiliary Go tools"
 	@echo "  make firmware   build the RP2040 firmware"
 	@echo "  make run        run daemon with Big Talon defaults"
 	@echo "  make run-idle   run daemon in IDLE (no model, no joystick)"

@@ -4,21 +4,20 @@
 #
 # Idempotent: skips files that already exist. Voices are not committed
 # to the repo (~130MB total); this script fetches them on first setup
-# or after voices/ is wiped.
+# or after third_party/voices/ is wiped.
 #
 # Voices used by the daemon:
 #   en  -> en_US-amy-medium  (rhasspy/piper-voices, female, US English)
 #   pt  -> pt_BR-faber-medium (rhasspy/piper-voices, male, Brazilian Portuguese)
 #
 # Output:
-#   voices/en_US-amy-medium.onnx{,.json}
-#   voices/pt_BR-faber-medium.onnx{,.json}
+#   third_party/voices/en_US-amy-medium.onnx{,.json}
+#   third_party/voices/pt_BR-faber-medium.onnx{,.json}
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-VOICES_DIR="$REPO_ROOT/voices"
+VOICES_DIR="$THIRD_PARTY_DIR/voices"
 
 mkdir -p "$VOICES_DIR"
 

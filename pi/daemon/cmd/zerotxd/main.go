@@ -94,7 +94,7 @@ func main() {
 	noAudio := flag.Bool("no-audio", false, "disable audio playback (PLAY_TRACK CFs are silent)")
 	audioThreshold := flag.String("audio-threshold", "notice", "audio threshold: info / notice / warning / critical (critical events ignore threshold)")
 	piperBin := flag.String("piper-binary", "", "path to piper TTS binary (empty disables on-demand TTS)")
-	voicesDir := flag.String("voices-dir", os.ExpandEnv("$HOME/zerotx/voices"), "directory containing piper .onnx + .onnx.json voice files")
+	voicesDir := flag.String("voices-dir", os.ExpandEnv("$HOME/zerotx/third_party/voices"), "directory containing piper .onnx + .onnx.json voice files")
 	ttsCacheDir := flag.String("tts-cache-dir", os.ExpandEnv("$HOME/.cache/zerotx/tts"), "where synthesized TTS WAVs are cached on disk")
 	ttsVoiceEN := flag.String("tts-voice-en", "en_US-amy-medium", "voice basename used for the en bank (must exist under -voices-dir)")
 	ttsVoicePT := flag.String("tts-voice-pt", "pt_BR-faber-medium", "voice basename used for the pt bank (must exist under -voices-dir)")

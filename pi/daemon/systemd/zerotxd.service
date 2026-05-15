@@ -21,7 +21,7 @@ EnvironmentFile=%h/.config/zerotx/zerotxd.env
 # env file so the unit doesn't need to enumerate every possible
 # daemon switch. systemd splits $EXTRA_FLAGS on whitespace just like
 # a shell would for argv expansion.
-ExecStart=%h/zerotx/pi/daemon/bin/zerotxd \
+ExecStart=%h/zerotx/bin/zerotxd \
     -api ${API_ADDR} \
     -model ${MODEL} \
     -joystick-name ${JOYSTICK_NAME} \
