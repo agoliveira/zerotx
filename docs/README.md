@@ -25,6 +25,7 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 ## Reference docs
 
 - [manuals/BUILDER.md](manuals/BUILDER.md): builder's manual (case BOM in Section 2, wiring in Section 4, Pi provisioning in Section 6, full pinout reference in Appendix A)
+- [manuals/USER.md](manuals/USER.md): user manual (cold start, pre-flight, in-flight, post-flight, field operations, run-time troubleshooting)
 - [edgetx-yaml-notes.md](edgetx-yaml-notes.md): EdgeTX model YAML format notes
 - [howto/bench-test-sitl.md](howto/bench-test-sitl.md): INAV SITL plus X-Plane bench setup
 
