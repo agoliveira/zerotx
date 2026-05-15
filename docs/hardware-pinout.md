@@ -27,7 +27,7 @@ a firmware reflash.
 
 | GPIO | Direction | Function | Notes |
 |------|-----------|----------|-------|
-| GP0  | output | UART0 TX to ELRS module (CRSF) | Hardware UART. Series resistor at the end of cable, see hardware-bom |
+| GP0  | output | UART0 TX to ELRS module (CRSF) | Hardware UART. 470 Ω series resistor at the case end of the cable merges TX and RX for single-wire half-duplex CRSF |
 | GP1  | input  | UART0 RX from ELRS module (CRSF) | Hardware UART, telemetry path |
 | GP14 | input  | Aviator-style arm key (SF-equivalent) | Internal pull-up. Switch to GND. Far from UART and LED, no timing-sensitive neighbours |
 | GP15 | input  | Momentary push-button (SH-equivalent, arm confirm) | Internal pull-up. Switch to GND. Adjacent to GP14 so a single panel cable can carry both inputs plus shared GND |

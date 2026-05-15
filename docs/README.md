@@ -26,7 +26,7 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 
 ## Reference docs
 
-- [hardware-bom.md](hardware-bom.md): case BOM and parts list
+- [manuals/BUILDER.md](manuals/BUILDER.md): builder's manual (case BOM and parts list now lives in Section 2 of the manual)
 - [hardware-pinout.md](hardware-pinout.md): MCU pin allocations (RP2040, Mega 2560, ESP32)
 - [edgetx-yaml-notes.md](edgetx-yaml-notes.md): EdgeTX model YAML format notes
 - [howto/bench-test-sitl.md](howto/bench-test-sitl.md): INAV SITL plus X-Plane bench setup
