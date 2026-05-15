@@ -921,25 +921,363 @@ The full first-boot verification (daemon up, kiosks loading, MCU subsystems resp
 
 ## 5. MCU firmware flashing
 
-### RP2040 (CRSF generator)
-#### Build
-#### Flash via BOOTSEL
-#### Verify (serial banner, expected behavior under no daemon)
-### Mega 2560 (IO board)
-#### Build (PlatformIO)
-#### Flash
-#### HAL EEPROM configuration via zerotx-iohal-config
-#### Verify
-### ESP32 (HUB75 panel driver)
-#### Build
-#### Flash
-#### Verify (panel self-test pattern, mode cycling)
-### ESP32-S3 (antenna tracker, optional)
-#### Build
-#### Flash
-#### Bench self-test on bare board
-#### NVS configuration
-#### Verify
+This section flashes the firmware onto each MCU. Assumes Section 0 (workstation prep) is complete: PlatformIO, pico-sdk + arm-gcc-none-eabi, picotool, and the ZeroTX repo cloned. Flashing happens from the workstation, with each MCU temporarily connected to the workstation via USB (not yet wired into the case).
+
+**Suggested order:** flash MCUs one at a time, in the order below. Each flash is independent, but the sequence (1) front-loads the safety-critical RP2040, (2) tackles the most peripheral-diverse part (Mega + HAL config) while concentration is fresh, (3) gives early visual confirmation with the HUB75 panel, and (4) defers the optional tracker.
+
+1. **RP2040** (CRSF endpoint, safety-critical, simplest flash)
+2. **Mega 2560** (IO hub, includes HAL EEPROM configuration)
+3. **ESP32** (HUB75 panel driver, gives visible self-test)
+4. **ESP32-S3** (antenna tracker, optional, only for extended cable configurations)
+
+After each flash, the MCU is left disconnected from the case and lives on the workbench until Section 7 (first-boot verification), where everything gets wired together for the first time.
+
+### 5.1 RP2040 (CRSF generator)
+
+Firmware source: `firmware/crsf/`. Build via cmake + pico-sdk, flash via BOOTSEL drag-and-drop or `picotool`.
+
+#### 5.1.1 Build
+
+One-time pico-sdk setup (covered in Section 0; repeated here as a sanity check):
+
+```
+sudo apt install cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+( cd ~/pico-sdk && git submodule update --init )
+echo 'export PICO_SDK_PATH=~/pico-sdk' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Build:
+
+```
+cd ~/zerotx/firmware/crsf
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+Output: `build/zerotx-fw.uf2` (the UF2 file is the flash artifact).
+
+If the cmake step complains about `PICO_SDK_PATH` not set, your shell's environment variable didn't survive the `cd`. Re-export and retry:
+
+```
+export PICO_SDK_PATH=~/pico-sdk
+cmake ..
+```
+
+#### 5.1.2 Flash via BOOTSEL
+
+The RP2040-Zero has a BOOT button on the silkscreen edge. Hold it down while plugging the USB-C cable into the workstation. The board enumerates as a USB mass-storage volume labeled `RPI-RP2`.
+
+Drag-and-drop the UF2 onto the volume:
+
+```
+cp build/zerotx-fw.uf2 /media/$USER/RPI-RP2/
+```
+
+(Adjust the path to wherever your distribution auto-mounts the volume; some mount points are `/run/media/$USER/RPI-RP2/` instead.)
+
+The board reboots automatically into the new firmware when the copy completes; the `RPI-RP2` volume disappears.
+
+Alternative via picotool (does not require holding BOOT after the first flash; the firmware exposes a USB reset that picotool can use):
+
+```
+picotool load -f build/zerotx-fw.uf2
+picotool reboot
+```
+
+The `-f` flag forces flashing even if the board reports it's already running compatible firmware. After the first picotool flash, subsequent flashes can skip the BOOTSEL hold.
+
+#### 5.1.3 Verify
+
+With the RP2040 plugged in (and no daemon running on the workstation), the WS2812 status LED on the board should cycle through:
+
+| State | Pattern | When |
+|---|---|---|
+| BOOT | white slow pulse | Briefly at power-on |
+| PENDING | amber solid | Waiting for daemon over USB-CDC |
+| FAILSAFE | red rapid blink | Default state with no daemon connected |
+
+A board flashing red rapidly is correct after first flash with no daemon talking to it: the firmware sees no heartbeat from the Pi and goes into FAILSAFE (no CRSF emission, safe state).
+
+Check USB enumeration on the workstation:
+
+```
+ls /dev/serial/by-id/ | grep -i pico
+```
+
+Should report something like `usb-Raspberry_Pi_Pico_E66138935F3C4824-if00`. Note the serial number; you'll plug it into the udev rule in Section 6.11.
+
+Optional bench test (drives channel intent and heartbeats over USB-CDC, prints anything the firmware logs back):
+
+```
+cd ~/zerotx/firmware/crsf/tools
+pip install --user pyserial    # one-time
+./m1_bench.py
+```
+
+REPL commands include `set <ch> <val>`, `arm`, `disarm`, `throttle <val>`, `safe`, `sweep <ch>`, `pause`, `resume`, `state`, `help`, `quit`.
+
+`pause` is the failsafe test: stop sending CHANNEL_INTENT, watch the LED transition green → amber-blink (HOLD) within 200 ms, then red-blink (FAILSAFE) ~600 ms after that. CRSF emission stops at the FAILSAFE transition. This confirms the watchdog chain inside the RP2040 firmware works as intended.
+
+### 5.2 Mega 2560 (IO board)
+
+Firmware source: `firmware/io/`. Build and flash via PlatformIO.
+
+#### 5.2.1 Build
+
+```
+cd ~/zerotx/firmware/io
+pio run
+```
+
+PlatformIO downloads the AVR toolchain and Arduino framework on first build (one-time, a few hundred MB) and compiles the firmware. Output: `.pio/build/megaatmega2560/firmware.hex`.
+
+A clean rebuild after a code change is just `pio run` again; the build system is incremental.
+
+#### 5.2.2 Flash
+
+Plug the Mega 2560 into the workstation via USB-B cable. It enumerates as `/dev/ttyACM0` (or `/dev/ttyACM1`, etc., depending on what's already plugged in).
+
+```
+pio run --target upload
+```
+
+If you have multiple USB-serial devices and want to target a specific port, add `--upload-port`:
+
+```
+pio run --target upload --upload-port /dev/ttyACM0
+```
+
+Flashing takes ~5-10 seconds. Output ends with `===== [SUCCESS] =====`. If you get `avrdude: stk500v2_ReceiveMessage(): timeout`, the upload-port is wrong; double-check `/dev/ttyACM*` and retry.
+
+Monitor the serial output to confirm the firmware booted:
+
+```
+pio device monitor --port /dev/ttyACM0 --baud 115200
+```
+
+Should print a boot banner with the firmware version, the HAL EEPROM status (valid / regenerating from defaults / blank), and the list of registered subsystems.
+
+#### 5.2.3 HAL EEPROM configuration
+
+The Mega firmware reads its pin map and per-pin polarity flags from EEPROM at boot. On a fresh chip the EEPROM is blank, so the firmware falls back to compiled defaults (the table in Appendix A.2). For the reference build those defaults are correct; for a custom wiring layout you change them via `tools/zerotx-iohal-config/` without reflashing.
+
+Build the tool (one-time):
+
+```
+cd ~/zerotx/tools/zerotx-iohal-config
+go mod tidy
+go build
+```
+
+Output: `./zerotx-iohal-config` binary.
+
+Capture the Mega's current map as JSON (good first step for a fresh chip):
+
+```
+./zerotx-iohal-config -port /dev/ttyACM0 -export > ~/.config/zerotx/iohal.json
+```
+
+The exported file shows the active pin map (compiled defaults if EEPROM is blank, or the EEPROM contents if a previous run wrote any).
+
+For the reference build, the defaults are correct; no further configuration is needed. The Mega is ready.
+
+For a custom wiring layout, edit `~/.config/zerotx/iohal.json` to suit, then push:
+
+```
+./zerotx-iohal-config -port /dev/ttyACM0 -config ~/.config/zerotx/iohal.json
+```
+
+The tool diffs the file against the Mega's current state, sends only the changed assignments via `SET hal pin` and `SET hal flag` commands, and reboots the Mega. No reflash needed for pin re-routing.
+
+#### 5.2.4 Verify
+
+With the Mega plugged in and the serial monitor connected (115200 baud, line-mode), issue:
+
+```
+GET version
+```
+
+Should respond with the firmware version banner.
+
+```
+GET caps
+```
+
+Lists registered subsystems (`vfd.0`, `glcd`, `button.0..button.9`, etc.).
+
+```
+SET vfd.0 line0 "ZeroTX bench"
+```
+
+If a VFD is wired (Section 4.4 / Appendix A.2), this should display the text on `vfd.0`'s top line. If no VFD is wired yet, the command still succeeds (returns `ok`); you'll see the text after the case is assembled and the VFD is connected.
+
+Disconnect from the workstation; the Mega is flashed and ready for case integration.
+
+Check USB enumeration on the workstation:
+
+```
+ls /dev/serial/by-id/ | grep -i mega
+```
+
+Should report something like `usb-Arduino_LLC_Mega_2560_R3_<serial>-if00`.
+
+### 5.3 ESP32 (HUB75 panel driver)
+
+Firmware source: `firmware/display/`. Build and flash via PlatformIO.
+
+#### 5.3.1 Build
+
+```
+cd ~/zerotx/firmware/display
+pio run
+```
+
+First build downloads the ESP32 Arduino framework (large; ~500 MB). Subsequent builds are incremental. Output: `.pio/build/esp32dev/firmware.bin`.
+
+#### 5.3.2 Flash
+
+Plug the ESP32 into the workstation via USB. It enumerates depending on the chip's USB-serial bridge:
+
+- ESP32 DevKit V1 (CP2102 bridge): `/dev/ttyUSB0`
+- ESP32-S3 with native USB: `/dev/ttyACM0`
+
+```
+pio run --target upload
+```
+
+If PlatformIO can't auto-detect the port, specify it:
+
+```
+pio run --target upload --upload-port /dev/ttyUSB0
+```
+
+Some ESP32 boards need the BOOT button held during reset for flashing. PlatformIO usually handles the reset via DTR/RTS; if it stalls, hold BOOT, press the EN/RESET button briefly, then release BOOT. Retry `--target upload`.
+
+#### 5.3.3 Verify
+
+Open the serial monitor:
+
+```
+pio device monitor --port /dev/ttyUSB0 --baud 115200
+```
+
+Boot banner shows the firmware version. The firmware then waits for HUB75 wire-protocol commands from the daemon over USB-CDC.
+
+Visible self-test (if the panel is wired to the ESP32, which it isn't yet during bench flashing): on first power-on the panel runs a brief self-test pattern (color sweeps, text "ZeroTX boot") before transitioning to IDLE mode.
+
+If the panel is not yet wired, the ESP32 still boots and enumerates correctly; the panel-visible part of verification is deferred to Section 7.
+
+Check USB enumeration on the workstation:
+
+```
+ls /dev/serial/by-id/ | grep -i -E 'cp210|esp'
+```
+
+Should report a board identifier you can pin into the udev rule in Section 6.11. Update the `<ESP32_VID>` and `<ESP32_PID>` placeholders in the udev rule with the values from:
+
+```
+udevadm info --query=property --name=/dev/ttyUSB0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID'
+```
+
+### 5.4 ESP32-S3 (antenna tracker, optional)
+
+Only needed if the build uses the extended cable configuration and the antenna tracker (Section 2.13, Section 4.7.2-4.7.3). Skip this entire subsection if the default cable configuration is in use.
+
+Firmware source: `firmware/tracker/`. Build and flash via PlatformIO. The ESP32-S3 has native USB; flashing is direct without a USB-serial bridge.
+
+#### 5.4.1 Build
+
+```
+cd ~/zerotx/firmware/tracker
+pio run
+```
+
+First build downloads the ESP32-S3 Arduino framework. Output: `.pio/build/esp32-s3-devkitc-1/firmware.bin` (exact env name depends on the platformio.ini; verify with `pio run --list-targets`).
+
+#### 5.4.2 Flash
+
+Plug the ESP32-S3 into the workstation via the USB-C connector that drives native USB (NOT the UART USB-C; on the DevKit-C-1 the right-side jack is native USB-CDC).
+
+```
+pio run --target upload
+```
+
+Native-USB flashing should work without manual BOOT/RESET dance. If it fails, hold BOOT, briefly tap RESET, release BOOT, retry.
+
+#### 5.4.3 Bench self-test on bare board
+
+The tracker firmware exposes a USB-CDC console for calibration and self-test. Open the serial monitor:
+
+```
+pio device monitor --port /dev/ttyACM0 --baud 115200
+```
+
+Type `help` and Enter; the firmware lists available commands (calibrate, set-station-gps, set-servo-trims, dump-config, save-nvs, factory-reset).
+
+Self-test on bare board (no MAX490, no servos wired):
+
+```
+> selftest
+```
+
+The firmware reports:
+- Byte pump task running on core 1 with watchdog kicks
+- Parser task running on core 0
+- LEDC channels initialized for pan/tilt PWM
+- NVS storage accessible
+- Free heap, IPC FIFO depth
+
+A passing self-test means the firmware loads and runs; failure modes get logged with specific subsystem names so you can identify which part needs attention.
+
+#### 5.4.4 NVS configuration
+
+The tracker stores station-side configuration in NVS (non-volatile storage): station GPS coordinates (used as the origin for az/el calculations), servo trim values, servo travel limits, and slew-rate parameters.
+
+Set the station coordinates to your home field (or the field where the tracker will be deployed):
+
+```
+> set-station-gps <lat> <lon> <alt_m>
+> save-nvs
+```
+
+Lat and lon in decimal degrees. Altitude in meters AMSL. The tracker uses these as the fixed origin for aircraft az/el; if the tracker is physically relocated, run this again at the new site.
+
+Set servo trims and limits (per the gimbal mechanical assembly):
+
+```
+> set-pan-trim <us>
+> set-tilt-trim <us>
+> set-pan-limits <min_us> <max_us>
+> set-tilt-limits <min_us> <max_us>
+> save-nvs
+```
+
+Microsecond values feed directly into the LEDC PWM ISR. Trim shifts the zero position; limits clamp travel to keep the servos from running into mechanical stops.
+
+For first-flash on bare bench (no gimbal yet), leave the servo values at defaults; they don't affect anything until servos are physically attached.
+
+#### 5.4.5 Verify
+
+With the tracker plugged in and console open:
+
+```
+> dump-config
+```
+
+Lists the current NVS contents (station GPS, servo trims, slew rates) and confirms NVS write/read works.
+
+```
+> stats
+```
+
+Shows runtime stats: bytes pumped on the byte-pump task, watchdog kicks, GPS frames parsed (if any have arrived; on bare bench none will), CPU usage per core.
+
+If `stats` shows the byte-pump task is alive and kicking the watchdog, and `dump-config` reflects the values you set in 5.4.4, the tracker is ready for integration.
+
+Disconnect from the workstation; the tracker is flashed and ready for pole-end assembly. Full system integration verification (with cable, MAX490 transceivers, ELRS module, and servos) happens in Section 7 / Section 8 bench test once the case is wired and the pole-end project box is built.
 
 ## 6. Pi 400 provisioning
 
