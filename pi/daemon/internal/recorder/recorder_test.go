@@ -353,7 +353,7 @@ func TestTelemetry_AttitudeZeroPreserved(t *testing.T) {
 }
 
 func TestPreserve_WritesSidecar(t *testing.T) {
-	r, dir := newTestRecorder(t)
+	r, _ := newTestRecorder(t)
 	r.OnArm("X", "/x.yml")
 	r.PreserveCurrentSession("failsafe")
 	time.Sleep(5 * time.Millisecond)
