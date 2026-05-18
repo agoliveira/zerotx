@@ -568,6 +568,33 @@
       font-size: 0.9rem;
       color: var(--text-muted);
     }
+    /* Pre-flight summary: two glanceable lines (daylight remaining +
+       wind), populated by the weather poll. Empty by default; rows
+       hide themselves when their dataset has no data. */
+    .preflight-banner .preflight-summary {
+      margin-top: 14px;
+      font-size: 0.85rem;
+      color: var(--text-sec);
+      letter-spacing: 0.04em;
+      line-height: 1.6;
+    }
+    .preflight-banner .preflight-summary-row:empty {
+      display: none;
+    }
+    .preflight-banner .preflight-summary-row .label {
+      color: var(--text-muted);
+      margin-right: 6px;
+    }
+    .preflight-banner .preflight-summary-row .age {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      margin-left: 6px;
+    }
+    /* Past-sunset warning treatment: amber, matches the existing
+       wx-trigger.has-alerts-notice palette. */
+    .preflight-banner .preflight-summary-row.past {
+      color: #d49a4a;
+    }
     .stage.preflight .heading-area,
     .stage.preflight .horizon-area,
     .stage.preflight .altrow-area,
@@ -1358,6 +1385,13 @@
   <div class="preflight-banner">
     <div class="heading">PRE-FLIGHT</div>
     <div class="sub">Use Configurator to load model and arm. HUD activates on arm.</div>
+    <!-- Glanceable pre-flight summary. Populated from /api/v1/weather
+         (background poll every 60s; sunset countdown re-ticks every 1s
+         from the same cached payload). Empty when no weather cached. -->
+    <div class="preflight-summary">
+      <div class="preflight-summary-row" id="preflight-sun"></div>
+      <div class="preflight-summary-row" id="preflight-wind"></div>
+    </div>
   </div>
 
 </div>
@@ -2408,21 +2442,139 @@ const WX = (() => {
   }
 
   // pollAlerts is a lightweight background poll that runs even when
-  // the modal is closed. Just calls the API and updates the badge so
-  // the operator sees alert state without opening the modal.
+  // the modal is closed. It pulls /api/v1/weather, updates the alert
+  // badge, and feeds the pre-flight summary cache so the banner can
+  // render daylight + wind without opening the modal.
+  //
+  // The polled payload is cached in module scope; refreshSummary
+  // and the 1Hz tickPreflightSummary below read from the same cache.
+  // pollAlerts cadence is once per minute (wind doesn't move that
+  // fast); the sunset countdown re-ticks each second locally.
+  let summaryCache = null; // { weather, astro, alerts, coordSource, receivedAt }
+
   async function pollAlerts() {
     try {
       const res = await fetch('/api/v1/weather');
       if (!res.ok) {
         updateBadge([]);
+        summaryCache = null;
+        refreshPreflightSummary();
         return;
       }
       const body = await res.json();
       updateBadge(body.alerts || []);
+      summaryCache = {
+        weather:     body.weather || null,
+        astro:       body.astro   || null,
+        alerts:      body.alerts  || [],
+        coordSource: body.coordSource || '',
+        receivedAt:  Date.now(),
+      };
+      refreshPreflightSummary();
     } catch (e) {
       updateBadge([]);
+      summaryCache = null;
+      refreshPreflightSummary();
     }
   }
+
+  // Compass label for "wind direction comes from" degrees. 8-point;
+  // 16-point is overkill at this font size. Returns "" for non-finite.
+  function compass8(deg) {
+    if (!Number.isFinite(deg)) return '';
+    const labels = ['N','NE','E','SE','S','SW','W','NW'];
+    const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+    return labels[idx];
+  }
+
+  // Formats a positive millisecond duration as a compact "Xh Ym" or
+  // "Ym" string. Used both for "daylight remaining" and for "wind
+  // fetched X ago" (age stamp).
+  function fmtDurationMs(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${s}s`;
+  }
+
+  // Renders the two summary rows in the pre-flight banner. Called
+  // both on weather poll (data changed) and on the 1Hz tick (only
+  // the sunset countdown needs sub-minute precision).
+  function refreshPreflightSummary() {
+    const sunEl  = document.getElementById('preflight-sun');
+    const windEl = document.getElementById('preflight-wind');
+    if (!sunEl || !windEl) return;
+
+    if (!summaryCache) {
+      sunEl.textContent = '';
+      windEl.textContent = '';
+      sunEl.classList.remove('past');
+      return;
+    }
+
+    // Sunset countdown.
+    const sun = summaryCache.astro && summaryCache.astro.sun;
+    if (sun && sun.sunset) {
+      const setMs = Date.parse(sun.sunset);
+      if (Number.isFinite(setMs)) {
+        const now = Date.now();
+        const setHHMM = new Date(setMs).toLocaleTimeString([], {
+          hour: '2-digit', minute: '2-digit', hour12: false });
+        if (now <= setMs) {
+          sunEl.classList.remove('past');
+          sunEl.innerHTML =
+            `<span class="label">SUNSET</span>${setHHMM}` +
+            ` <span class="age">daylight ${fmtDurationMs(setMs - now)}</span>`;
+        } else {
+          sunEl.classList.add('past');
+          sunEl.innerHTML =
+            `<span class="label">SUNSET</span>${setHHMM}` +
+            ` <span class="age">${fmtDurationMs(now - setMs)} past</span>`;
+        }
+      } else {
+        sunEl.textContent = '';
+      }
+    } else if (sun && (sun.sunAlwaysUp || sun.sunAlwaysDown)) {
+      sunEl.classList.remove('past');
+      sunEl.innerHTML = `<span class="label">SUN</span>` +
+        (sun.sunAlwaysUp ? 'always up today' : 'always down today');
+    } else {
+      sunEl.textContent = '';
+    }
+
+    // Wind summary + age. Weather payload's `fetchedAt` is the
+    // ground truth for when the data was retrieved; receivedAt is
+    // when *we* fetched it. Prefer fetchedAt (matches the modal).
+    const w = summaryCache.weather;
+    if (w && w.current && Number.isFinite(w.current.windSpeedKmh)) {
+      const c = w.current;
+      const dirLabel = compass8(c.windDirDeg);
+      const speed = Math.round(c.windSpeedKmh);
+      let line = `${speed} km/h`;
+      if (dirLabel) line += ` ${dirLabel}`;
+      if (Number.isFinite(c.windGustKmh) && c.windGustKmh >= c.windSpeedKmh + 2) {
+        line += ` · gust ${Math.round(c.windGustKmh)}`;
+      }
+      // Age stamp: prefer the payload's fetchedAt over receivedAt.
+      let ageStr = '';
+      const fetchedAt = w.fetchedAt ? Date.parse(w.fetchedAt) : NaN;
+      const ref = Number.isFinite(fetchedAt) ? fetchedAt : summaryCache.receivedAt;
+      const ageMs = Date.now() - ref;
+      if (ageMs > 10 * 60 * 1000) { // only show age if >10min stale
+        ageStr = ` <span class="age">${fmtDurationMs(ageMs)} old</span>`;
+      }
+      windEl.innerHTML = `<span class="label">WIND</span>${line}${ageStr}`;
+    } else {
+      windEl.textContent = '';
+    }
+  }
+
+  // 1Hz tick for the sunset countdown. Wind data doesn't change
+  // here (still keyed off the cache), but the countdown decrements
+  // visibly so the operator sees daylight burning.
+  setInterval(refreshPreflightSummary, 1000);
 
   // Renders a compact 3-track strip in the forecast SVG: temp line
   // (amber), wind speed line (ice-blue, with gust filled below),
