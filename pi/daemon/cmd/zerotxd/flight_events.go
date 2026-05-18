@@ -20,7 +20,10 @@ package main
 // (replay, debugging, summary stats) without needing TTS to be on.
 
 import (
+	"sync/atomic"
+
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/recovery"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/telemetry"
 )
 
@@ -28,8 +31,19 @@ import (
 // telemetry snapshots and emits events to the recorder. Not safe
 // for concurrent use; callers must serialize Tick() calls (which
 // the telemetry sampler does naturally — single goroutine).
+//
+// When a recovery.Manager is registered (via SetRecoveryManager),
+// failsafe transitions also auto-activate the lost-aircraft
+// recovery view.
 type flightEventDetector struct {
 	rec recorder.Interface
+
+	// recoveryMgr is set after construction (the manager itself
+	// is built later in main, once gpsRdr and the recorder exist).
+	// atomic.Pointer because the telemetry sampler goroutine reads
+	// this while the main goroutine writes it -- without atomic,
+	// the race detector trips even though the access is one word.
+	recoveryMgr atomic.Pointer[recovery.Manager]
 
 	// armed mirrors the recorder's session state. Events are only
 	// emitted while armed; setArmed(true) resets per-flight state.
@@ -87,6 +101,14 @@ func newFlightEventDetector(rec recorder.Interface) *flightEventDetector {
 	d := &flightEventDetector{rec: rec}
 	d.resetFlightState()
 	return d
+}
+
+// SetRecoveryManager wires a recovery.Manager so failsafe transitions
+// auto-activate the lost-aircraft recovery view. Optional: tests
+// commonly skip this (auto-trigger isn't under test). Production
+// calls this once at startup right after newFlightEventDetector.
+func (d *flightEventDetector) SetRecoveryManager(m *recovery.Manager) {
+	d.recoveryMgr.Store(m)
 }
 
 // resetFlightState wipes per-flight tracking. Called on arm so a new
@@ -195,9 +217,41 @@ func (d *flightEventDetector) checkMode(snap telemetry.Snapshot) {
 	if failsafe && !d.failsafeActive {
 		d.rec.LogEvent("flight", "failsafe", "critical", map[string]interface{}{"mode": m})
 		d.failsafeActive = true
+		// Auto-activate the lost-aircraft recovery view. The frozen
+		// snapshot captures aircraft state at the moment failsafe
+		// fired. GPS data is included only when fresh -- a stale
+		// position at trigger time is misleading (says "aircraft
+		// here" when it could have drifted minutes ago).
+		if mgr := d.recoveryMgr.Load(); mgr != nil {
+			mgr.Trigger(recovery.ReasonFailsafe, buildFrozenSnapshot(m, snap))
+		}
 	} else if !failsafe && d.failsafeActive {
 		d.failsafeActive = false
 	}
+}
+
+// buildFrozenSnapshot extracts the recovery.Snapshot fields from a
+// telemetry snapshot at the moment of failsafe. The Mode string is
+// passed in separately because the caller already has the canonical
+// value (FS / !FS / !ERR) and we'd rather record the exact mode
+// observed than whatever the FlightMode entry currently reads (they
+// should agree, but the caller's value is the trigger truth).
+func buildFrozenSnapshot(mode string, snap telemetry.Snapshot) recovery.Snapshot {
+	out := recovery.Snapshot{Mode: mode}
+	if snap.GPS != nil && !snap.GPS.Stale {
+		g := snap.GPS.Data
+		out.LatDeg = g.LatDeg
+		out.LonDeg = g.LonDeg
+		out.AltMeters = g.AltMeters
+		out.GroundKmh = g.GroundKmh
+		out.HeadingDeg = g.HeadingDeg
+		// A real fix requires at least a 2D solution; the GPS
+		// type's Sats field is a useful proxy. The lat/lon
+		// non-zero check avoids the rare "0,0 with sats=6" wire
+		// artifact.
+		out.HasGPS = g.Sats >= 4 && (g.LatDeg != 0 || g.LonDeg != 0)
+	}
+	return out
 }
 
 func (d *flightEventDetector) checkPosition(snap telemetry.Snapshot) {

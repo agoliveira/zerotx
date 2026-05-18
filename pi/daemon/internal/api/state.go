@@ -21,6 +21,7 @@ import (
 
 	"github.com/agoliveira/zerotx/pi/daemon/internal/ipc"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/recovery"
 )
 
 // State is the JSON payload pushed to /stream and returned by /state.
@@ -38,6 +39,11 @@ type State struct {
 	Arm       interface{}       `json:"arm,omitempty"`
 	Station   *StationSnapshot  `json:"station,omitempty"`
 	Syscheck  interface{}       `json:"syscheck,omitempty"`
+	// Recovery is the lost-aircraft view state. Always emitted when
+	// the recovery manager is wired (Active=false in normal flight,
+	// Active=true with frozen + last-known data when triggered).
+	// Absent entirely if no recovery manager is registered.
+	Recovery *recovery.State `json:"recovery,omitempty"`
 	// Kiosk carries directives the kiosk pages (/hud, /map) need
 	// to act on -- chiefly the "replay is active for recording X"
 	// signal that auto-navigates them into replay mode. Kept as a
@@ -514,6 +520,22 @@ type Providers struct {
 	// HUB75 panel mode. No-op if not currently active.
 	ReplayStop func()
 
+	// Recovery returns the lost-aircraft recovery state. nil means
+	// the recovery subsystem is disabled; the field is omitted from
+	// /state in that case. When non-nil, called per /state request
+	// so the operator position resolves fresh.
+	Recovery func() *recovery.State
+
+	// RecoveryTrigger fires a manual trigger of the recovery view.
+	// The api server builds the frozen snapshot from current
+	// telemetry (so the package surface stays decoupled from
+	// telemetry types). Returns whether the call activated the
+	// state machine (false = already active).
+	RecoveryTrigger func(snap recovery.Snapshot) bool
+
+	// RecoveryDismiss clears the recovery state. No-op when idle.
+	RecoveryDismiss func()
+
 	Version string
 	Uptime  func() time.Duration
 }
@@ -589,6 +611,9 @@ func (p *Providers) snapshot() State {
 	}
 	if p.Syscheck != nil {
 		out.Syscheck = p.Syscheck()
+	}
+	if p.Recovery != nil {
+		out.Recovery = p.Recovery()
 	}
 	// Kiosk directives. Only emitted when there's something to say,
 	// keeping the wire format slim during normal flight (when this

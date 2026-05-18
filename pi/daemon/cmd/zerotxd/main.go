@@ -44,6 +44,7 @@ import (
 	"github.com/agoliveira/zerotx/pi/daemon/internal/phrasebook"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/panel"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/recorder"
+	"github.com/agoliveira/zerotx/pi/daemon/internal/recovery"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/replay"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/source"
 	"github.com/agoliveira/zerotx/pi/daemon/internal/syscheck"
@@ -279,11 +280,32 @@ func main() {
 	// (probe id 'elrs') to detect a silent ELRS module.
 	elrsObs := newELRSObserver()
 
+	// recoveryMgr is constructed later (it needs the recorder and
+	// the GPS reader, both built downstream). The variable is
+	// captured here by telemHandler and assigned by the time link
+	// goroutines start consuming telemetry. The Go memory model
+	// guarantees ordering: the link goroutines spawn (via
+	// link.Run / sitlCon's reader goroutine) after the assignment
+	// happens in this same goroutine.
+	var recoveryMgr *recovery.Manager
+
 	telemHandler := func(payload []byte) {
 		telemetryState.Feed(payload)
 		mwpTee.Forward(payload)
 		vfdEvt.CountFrame()
 		elrsObs.Touch()
+		// During an active recovery, push fresh GPS positions to
+		// the manager so the operator's map view tracks the
+		// aircraft if it's still drifting / gliding / under
+		// partial control. The IsActive guard means we don't
+		// allocate a Snapshot in normal flight; ELRS at 50Hz
+		// makes that allocation matter.
+		if recoveryMgr != nil && recoveryMgr.IsActive() {
+			snap := telemetryState.Snapshot()
+			if snap.GPS != nil && !snap.GPS.Stale {
+				recoveryMgr.UpdateLastKnown(snap.GPS.Data.LatDeg, snap.GPS.Data.LonDeg)
+			}
+		}
 	}
 	if link != nil {
 		link.OnTelemetry = telemHandler
@@ -1085,9 +1107,26 @@ func main() {
 	// starts so heartbeats are flowing into devhealth).
 	hwBaselineHolder := newHardwareBaselineHolder(*hardwareBaseline)
 
+	// Recovery manager. Owns the lost-aircraft state machine; queried
+	// by /api/v1/recovery and the WS stream. Auto-triggered from
+	// flight_events.go on failsafe; manually triggered via the API.
+	// Operator position comes from the Pi-side GPS with a fallback
+	// to the -site-lat/-site-lon flags when no fix is available.
+	// Variable was forward-declared above so telemHandler can call
+	// UpdateLastKnown on it; the assignment here happens before
+	// any link goroutine starts consuming telemetry.
+	recoveryMgr = recovery.New(
+		&recoveryOperatorAdapter{gps: gpsRdr, siteLat: *siteLat, siteLon: *siteLon},
+		rec,
+	)
+	// flightEvents was constructed earlier (line ~478) before the
+	// recovery manager existed. Register it now so failsafe mode
+	// transitions auto-activate the recovery view.
+	flightEvents.SetRecoveryManager(recoveryMgr)
+
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, replayState, link, hwBaselineHolder, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, replayState, link, hwBaselineHolder, recoveryMgr, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1503,6 +1542,7 @@ func buildAPIProviders(
 	replayState *replay.State,
 	link *ipc.Link,
 	hwBaseline *hardwareBaselineHolder,
+	recoveryMgr *recovery.Manager,
 	ctx context.Context,
 ) *api.Providers {
 	return &api.Providers{
@@ -1910,6 +1950,20 @@ func buildAPIProviders(
 				}
 			}
 		},
+
+		// Recovery: the lost-aircraft view's state machine. Always
+		// non-nil here (recoveryMgr is constructed unconditionally
+		// in main); the api package's nil checks cover the case
+		// where buildAPIProviders is called without a manager from
+		// tests.
+		Recovery: func() *recovery.State {
+			s := recoveryMgr.State()
+			return &s
+		},
+		RecoveryTrigger: func(snap recovery.Snapshot) bool {
+			return recoveryMgr.Trigger(recovery.ReasonManual, snap)
+		},
+		RecoveryDismiss: recoveryMgr.Dismiss,
 
 		Version: version,
 		Uptime:  func() time.Duration { return time.Since(startedAt) },

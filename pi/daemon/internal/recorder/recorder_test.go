@@ -351,3 +351,89 @@ func TestTelemetry_AttitudeZeroPreserved(t *testing.T) {
 			roll.Float64, pitch.Float64, yaw.Float64)
 	}
 }
+
+func TestPreserve_WritesSidecar(t *testing.T) {
+	r, dir := newTestRecorder(t)
+	r.OnArm("X", "/x.yml")
+	r.PreserveCurrentSession("failsafe")
+	time.Sleep(5 * time.Millisecond)
+	saved := r.OnDisarm()
+	if saved == "" {
+		t.Fatal("OnDisarm returned empty path")
+	}
+	sidecar := saved + preserveSuffix
+	data, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("sidecar not written: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "failsafe" {
+		t.Errorf("sidecar content = %q, want %q", got, "failsafe")
+	}
+}
+
+func TestPreserve_FlagResetsBetweenSessions(t *testing.T) {
+	r, dir := newTestRecorder(t)
+
+	// Session 1: preserved.
+	r.OnArm("A", "/a.yml")
+	r.PreserveCurrentSession("failsafe")
+	time.Sleep(5 * time.Millisecond)
+	first := r.OnDisarm()
+	if _, err := os.Stat(first + preserveSuffix); err != nil {
+		t.Fatalf("first session sidecar missing: %v", err)
+	}
+
+	// Session 2: NOT preserved -- the preserve flag from session 1
+	// must NOT carry over.
+	r.OnArm("B", "/b.yml")
+	time.Sleep(5 * time.Millisecond)
+	second := r.OnDisarm()
+	if _, err := os.Stat(second + preserveSuffix); err == nil {
+		t.Errorf("second session erroneously has a sidecar (preserve leaked across sessions)")
+	}
+	_ = dir
+}
+
+func TestCleanup_SkipsPreserved(t *testing.T) {
+	r, dir := newTestRecorder(t) // Keep=3
+
+	// Six sessions, second one preserved. Without the preserve flag
+	// the second-oldest would be deleted; with it, the second-oldest
+	// survives and instead one of the others gets aged out.
+	var preservedPath string
+	for i := 0; i < 6; i++ {
+		r.OnArm("X", "/x.yml")
+		if i == 1 {
+			r.PreserveCurrentSession("test")
+		}
+		time.Sleep(15 * time.Millisecond)
+		saved := r.OnDisarm()
+		if i == 1 {
+			preservedPath = saved
+		}
+	}
+
+	// Confirm preserved .db still exists.
+	if _, err := os.Stat(preservedPath); err != nil {
+		t.Fatalf("preserved recording was deleted: %v", err)
+	}
+
+	// Count: 3 non-preserved newest + 1 preserved = 4 total .db files.
+	files, _ := os.ReadDir(dir)
+	dbCount := 0
+	preserveCount := 0
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), ".db") {
+			dbCount++
+		}
+		if strings.HasSuffix(f.Name(), preserveSuffix) {
+			preserveCount++
+		}
+	}
+	if dbCount != 4 {
+		t.Errorf("expected 4 .db files (3 kept + 1 preserved), got %d", dbCount)
+	}
+	if preserveCount != 1 {
+		t.Errorf("expected 1 .preserve sidecar, got %d", preserveCount)
+	}
+}

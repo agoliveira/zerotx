@@ -102,6 +102,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/arm/checklist", s.handleArmChecklist)
 	mux.HandleFunc("/api/v1/weather", s.handleWeather)
 	mux.HandleFunc("/api/v1/netclass", s.handleNetClass)
+	mux.HandleFunc("/api/v1/recovery", s.handleRecovery)
+	mux.HandleFunc("/api/v1/recovery/trigger", s.handleRecoveryTrigger)
+	mux.HandleFunc("/api/v1/recovery/dismiss", s.handleRecoveryDismiss)
 	mux.HandleFunc("/api/v1/metrics", s.handleMetrics)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 

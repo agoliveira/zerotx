@@ -153,6 +153,13 @@ type Recorder struct {
 	// telemetryThrottle to avoid flooding the DB with near-duplicates.
 	lastTelemetryAt time.Time
 
+	// preserveReason, when non-empty at SaveAndRotate time, causes a
+	// <recording>.preserve sidecar file to be written next to the
+	// saved .db. cleanupOldRecordings skips any .db whose sidecar
+	// exists, so preserved recordings survive rotation indefinitely.
+	// Reset to empty after the sidecar is written.
+	preserveReason string
+
 	// Closed flag protects against late goroutines after Close.
 	closed atomic.Bool
 }
@@ -288,6 +295,18 @@ func (r *Recorder) OnDisarm() string {
 		log.Printf("recorder: save %s: %v", dst, err)
 	} else {
 		log.Printf("recorder: saved %s", dst)
+		// If a preserve flag was set during this session (e.g., the
+		// recovery state machine asked us to preserve on failsafe),
+		// write a sidecar marker so cleanupOldRecordings won't touch
+		// this file. The sidecar's content is the reason text for
+		// later debugging.
+		r.mu.Lock()
+		reason := r.preserveReason
+		r.preserveReason = ""
+		r.mu.Unlock()
+		if reason != "" {
+			r.writePreserveSidecar(dst, reason)
+		}
 		r.cleanupOldRecordings()
 	}
 
@@ -458,6 +477,11 @@ func sqliteQuote(s string) string {
 }
 
 // cleanupOldRecordings deletes recordings beyond the cfg.Keep newest.
+// Recordings with a sibling .preserve sidecar file are skipped: they
+// don't count toward the Keep limit and are never deleted by cleanup.
+// PreserveCurrentSession is how the daemon flags a recording (the
+// sidecar is written by SaveAndRotate when the session's
+// preserveReason was non-empty).
 func (r *Recorder) cleanupOldRecordings() {
 	files, err := os.ReadDir(r.cfg.RecordingsDir)
 	if err != nil {
@@ -474,6 +498,11 @@ func (r *Recorder) cleanupOldRecordings() {
 			continue
 		}
 		if !strings.HasSuffix(f.Name(), ".db") {
+			continue
+		}
+		// Skip preserved recordings entirely; they don't count toward
+		// the Keep limit and are not eligible for cleanup.
+		if _, err := os.Stat(filepath.Join(r.cfg.RecordingsDir, f.Name()+preserveSuffix)); err == nil {
 			continue
 		}
 		info, err := f.Info()
@@ -495,6 +524,52 @@ func (r *Recorder) cleanupOldRecordings() {
 		}
 		log.Printf("recorder: cleaned up %s", path)
 	}
+}
+
+// preserveSuffix is the filename extension for the sidecar marker file
+// that protects a recording from cleanup. <recording>.db preserved by
+// <recording>.db.preserve. The sidecar's content is a one-line reason.
+const preserveSuffix = ".preserve"
+
+// PreserveCurrentSession marks the active recording so the saved file
+// survives the post-disarm cleanup-on-rotate sweep. The reason is
+// written to a <recording>.db.preserve sidecar file alongside the
+// saved .db, viewable in any file manager and editable / removable
+// if the operator wants to release the recording back to normal
+// cleanup later.
+//
+// Safe to call multiple times during a session; the most recent
+// reason wins. No effect if no recording is active (preserveReason
+// is reset to empty after SaveAndRotate, so a stale flag from a
+// previous session can't accidentally preserve a future one).
+//
+// Typical caller: the recovery package, on ReasonFailsafe trigger.
+// Manual recovery triggers do NOT call this -- a flight isn't
+// necessarily lost just because the operator wanted to see the
+// recovery view.
+func (r *Recorder) PreserveCurrentSession(reason string) {
+	if r.closed.Load() {
+		return
+	}
+	r.mu.Lock()
+	r.preserveReason = reason
+	r.mu.Unlock()
+	log.Printf("recorder: preserve flag set (reason=%q); sidecar will be written on next SaveAndRotate", reason)
+}
+
+// writePreserveSidecar creates the marker file. Errors are logged
+// but do not fail the rotation -- a missing sidecar is a graceful
+// degradation (the recording is at the front of the queue anyway
+// for a while; the operator can manually re-create the sidecar
+// before it ages out).
+func (r *Recorder) writePreserveSidecar(dbPath, reason string) {
+	sidecar := dbPath + preserveSuffix
+	content := []byte(reason + "\n")
+	if err := os.WriteFile(sidecar, content, 0o644); err != nil {
+		log.Printf("recorder: write preserve sidecar %s: %v", sidecar, err)
+		return
+	}
+	log.Printf("recorder: wrote preserve sidecar %s", sidecar)
 }
 
 // Recordings returns the saved recordings (newest first) for the
@@ -1085,6 +1160,7 @@ func (NoOpRecorder) LogEvent(string, string, string, interface{}) {}
 func (NoOpRecorder) LogTelemetry(TelemetrySample) {}
 func (NoOpRecorder) Recordings() ([]Recording, error) { return nil, nil }
 func (NoOpRecorder) CurrentSessionEvents() ([]Event, error) { return nil, nil }
+func (NoOpRecorder) PreserveCurrentSession(string) {}
 func (NoOpRecorder) Close()                   {}
 
 // Interface is the surface used by the daemon. Recorder and NoOpRecorder
@@ -1097,6 +1173,10 @@ type Interface interface {
 	LogTelemetry(TelemetrySample)
 	Recordings() ([]Recording, error)
 	CurrentSessionEvents() ([]Event, error)
+	// PreserveCurrentSession marks the active recording so the
+	// saved file survives the post-disarm cleanup sweep. Mechanism:
+	// a <recording>.db.preserve sidecar file written at SaveAndRotate.
+	PreserveCurrentSession(reason string)
 	Close()
 }
 
