@@ -100,7 +100,11 @@ type gpxRoot struct {
 type gpxWpt struct {
 	Lat  float64 `xml:"lat,attr"`
 	Lon  float64 `xml:"lon,attr"`
-	Ele  int32   `xml:"ele,omitempty"`
+	// Ele has no omitempty: an altitude of 0 is a legitimate value
+	// (takeoff point in relative mode, sea level in MSL mode) and
+	// dropping it would silently lose that data point. GPX consumers
+	// that don't care about altitude just ignore <ele>0</ele>.
+	Ele  int32   `xml:"ele"`
 	Time string  `xml:"time,omitempty"`
 	Name string  `xml:"name,omitempty"`
 }
@@ -117,6 +121,8 @@ type gpxTrkseg struct {
 type gpxTrkpt struct {
 	Lat  float64 `xml:"lat,attr"`
 	Lon  float64 `xml:"lon,attr"`
-	Ele  int32   `xml:"ele,omitempty"`
+	// Ele has no omitempty: see gpxWpt comment. Zero altitude is
+	// legitimate (relative-mode takeoff, or actual sea level).
+	Ele  int32   `xml:"ele"`
 	Time string  `xml:"time,omitempty"`
 }
