@@ -942,17 +942,24 @@ ESP32 GPIO mapping (R1, G1, B1, R2, G2, B2, A, B, C, D, E, CLK, LAT, OE) is set 
 
 Noritake CU20025ECPB-W1J 20x2 VFD, driven by Mega via HD44780 4-bit interface. 6 Mega GPIOs (D4-D7, RS, E) drive the VFD data and control lines, through a 5V 8-channel level shifter (74AHCT125 or similar) to clean up the Mega's 5V logic to the VFD's 5V logic. Pin assignment in Appendix A.
 
-ST7920 128x64 graphic LCD, driven by Mega via 3-wire serial mode over hardware SPI:
+ST7920 128x64 graphic LCD, driven by Mega via 3-wire serial mode over hardware SPI. The table below is the full wiring (all 11 connections); module pin numbers follow the standard ST7920 18-pin pinout (some module variants have different silkscreen labels, but the pin functions are canonical from the ST7920 datasheet):
 
-| Mega pin | LCD pin | Function |
-|---|---|---|
-| 51 (MOSI) | SID (D11) | Serial data in |
-| 52 (SCK) | CLK (D10) | Serial clock |
-| 53 (SS) | CS (D5) | Chip select |
-| 5V | VCC | Power |
-| GND | GND, PSB | PSB tied to GND selects serial mode |
+| Mega pin | ST7920 pin | Function | Notes |
+|---|---|---|---|
+| GND | 1 | VSS (ground) | |
+| 5V | 2 | VDD (logic power) | |
+| (module pot) | 3 | V0 (contrast) | Most modules have a built-in pot on the back of the PCB; no external wire needed. If yours has none, wire a 10kΩ trimpot between VCC and GND with the wiper to V0. |
+| 53 | 4 | RS / CS (chip select) | Mega hardware SS; HAL `glcd_cs`, remappable. |
+| 51 | 5 | R/W / SID (serial data in) | Mega hardware MOSI; fixed by SPI peripheral. |
+| 52 | 6 | E / SCLK (serial clock) | Mega hardware SCK; fixed by SPI peripheral. Firmware drives at 500 kHz (see `glcd.cpp`). |
+| — | 7-14 | D0-D7 (parallel data) | Unused in serial mode; leave floating. |
+| GND | 15 | PSB | LOW selects 3-wire serial mode (critical: without this, the module ignores SPI). |
+| — | 16 | NC | |
+| 10 | 17 | /RST | Pulsed LOW for 10ms at firmware boot; HAL `glcd_reset`, remappable. |
+| 5V | 18 | BLA (backlight anode) | Most modules ship with the current-limit resistor on-board; if yours doesn't, add a 100Ω in series. |
+| GND | 19 | BLK (backlight cathode) | |
 
-GLCD pins 7-14 are unused.
+Pin labels on the module silkscreen vary between manufacturers; some variants label pins as "D5/D10/D11" or other shorthand. Always use the **pin numbers** from the table and the **function names** from the ST7920 datasheet, not silkscreen labels.
 
 The GLCD hosts the artificial-horizon HUD via the `glcd` Mega subsystem. It is never on the safety path; loss of the GLCD doesn't block flight (the LCD HUD page on the lid LCD is the authoritative attitude display).
 
