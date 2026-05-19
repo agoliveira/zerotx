@@ -181,22 +181,46 @@ func TestDismiss_AllowsReTrigger(t *testing.T) {
 	}
 }
 
-func TestTrigger_PreservesOnFailsafeOnly(t *testing.T) {
+func TestTrigger_PreservesOnAnyReason(t *testing.T) {
+	// Both failsafe and manual triggers preserve the in-progress
+	// recording. The sidecar reason string distinguishes them so
+	// downstream tools and the operator can see which path fired.
+	// Re-triggering while active is a no-op so each successful
+	// trigger produces exactly one preserve call.
+
+	// Manual trigger from idle: one preserve call with reason "manual".
 	r := &stubRecorder{}
 	m := New(nil, r)
-
-	// Manual trigger: no preserve call.
 	m.Trigger(ReasonManual, Snapshot{HasGPS: false})
-	if calls := r.calls(); len(calls) != 0 {
-		t.Errorf("Manual trigger called PreserveCurrentSession: %v", calls)
+	calls := r.calls()
+	if len(calls) != 1 || calls[0] != "manual" {
+		t.Errorf("Manual trigger preserve calls = %v, want [manual]", calls)
 	}
 	m.Dismiss()
 
-	// Failsafe trigger: one preserve call with reason "failsafe".
+	// Failsafe trigger from idle: appends a second preserve call
+	// with reason "failsafe".
 	m.Trigger(ReasonFailsafe, Snapshot{HasGPS: false})
+	calls = r.calls()
+	if len(calls) != 2 || calls[1] != "failsafe" {
+		t.Errorf("After failsafe trigger preserve calls = %v, want [manual, failsafe]", calls)
+	}
+}
+
+func TestTrigger_PreserveOnceWhileActive(t *testing.T) {
+	// Re-triggering while already active is a no-op and must NOT
+	// re-call the preserve hook. Pins the idempotency of the
+	// recorder side: even if a buggy caller fires Trigger in a
+	// loop, the sidecar reason doesn't flap between "manual" and
+	// "failsafe" on each call.
+	r := &stubRecorder{}
+	m := New(nil, r)
+	m.Trigger(ReasonManual, Snapshot{HasGPS: false})
+	m.Trigger(ReasonFailsafe, Snapshot{HasGPS: false}) // ignored
+	m.Trigger(ReasonManual, Snapshot{HasGPS: false})   // ignored
 	calls := r.calls()
-	if len(calls) != 1 || calls[0] != "failsafe" {
-		t.Errorf("Failsafe trigger preserve calls = %v, want [failsafe]", calls)
+	if len(calls) != 1 || calls[0] != "manual" {
+		t.Errorf("preserve calls under re-trigger = %v, want [manual] (single call)", calls)
 	}
 }
 

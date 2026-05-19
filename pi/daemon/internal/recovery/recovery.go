@@ -94,11 +94,17 @@ type OperatorSource interface {
 }
 
 // PreservableRecorder is the optional hook into the recorder. When
-// recovery activates for ReasonFailsafe, the manager calls
+// recovery activates by any reason, the manager calls
 // PreserveCurrentSession so the recording survives the post-disarm
-// cleanup-on-rotate. Manual triggers do NOT preserve -- the operator
-// chose to enter recovery view but the flight wasn't necessarily
-// lost.
+// cleanup-on-rotate. The reason string passed through is the
+// recovery Reason ("failsafe" or "manual") so downstream consumers
+// can distinguish: the sidecar file ends up containing that string
+// verbatim. Both reasons preserve because the operator entering
+// recovery view is itself a signal that the flight is interesting
+// enough to keep; the asymmetry that existed previously (failsafe
+// only) was an operator footgun where a manually-triggered recovery
+// view could end up evicting the very recording the operator
+// wanted to review.
 type PreservableRecorder interface {
 	PreserveCurrentSession(reason string)
 }
@@ -156,9 +162,10 @@ func (m *Manager) IsActive() bool {
 // idle to active (caller can log / emit events on first activation
 // only). Returns false if the manager was already active.
 //
-// For ReasonFailsafe, calls PreserveCurrentSession on the recorder
+// On first activation, calls PreserveCurrentSession on the recorder
 // (if one was injected) so the in-progress recording survives the
-// next save-and-rotate.
+// next save-and-rotate. The reason string is passed through verbatim
+// so the sidecar marker file records which trigger path fired.
 func (m *Manager) Trigger(reason Reason, frozen Snapshot) bool {
 	m.mu.Lock()
 	if m.state.Active {
@@ -179,7 +186,7 @@ func (m *Manager) Trigger(reason Reason, frozen Snapshot) bool {
 	rec := m.recorder
 	m.mu.Unlock()
 
-	if rec != nil && reason == ReasonFailsafe {
+	if rec != nil {
 		rec.PreserveCurrentSession(string(reason))
 	}
 	return true

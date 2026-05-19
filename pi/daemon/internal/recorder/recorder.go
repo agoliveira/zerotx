@@ -543,10 +543,10 @@ const preserveSuffix = ".preserve"
 // is reset to empty after SaveAndRotate, so a stale flag from a
 // previous session can't accidentally preserve a future one).
 //
-// Typical caller: the recovery package, on ReasonFailsafe trigger.
-// Manual recovery triggers do NOT call this -- a flight isn't
-// necessarily lost just because the operator wanted to see the
-// recovery view.
+// Typical caller: the recovery package, on any recovery trigger
+// (failsafe or manual). The reason string is the recovery Reason
+// verbatim ("failsafe" or "manual") so the sidecar records which
+// trigger path fired.
 func (r *Recorder) PreserveCurrentSession(reason string) {
 	if r.closed.Load() {
 		return

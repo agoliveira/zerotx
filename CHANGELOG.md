@@ -25,7 +25,7 @@ The daemon now has a recovery state machine that auto-activates on FC failsafe (
 
 The state machine exposes `state.recovery` in the WebSocket stream and `/api/v1/recovery` for direct query. While active, fresh GPS samples flow into `state.recovery.lastKnown` so the operator's map view tracks the aircraft if it's drifting back into range.
 
-Auto-triggered (failsafe) recovery also tells the recorder to preserve the in-progress session: a `<recording>.db.preserve` sidecar marker file is written on save-and-rotate, and the cleanup sweep skips any `.db` whose sidecar exists. Manual triggers do NOT preserve. See USER.md §7.2 for the full operator procedure.
+Any recovery trigger (failsafe or manual) tells the recorder to preserve the in-progress session: a `<recording>.db.preserve` sidecar marker file is written on save-and-rotate, and the cleanup sweep skips any `.db` whose sidecar exists. The sidecar's content is the trigger reason (`failsafe` or `manual`) so the path that fired is recoverable after the fact. See USER.md §7.2 for the full operator procedure.
 
 ### HUD pre-flight banner: sunset countdown + wind summary
 

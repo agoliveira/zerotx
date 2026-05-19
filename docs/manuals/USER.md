@@ -595,7 +595,7 @@ No telemetry, no visual. The aircraft is somewhere out there and you don't know 
 
 The daemon has a **recovery view** designed for this situation. It activates automatically when the FC reports failsafe (mode `FS`, `!FS`, or `!ERR`), and can also be triggered manually from either kiosk if you decide you need it. While active, both kiosks pivot to a recovery-focused presentation: last-known aircraft position, bearing and distance from your standing position, frozen telemetry snapshot at the moment of loss.
 
-**When it auto-triggers:** the FC's mode transitions to failsafe. The daemon's flight-events detector picks this up at the next telemetry tick (~200ms cadence) and activates the state machine. At the same moment, the in-progress recording is marked for preservation (sidecar file, see Section 5.2).
+**When it auto-triggers:** the FC's mode transitions to failsafe. The daemon's flight-events detector picks this up at the next telemetry tick (~200ms cadence) and activates the state machine. The in-progress recording is marked for preservation at the same moment.
 
 **Manual trigger options:**
 
@@ -603,7 +603,7 @@ The daemon has a **recovery view** designed for this situation. It activates aut
 - HUD kiosk: press **Ctrl+Alt+R**.
 - Direct API: `POST /api/v1/recovery/trigger`.
 
-Manual triggers do NOT write a preserve sidecar — they're benign UI state changes, not declarations that the flight is lost.
+Either trigger path (auto-failsafe or manual) marks the in-progress recording for preservation: a `<recording>.db.preserve` sidecar is written on save-and-rotate, and the cleanup sweep skips any `.db` whose sidecar exists. The sidecar's content is the trigger reason (`failsafe` or `manual`) so you can tell after the fact which path fired. Dismissing the recovery view does not undo the preservation; remove the sidecar file by hand if you want the recording to age out normally.
 
 **What you see while active:**
 
@@ -628,7 +628,7 @@ Manual triggers do NOT write a preserve sidecar — they're benign UI state chan
 6. **Don't power down the ground station yet** — if the aircraft comes back into range, telemetry resumes and the kiosks show it instantly. The recovery view stays active until you dismiss it.
 7. After the search (recovered or abandoned), dismiss the recovery view from the map kiosk.
 
-**Recording side:** the failsafe-triggered recovery view also preserves the in-progress recording from auto-cleanup (Section 5.2). Even if you fly a dozen more flights and never come back to this one, the preserved `.db` won't be deleted by the rotation sweep. Run `zerotx-export` on it later for the full GPS track to the last known position (Section 5.4).
+**Recording side:** any trigger of the recovery view (failsafe or manual) preserves the in-progress recording from auto-cleanup (Section 5.2). Even if you fly a dozen more flights and never come back to this one, the preserved `.db` won't be deleted by the rotation sweep. Run `zerotx-export` on it later for the full GPS track to the last known position (Section 5.4).
 
 This is an operational aid, not a magic recovery system. The daemon can't tell you where the aircraft drifted to after the last GPS frame; it can only present the last data it had and put it in front of you fast.
 
