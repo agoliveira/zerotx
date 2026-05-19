@@ -224,6 +224,11 @@ footer.proceed.dismissed button.primary {
     <div class="label">Station GPS</div>
     <div class="value" id="val-station">—</div>
   </div>
+  <div class="row" id="row-oppos">
+    <div class="led idle" id="led-oppos"></div>
+    <div class="label">Operator position</div>
+    <div class="value" id="val-oppos"><span class="dim">waiting for first /api/v1/preflight response</span></div>
+  </div>
   <div class="row" id="row-audio">
     <div class="led" id="led-audio"></div>
     <div class="label">Audio</div>
@@ -686,6 +691,61 @@ async function pollPreflight() {
   }
   updateProceedGate();
   renderHardwareInventory();
+  renderOperatorPosition();
+}
+
+// renderOperatorPosition paints the "Operator position" row from
+// the latest /api/v1/preflight.groundStation.operatorPositionSources
+// list. Configuration-state, not liveness-state: a configured GPS
+// without a current fix still shows as 'configured' here; the
+// 'Station GPS' row above shows the live fix state separately.
+//
+// Three cases:
+//   - sources contains "gps": green LED, "GPS configured" (the
+//     primary recovery position source).
+//   - sources contains only "site": yellow LED, "site fallback
+//     only" (operator must not move from the configured point,
+//     or recovery bearing/distance will be wrong).
+//   - sources empty (or null from older daemons / before first
+//     poll): red LED, "no source configured -- recovery bearing/
+//     distance will be unavailable if the recovery view triggers".
+function renderOperatorPosition() {
+  const led = document.getElementById('led-oppos');
+  const val = document.getElementById('val-oppos');
+  if (!led || !val) return;
+  if (!lastPreflight) {
+    led.className = 'led idle';
+    val.innerHTML = '<span class="dim">no /api/v1/preflight response yet</span>';
+    return;
+  }
+  const gs = lastPreflight.groundStation || {};
+  // Treat both null and undefined as "no info"; the daemon may
+  // be older than this client. Empty array is the explicit "no
+  // sources" case.
+  const sources = Array.isArray(gs.operatorPositionSources)
+    ? gs.operatorPositionSources
+    : null;
+  if (sources === null) {
+    led.className = 'led idle';
+    val.innerHTML = '<span class="dim">daemon did not report operator position sources</span>';
+    return;
+  }
+  const hasGPS = sources.indexOf('gps') !== -1;
+  const hasSite = sources.indexOf('site') !== -1;
+  if (hasGPS) {
+    led.className = 'led ok';
+    val.innerHTML = hasSite
+      ? '<span class="strong">GPS configured</span> · site fallback also configured'
+      : '<span class="strong">GPS configured</span>';
+    return;
+  }
+  if (hasSite) {
+    led.className = 'led warn';
+    val.innerHTML = '<span class="strong">site fallback only</span> · no Pi GPS · recovery bearing depends on operator not moving from configured site';
+    return;
+  }
+  led.className = 'led err';
+  val.innerHTML = '<span class="strong">no source configured</span> · recovery bearing/distance will be unavailable if lost-aircraft fires';
 }
 
 // renderHardwareInventory paints the Hardware inventory section

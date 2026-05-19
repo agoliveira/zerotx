@@ -295,6 +295,17 @@ type PreflightDevice struct {
 // PreflightGS holds always-available daemon facts.
 type PreflightGS struct {
 	LinkPort string `json:"linkPort"`
+	// OperatorPositionSources lists which operator-position sources
+	// are configured at boot. Element values come from a closed set:
+	// "gps" means a Pi-side GPS reader is attached; "site" means
+	// the -site-lat/-site-lon flags were set to a non-zero point.
+	// Empty (zero-length, non-nil) means neither is configured, in
+	// which case the recovery view will be unable to compute
+	// bearing/distance to a lost aircraft from the operator's
+	// position. Order is stable: "gps" before "site". This is a
+	// configuration fact, not a liveness signal: a configured GPS
+	// without a fix still appears in the list.
+	OperatorPositionSources []string `json:"operatorPositionSources"`
 }
 
 // PreflightJoystickG holds joystick selection state. Selected is nil

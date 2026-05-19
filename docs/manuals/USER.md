@@ -204,6 +204,12 @@ If either is down, "Proceed to flight" is disabled and the hint reads `Blocked b
 
 If a **hardware baseline file** is deployed (see 3.4), additional blockers may appear with the format `hardware baseline: <probe> expected pass, got <actual> (<reason>)`. These come from the daemon's self-check comparing the deployed baseline to current device state.
 
+**Operator position row.** Inside the Hardware section, alongside Station GPS, the page surfaces a configuration check labelled "Operator position." It is not a flight gate; it tells you whether the recovery view's bearing/distance to a lost aircraft will be computable from your standing position. Three states:
+
+- **green ("GPS configured")**: a Pi-side GPS reader is wired up (`-gps-port` was set at daemon launch). Even if it has no fix yet, the recovery view will use it once a fix arrives.
+- **yellow ("site fallback only")**: no Pi GPS, but `-site-lat` / `-site-lon` were set to a non-zero point. Recovery will use those coordinates as the operator position. Only correct if you have not moved from the configured site since the daemon started.
+- **red ("no source configured")**: neither GPS nor site flags. If the recovery view triggers, bearing/distance will be unavailable — the kiosk will show the aircraft's last-known coordinates only, and you'll need to navigate to them manually via a phone GPS or paper map. This is a launch-configuration bug, not a hardware fault: fix it by passing one of the flags on next daemon start.
+
 **Proceed when ready:** click "Proceed to flight" on either kiosk. Both kiosks transition out of `/status`: HUD lands on `/hud`, Map lands on `/map`. Telemetry stream visible.
 
 After the syscheck gate, the daemon doesn't gate flight further. Arm/disarm is your responsibility via the joystick (Section 3.6).
@@ -616,7 +622,7 @@ Either trigger path (auto-failsafe or manual) marks the in-progress recording fo
 - **HUD:** full-screen red-flashing overlay with "LOST AIRCRAFT" / "SEE MAP" headline. Big readouts for **BEARING** (true, from your position to the aircraft) and **DISTANCE**. Last-known lat/lon below. Trigger reason ("Failsafe (auto-triggered)" or "Operator-triggered") in small text. Pointer events pass through the overlay so HUD widgets behind it remain interactive — the overlay is read-only.
 - **Map kiosk:** side panel top-right with pulsing red border. Same bearing and distance, plus the frozen-at-trigger snapshot (altitude, ground speed, heading). A large red marker with a halo appears at the last-known position; a dashed red line is drawn from your standing position to the marker. The map auto-pans to centre on the last-known position when the view activates.
 
-**Operator position:** the daemon resolves this in priority order: Pi-side GPS fix (if a u-blox or similar is connected and locked), then the `-site-lat` / `-site-lon` flag values, then "none". The panel surfaces a warning row when only the configured site fallback is available; without any operator position, bearing and distance are unavailable and the kiosk shows coords only (so you can type them into a phone).
+**Operator position:** the daemon resolves this in priority order: Pi-side GPS fix (if a u-blox or similar is connected and locked), then the `-site-lat` / `-site-lon` flag values, then "none". The panel surfaces a warning row when only the configured site fallback is available; without any operator position, bearing and distance are unavailable and the kiosk shows coords only (so you can type them into a phone). The pre-flight `/status` page reports the configured sources up front in the "Operator position" row (Section 3.3) — verify there before launch rather than discovering it mid-emergency.
 
 **Dismiss:**
 

@@ -1126,7 +1126,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, syscheckGate, devs, replayState, link, hwBaselineHolder, recoveryMgr, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, *siteLat, *siteLon, syscheckGate, devs, replayState, link, hwBaselineHolder, recoveryMgr, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1537,6 +1537,8 @@ func buildAPIProviders(
 	netClassHolder *netclass.Holder,
 	tileWarmStatsHolder *tileWarmStats,
 	gpsRdr *gps.Reader,
+	siteLat float64,
+	siteLon float64,
 	syscheckGate *syscheck.Gate,
 	devs *devhealth.Registry,
 	replayState *replay.State,
@@ -1634,7 +1636,21 @@ func buildAPIProviders(
 			return out
 		},
 		Preflight: func() api.Preflight {
-			return buildPreflight(holder, jsHolder, devs, hwBaseline, port, modelDefaultPath)
+			// OperatorPositionSources is a configuration fact, not a
+			// liveness fact: report sources the daemon was started
+			// with, regardless of whether they currently yield a
+			// fix. gpsRdr non-nil means -gps-port was set and the
+			// reader was constructed; siteLat/siteLon != 0 means
+			// the operator passed the flags. Order is stable so
+			// the GUI can render deterministically.
+			sources := []string{}
+			if gpsRdr != nil {
+				sources = append(sources, "gps")
+			}
+			if siteLat != 0 || siteLon != 0 {
+				sources = append(sources, "site")
+			}
+			return buildPreflight(holder, jsHolder, devs, hwBaseline, port, modelDefaultPath, sources)
 		},
 		LoadModel: func(path string) error {
 			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, lang, path); err != nil {
@@ -2005,11 +2021,16 @@ func loadModel(holder *stackHolder, jsState source.JoystickState, pnl panel.Pane
 }
 
 // buildPreflight returns the aggregate readiness snapshot the GUI's
-// pre-flight tab consumes via /api/v1/preflight.
-func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devhealth.Registry, hwBaseline *hardwareBaselineHolder, port, modelDefaultPath string) api.Preflight {
+// pre-flight tab consumes via /api/v1/preflight. The
+// operatorPositionSources slice is what the daemon was configured
+// with at boot (see the Preflight provider in buildAPIProviders);
+// passed through as-is so the GUI can warn when neither GPS nor
+// site flags are wired up.
+func buildPreflight(holder *stackHolder, jsHolder *joystickHolder, devs *devhealth.Registry, hwBaseline *hardwareBaselineHolder, port, modelDefaultPath string, operatorPositionSources []string) api.Preflight {
 	out := api.Preflight{
 		GroundStation: api.PreflightGS{
-			LinkPort: port,
+			LinkPort:                port,
+			OperatorPositionSources: operatorPositionSources,
 		},
 	}
 

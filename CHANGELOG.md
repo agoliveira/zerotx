@@ -6,6 +6,14 @@ than here. Append new entries at the top as they land.
 
 ## Unreleased
 
+### Pre-flight status page: operator position configuration row
+
+The /status page now surfaces a configuration check for the operator-position sources the recovery view depends on. New row in the Hardware section, "Operator position", driven from `/api/v1/preflight.groundStation.operatorPositionSources`. Three states: green when a Pi-side GPS reader is configured, yellow when only `-site-lat`/`-site-lon` flags are set (recovery bearing depends on the operator not moving from the configured point), red when neither is configured (recovery bearing/distance unavailable if the lost-aircraft view fires).
+
+Not a flight gate: the row is informational. Operators who fly without an operator position source are doing so deliberately, but now they see it on every boot rather than discovering it mid-emergency.
+
+API additions: `groundStation.operatorPositionSources` on the existing `/api/v1/preflight` response. Stable-ordered slice of strings drawn from a closed vocabulary (`"gps"`, `"site"`); empty when neither configured. Older daemons emit no field at all; clients should treat absence as "unknown" rather than "empty."
+
 ### Post-flight preserve toggle on the recordings list
 
 The recordings tab on the legacy index UI grows a per-row preserve toggle. Click it to write a `<recording>.db.preserve` sidecar (reason `operator`) and pin the recording against auto-cleanup; click it again to remove the sidecar and let the recording age out normally. Idempotent in both directions.
