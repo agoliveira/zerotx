@@ -606,6 +606,83 @@
     .stage:not(.preflight) .preflight-banner {
       display: none;
     }
+
+    /* ============================================================
+       Recovery (lost-aircraft) overlay. Full-screen takeover when
+       state.recovery.active. The map kiosk has the rich panel
+       (bearing + frozen snapshot + dismiss button); the HUD's job
+       is just to grab the operator's attention and point them at
+       the map. Big text, pulsing red, copy of bearing + distance
+       so the operator standing in front of the HUD sees the
+       actionable value without turning around.
+       ============================================================ */
+    .recovery-fullscreen {
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 5, 5, 0.92);
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Orbitron', sans-serif;
+      color: var(--bad);
+      text-align: center;
+      pointer-events: none; /* operator interacts via map kiosk */
+      animation: recovery-flash 1.6s ease-in-out infinite;
+    }
+    @keyframes recovery-flash {
+      0%, 100% { background: rgba(20, 5, 5, 0.92); }
+      50%      { background: rgba(40, 10, 10, 0.96); }
+    }
+    .recovery-fullscreen .rfs-title {
+      font-size: 4.5rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      margin-bottom: 0.3em;
+      text-shadow: 0 0 24px rgba(255, 64, 48, 0.65);
+    }
+    .recovery-fullscreen .rfs-sub {
+      font-size: 1.4rem;
+      letter-spacing: 0.25em;
+      color: var(--text-pri);
+      margin-bottom: 2em;
+    }
+    .recovery-fullscreen .rfs-readouts {
+      display: flex;
+      gap: 3em;
+      margin-bottom: 1.5em;
+    }
+    .recovery-fullscreen .rfs-readout {
+      min-width: 200px;
+    }
+    .recovery-fullscreen .rfs-readout-label {
+      font-size: 0.9rem;
+      letter-spacing: 0.18em;
+      color: var(--text-muted);
+      margin-bottom: 0.2em;
+    }
+    .recovery-fullscreen .rfs-readout-value {
+      font-size: 3.5rem;
+      font-weight: 700;
+      color: var(--amber-bright);
+      font-family: var(--mono);
+    }
+    .recovery-fullscreen .rfs-coords {
+      font-family: var(--mono);
+      color: var(--text-pri);
+      font-size: 1.1rem;
+      letter-spacing: 0.06em;
+    }
+    .recovery-fullscreen .rfs-reason {
+      font-size: 0.85rem;
+      letter-spacing: 0.15em;
+      color: var(--text-muted);
+      margin-top: 2em;
+    }
+    .recovery-fullscreen[hidden] {
+      display: none;
+    }
     /* ============================================================
        Weather modal. Touch-sized hit areas (>= 44px). Two columns at
        1024x600. Backdrop dims the page; shell is the modal proper.
@@ -1153,6 +1230,27 @@
   </style>
 </head>
 <body>
+
+<!-- Recovery (lost-aircraft) full-screen overlay. Hidden by default.
+     Shown when state.recovery.active arrives via the WS stream.
+     pointer-events:none in CSS so it doesn't block any HUD touch
+     interactions; the operator drives recovery from the map kiosk. -->
+<div class="recovery-fullscreen" id="recovery-fullscreen" hidden>
+  <div class="rfs-title">LOST AIRCRAFT</div>
+  <div class="rfs-sub">SEE MAP</div>
+  <div class="rfs-readouts">
+    <div class="rfs-readout">
+      <div class="rfs-readout-label">BEARING</div>
+      <div class="rfs-readout-value" id="rfs-bearing">—</div>
+    </div>
+    <div class="rfs-readout">
+      <div class="rfs-readout-label">DISTANCE</div>
+      <div class="rfs-readout-value" id="rfs-distance">—</div>
+    </div>
+  </div>
+  <div class="rfs-coords" id="rfs-coords">—</div>
+  <div class="rfs-reason" id="rfs-reason"></div>
+</div>
 
 <div class="top-strip">
   <div class="status-group">
@@ -1892,8 +1990,103 @@ async function showDaemonVersion() {
   } catch (e) { el.textContent = 'offline'; }
 }
 
+// ---- Recovery (lost-aircraft) overlay ----
+
+// bearingFromTo: initial-course bearing in degrees true, great-circle.
+function rfsBearing(lat1, lon1, lat2, lon2) {
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+  const f1 = toRad(lat1), f2 = toRad(lat2);
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(f2);
+  const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dLon);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// Great-circle distance in metres (haversine).
+function rfsDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const f1 = toRad(lat1), f2 = toRad(lat2);
+  const df = toRad(lat2 - lat1);
+  const dl = toRad(lon2 - lon1);
+  const a = Math.sin(df/2)**2 + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function rfsFmtDistance(m) {
+  if (!Number.isFinite(m) || m < 0) return '—';
+  if (m >= 1000) return (m / 1000).toFixed(2) + ' km';
+  return Math.round(m) + ' m';
+}
+
+// updateRecoveryFullscreen drives the takeover overlay. Reads
+// state.recovery from the WS stream; bearing/distance computed
+// from operator + (lastKnown ?? frozen-when-hasGPS). Same selection
+// rule as the map kiosk panel.
+function updateRecoveryFullscreen(state) {
+  const overlay = document.getElementById('recovery-fullscreen');
+  if (!overlay) return;
+  const r = state?.recovery;
+  if (!r || !r.active) {
+    overlay.hidden = true;
+    return;
+  }
+  overlay.hidden = false;
+
+  const reasonEl = document.getElementById('rfs-reason');
+  reasonEl.textContent = r.reason === 'manual'
+    ? 'Operator-triggered'
+    : 'Failsafe (auto-triggered)';
+
+  const lk = r.lastKnown
+    ? { latDeg: r.lastKnown.latDeg, lonDeg: r.lastKnown.lonDeg }
+    : (r.frozen && r.frozen.hasGPS
+        ? { latDeg: r.frozen.latDeg, lonDeg: r.frozen.lonDeg }
+        : null);
+
+  const op = r.operator;
+  const haveOp = op && op.source && op.source !== 'none'
+    && Number.isFinite(op.latDeg) && Number.isFinite(op.lonDeg);
+
+  if (lk && haveOp) {
+    document.getElementById('rfs-bearing').textContent =
+      Math.round(rfsBearing(op.latDeg, op.lonDeg, lk.latDeg, lk.lonDeg)) + '° T';
+    document.getElementById('rfs-distance').textContent =
+      rfsFmtDistance(rfsDistance(op.latDeg, op.lonDeg, lk.latDeg, lk.lonDeg));
+  } else {
+    document.getElementById('rfs-bearing').textContent = '—';
+    document.getElementById('rfs-distance').textContent = '—';
+  }
+
+  if (lk) {
+    document.getElementById('rfs-coords').textContent =
+      lk.latDeg.toFixed(5) + ', ' + lk.lonDeg.toFixed(5);
+  } else {
+    document.getElementById('rfs-coords').textContent = 'no GPS at trigger';
+  }
+}
+
+// Ctrl+Alt+R: manual recovery trigger from the HUD. Operator hotkey
+// for the same action exposed as a button on the map kiosk. Benign
+// (manual trigger does NOT preserve the recording); the daemon's
+// idempotency means re-pressing while active is a no-op.
+function bindRecoveryKeybind() {
+  document.addEventListener('keydown', evt => {
+    if (evt.ctrlKey && evt.altKey && (evt.key === 'r' || evt.key === 'R')) {
+      evt.preventDefault();
+      fetch('/api/v1/recovery/trigger', { method: 'POST' })
+        .catch(e => console.warn('recovery trigger failed:', e));
+    }
+  });
+}
+
 // ---- Main state handler (called by WS or simulator) ----
 function handleStateMessage(state) {
+  // Recovery overlay first; it's a full-screen takeover and we want
+  // it driven by every state push without intermediate flicker.
+  updateRecoveryFullscreen(state);
+
   const arm  = state?.arm?.state || 'DISARMED';
   const mode = state?.telemetry?.flightMode?.data?.mode || '';
   const gps  = state?.telemetry?.gps?.data;
@@ -2815,6 +3008,7 @@ function init() {
   WX.bind();
   NetClass.bind();
   bindArmConfirmShortcut();
+  bindRecoveryKeybind();
   const params = new URLSearchParams(location.search);
   const replayName = params.get('replay');
   inReplayMode = !!replayName;
