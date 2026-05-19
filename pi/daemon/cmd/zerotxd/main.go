@@ -1107,18 +1107,19 @@ func main() {
 	// starts so heartbeats are flowing into devhealth).
 	hwBaselineHolder := newHardwareBaselineHolder(*hardwareBaseline)
 
-	// Recovery manager. Owns the lost-aircraft state machine; queried
-	// by /api/v1/recovery and the WS stream. Auto-triggered from
-	// flight_events.go on failsafe; manually triggered via the API.
-	// Operator position comes from the Pi-side GPS with a fallback
-	// to the -site-lat/-site-lon flags when no fix is available.
-	// Variable was forward-declared above so telemHandler can call
-	// UpdateLastKnown on it; the assignment here happens before
+	// Recovery wiring. Bundles the operator-position adapter (live
+	// + configured-at-boot resolution) and the lost-aircraft state
+	// machine. The manager is auto-triggered from flight_events.go
+	// on failsafe; manually triggered via the API. Operator position
+	// comes from the Pi-side GPS with a fallback to the
+	// -site-lat/-site-lon flags when no fix is available; neither
+	// configured is acceptable (recovery view degrades to coords-
+	// only presentation), pre-flight status page surfaces a warning.
+	// recoveryMgr was forward-declared above so telemHandler can
+	// call UpdateLastKnown on it; the assignment here happens before
 	// any link goroutine starts consuming telemetry.
-	recoveryMgr = recovery.New(
-		&recoveryOperatorAdapter{gps: gpsRdr, siteLat: *siteLat, siteLon: *siteLon},
-		rec,
-	)
+	recoveryWiring := newRecoveryWiring(gpsRdr, *siteLat, *siteLon, rec)
+	recoveryMgr = recoveryWiring.Manager
 	// flightEvents was constructed earlier (line ~478) before the
 	// recovery manager existed. Register it now so failsafe mode
 	// transitions auto-activate the recovery view.
@@ -1126,7 +1127,7 @@ func main() {
 
 	// Start the API server if requested.
 	if *apiAddr != "" {
-		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, *siteLat, *siteLon, syscheckGate, devs, replayState, link, hwBaselineHolder, recoveryMgr, ctx)
+		providers := buildAPIProviders(chHolder, holder, pnl, jsHolder, player, narr, telemetryState, rec, port, *modelImage, *modelFlag, *recordingsDir, *soundsLang, narrateStore, logBuf, version, time.Now(), dispMgr, armMachine, weatherSvc, wxAlerts, netClassHolder, tileWarmStatsHolder, gpsRdr, recoveryWiring, syscheckGate, devs, replayState, link, hwBaselineHolder, ctx)
 		apiSrv := api.NewServer(*apiAddr, providers)
 		apiSrv.SetWebDir(*webDir)
 		apiSrv.SetMapTilesDir(*mapTilesDir)
@@ -1537,16 +1538,19 @@ func buildAPIProviders(
 	netClassHolder *netclass.Holder,
 	tileWarmStatsHolder *tileWarmStats,
 	gpsRdr *gps.Reader,
-	siteLat float64,
-	siteLon float64,
+	recoveryW *recoveryWiring,
 	syscheckGate *syscheck.Gate,
 	devs *devhealth.Registry,
 	replayState *replay.State,
 	link *ipc.Link,
 	hwBaseline *hardwareBaselineHolder,
-	recoveryMgr *recovery.Manager,
 	ctx context.Context,
 ) *api.Providers {
+	// Alias the manager so the rest of the function reads the same
+	// as before the wiring refactor. recoveryW carries both the
+	// adapter (for ConfiguredSources in the Preflight closure) and
+	// the manager (for state/trigger/dismiss in the closures below).
+	recoveryMgr := recoveryW.Manager
 	return &api.Providers{
 		Channels: chH.Get,
 		Logic: func() map[string]bool {
@@ -1639,18 +1643,10 @@ func buildAPIProviders(
 			// OperatorPositionSources is a configuration fact, not a
 			// liveness fact: report sources the daemon was started
 			// with, regardless of whether they currently yield a
-			// fix. gpsRdr non-nil means -gps-port was set and the
-			// reader was constructed; siteLat/siteLon != 0 means
-			// the operator passed the flags. Order is stable so
-			// the GUI can render deterministically.
-			sources := []string{}
-			if gpsRdr != nil {
-				sources = append(sources, "gps")
-			}
-			if siteLat != 0 || siteLon != 0 {
-				sources = append(sources, "site")
-			}
-			return buildPreflight(holder, jsHolder, devs, hwBaseline, port, modelDefaultPath, sources)
+			// fix. The adapter encapsulates both the GPS reader and
+			// the site-flag values; ConfiguredSources gives the
+			// stable-ordered slice the wire format expects.
+			return buildPreflight(holder, jsHolder, devs, hwBaseline, port, modelDefaultPath, recoveryW.Adapter.ConfiguredSources())
 		},
 		LoadModel: func(path string) error {
 			if err := loadModel(holder, jsHolder.JoystickState(), pnl, player, rec, lang, path); err != nil {

@@ -51,3 +51,26 @@ func (a *recoveryOperatorAdapter) OperatorPosition() recovery.OperatorPosition {
 	}
 	return recovery.OperatorPosition{Source: "none"}
 }
+
+// ConfiguredSources reports which operator-position sources the
+// adapter was constructed with, regardless of whether they would
+// yield a live fix right now. Distinct from OperatorPosition()
+// which is the live resolver: a configured GPS without a current
+// fix is reported as "gps" here but would fall through to "site"
+// (or "none") in the live resolver.
+//
+// Returns a fresh slice on each call (callers may mutate freely).
+// Order is stable: "gps" before "site". Empty slice (non-nil)
+// means neither source is configured. Used by the pre-flight
+// status page to warn operators before flight that the recovery
+// view will be unable to compute bearing/distance.
+func (a *recoveryOperatorAdapter) ConfiguredSources() []string {
+	out := []string{}
+	if a.gps != nil {
+		out = append(out, "gps")
+	}
+	if a.siteLat != 0 || a.siteLon != 0 {
+		out = append(out, "site")
+	}
+	return out
+}
