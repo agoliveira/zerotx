@@ -10,7 +10,6 @@ and known constraints for one link.
 | Daemon ↔ ESP32 (LED panel) | USB-CDC, line-text | bidirectional | [`display.md`](display.md) |
 | Daemon ↔ INAV SITL | TCP, raw CRSF | bidirectional | [`sitl.md`](sitl.md) |
 | Daemon → mwp | TCP, CRSF telemetry frames | daemon → mwp only | [`crsf-tee.md`](crsf-tee.md) |
-| ESP32 → spectators | WiFi SoftAP + WebSocket JSON | ESP32 → clients only | [`spectator.md`](spectator.md) |
 
 The aircraft-side CRSF link (RP2040 ↔ ELRS module ↔ aircraft FC) uses
 the standard CRSF protocol unchanged; it's not documented here. See

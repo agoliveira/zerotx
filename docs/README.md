@@ -20,7 +20,6 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 - [protocols/ipc.md](protocols/ipc.md): daemon to RP2040 framed binary (COBS + CRC, channel intent and telemetry passthrough)
 - [protocols/sitl.md](protocols/sitl.md): daemon to INAV SITL via raw CRSF over TCP
 - [protocols/crsf-tee.md](protocols/crsf-tee.md): daemon CRSF tee output
-- [protocols/spectator.md](protocols/spectator.md): ESP32 SoftAP plus WebSocket spectator dashboard (currently removed from display firmware; see DECISIONS.md)
 
 ## Reference docs
 

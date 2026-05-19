@@ -7,7 +7,7 @@ SITL over TCP via the `-fc-tcp-addr` flag.
 What this exercises:
 - Daemon channel-intent loop, mixer, arm state machine
 - CRSF telemetry decoder
-- HUD, LED panel, VFD firehose, spectator AP
+- HUD, LED panel, VFD firehose
 - Audio (alarms + TTS), recorder, post-flight narration, geo lookup
 - mwp tee + map view
 
@@ -165,7 +165,6 @@ A successful bench session should produce:
 - Periodic in-flight narration (if enabled in Settings)
 - Recording auto-saved to `~/zerotx/recordings/<timestamp>.db` on disarm
 - Post-flight TTS summary with peaks (and place names if `-geo-db` is set)
-- Spectator AP visible from any phone (`ZeroTX-Spectator`, `pédogalo`)
 
 If those all behave, the daemon's flight pipeline is working
 end-to-end. The only things you haven't tested are the parts that

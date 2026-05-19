@@ -15,7 +15,7 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 
 - Active-HIGH default project-wide: HAL flag opts individual pins into active-LOW.
 - Audio split: pre-baked samples for safety-critical alarms (link loss, failsafe), Piper TTS (en_US-amy-medium) for everything else.
-- Spectator SoftAP removed from display firmware: if revived, lives on Pi 400 or a dedicated ESP32 with no panel duties.
+- Spectator SoftAP removed from display firmware: the ESP32 panel driver does not have spare cycles for a stable WiFi stack alongside the HUB75 timing loop. Not planned for revival; if shared-telemetry use cases come up, the simpler path is exposing the existing kiosk pages on the Pi's LAN interface rather than reviving a parallel protocol on a separate MCU.
 - RP2040 CRSF firmware m1.8-wdt: hardware watchdog enabled, no exceptions.
 - TAER stick layout is the default and the model file is the source of truth: the daemon reads the throttle channel from the active EdgeTX model file (input names + mix data), it is never hardcoded. AETR is supported too but only via the model file. A hardcoded `ch[2] <= 200` check (legacy AETR assumption) was removed.
 - Three-input arming workflow: ARMED requires throttle-low + SF arm key down + SH momentary press, all three concurrent. The momentary is press-only (release doesn't matter); to disarm, SF goes up combined with T-low.
