@@ -169,9 +169,20 @@ bool Glcd::handle(uint8_t instance, const proto::Command& cmd, Stream& out) {
 
 void Glcd::renderAttitude(void) {
   u8g2->clearBuffer();
+  // Clip horizon/ladder/aircraft drawing to the AH area only. Without
+  // this, minor pitch-ladder rungs at small pitch values render into
+  // the readout strip below: at pitch=0, the -15deg minor rung lands
+  // at y=cy+(0-(-15))*pxPerDeg = 59 (with cy=29, pxPerDeg=2), which
+  // is inside the readout strip (y=53..63). The rung is a 10-pixel
+  // horizontal segment centered at x=64, so it draws a horizontal
+  // line through the H field of the readout (x~52..71), looking
+  // like an underscore between the H digits. Bench-visible artifact;
+  // not a clock/wiring/font issue as initially suspected.
+  u8g2->setClipWindow(0, kAHTop, kWidth - 1, kHorizonBottom);
   drawHorizonAndLadder(pitch_deg, roll_deg);
   drawRollScale(roll_deg);
   drawAircraftSymbol();
+  u8g2->setMaxClipWindow();
   drawReadout(pitch_deg, roll_deg, heading_deg);
   u8g2->sendBuffer();
 }
