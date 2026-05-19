@@ -435,6 +435,11 @@ func TestCleanup_SkipsPreserved(t *testing.T) {
 	if dbCount != 4 {
 		t.Errorf("expected 4 .db files (3 kept + 1 preserved), got %d", dbCount)
 	}
+	if preserveCount != 1 {
+		t.Errorf("expected 1 .preserve sidecar, got %d", preserveCount)
+	}
+}
+
 // === SetPreserved (post-flight operator action) ===
 
 // helper: arm-then-disarm yields one saved .db whose basename the
