@@ -1875,13 +1875,25 @@ func buildAPIProviders(
 			out := make([]api.Recording, 0, len(recs))
 			for _, r := range recs {
 				out = append(out, api.Recording{
-					Name:    r.Name,
-					Path:    r.Path,
-					Size:    r.Size,
-					ModTime: r.ModTime,
+					Name:      r.Name,
+					Path:      r.Path,
+					Size:      r.Size,
+					ModTime:   r.ModTime,
+					Preserved: r.Preserved,
 				})
 			}
 			return out, nil
+		},
+		RecordingPreserve: func(name string) error {
+			// Reason is "operator" -- the third value alongside
+			// "failsafe" and "manual" (recovery-trigger paths) so
+			// the sidecar's content discriminates between the
+			// preserve-this-flight operator action and the
+			// recovery-view-triggered automatic preservation.
+			return rec.SetPreserved(name, "operator", true)
+		},
+		RecordingUnpreserve: func(name string) error {
+			return rec.SetPreserved(name, "", false)
 		},
 		Summarize: func(name string) (interface{}, error) {
 			// Reject anything that looks like a path traversal. The

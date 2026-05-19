@@ -2,6 +2,8 @@ package recorder
 
 import (
 	"database/sql"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -433,7 +435,133 @@ func TestCleanup_SkipsPreserved(t *testing.T) {
 	if dbCount != 4 {
 		t.Errorf("expected 4 .db files (3 kept + 1 preserved), got %d", dbCount)
 	}
-	if preserveCount != 1 {
-		t.Errorf("expected 1 .preserve sidecar, got %d", preserveCount)
+// === SetPreserved (post-flight operator action) ===
+
+// helper: arm-then-disarm yields one saved .db whose basename the
+// test can address via SetPreserved. Returns the basename plus the
+// recordings dir for direct sidecar inspection.
+func armDisarmOnce(t *testing.T) (*Recorder, string, string) {
+	t.Helper()
+	r, dir := newTestRecorder(t)
+	r.OnArm("BigTalon", "/x.yml")
+	time.Sleep(5 * time.Millisecond)
+	saved := r.OnDisarm()
+	if saved == "" {
+		t.Fatalf("OnDisarm: no saved path")
+	}
+	return r, dir, filepath.Base(saved)
+}
+
+func TestSetPreserved_WritesSidecarWithReason(t *testing.T) {
+	r, dir, name := armDisarmOnce(t)
+	if err := r.SetPreserved(name, "operator", true); err != nil {
+		t.Fatalf("SetPreserved(true): %v", err)
+	}
+	sidecar := filepath.Join(dir, name+preserveSuffix)
+	body, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	if string(body) != "operator\n" {
+		t.Errorf("sidecar content = %q, want %q", string(body), "operator\n")
+	}
+}
+
+func TestSetPreserved_RemovesSidecar(t *testing.T) {
+	r, dir, name := armDisarmOnce(t)
+	if err := r.SetPreserved(name, "operator", true); err != nil {
+		t.Fatalf("preserve: %v", err)
+	}
+	if err := r.SetPreserved(name, "", false); err != nil {
+		t.Fatalf("unpreserve: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, name+preserveSuffix)); !os.IsNotExist(err) {
+		t.Errorf("sidecar still exists after unpreserve, stat err=%v", err)
+	}
+}
+
+func TestSetPreserved_IdempotentOnPreserve(t *testing.T) {
+	// Two preserve calls -> one sidecar, latest reason wins.
+	r, dir, name := armDisarmOnce(t)
+	if err := r.SetPreserved(name, "operator", true); err != nil {
+		t.Fatalf("first preserve: %v", err)
+	}
+	if err := r.SetPreserved(name, "research", true); err != nil {
+		t.Fatalf("second preserve: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, name+preserveSuffix))
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	if string(body) != "research\n" {
+		t.Errorf("latest reason should win: got %q, want %q", string(body), "research\n")
+	}
+}
+
+func TestSetPreserved_IdempotentOnUnpreserve(t *testing.T) {
+	// Unpreserve when no sidecar exists is a quiet success, not an error.
+	r, _, name := armDisarmOnce(t)
+	if err := r.SetPreserved(name, "", false); err != nil {
+		t.Errorf("unpreserve with no sidecar: want nil err, got %v", err)
+	}
+}
+
+func TestSetPreserved_RejectsMissingRecording(t *testing.T) {
+	r, _ := newTestRecorder(t)
+	err := r.SetPreserved("nope-i-do-not-exist.db", "operator", true)
+	if err == nil {
+		t.Fatal("missing recording: want error, got nil")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("missing recording: want fs.ErrNotExist, got %v", err)
+	}
+}
+
+func TestSetPreserved_RejectsInvalidName(t *testing.T) {
+	// Path traversal, separators, and non-.db extensions all rejected.
+	r, _ := newTestRecorder(t)
+	cases := []string{
+		"",
+		"foo/bar.db",
+		"foo\\bar.db",
+		"../etc/passwd",
+		"weird..name.db",
+		"no-suffix",
+	}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := r.SetPreserved(name, "operator", true)
+			if err == nil {
+				t.Fatalf("name %q: want error, got nil", name)
+			}
+			// fs.ErrNotExist would be surprising here -- the validator
+			// should reject before the stat call.
+			if errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("name %q: got fs.ErrNotExist; should have been rejected by validator", name)
+			}
+		})
+	}
+}
+
+func TestRecordings_PreservedFieldReflectsSidecar(t *testing.T) {
+	r, _, name := armDisarmOnce(t)
+	// Before preserve: Preserved=false.
+	recs, err := r.Recordings()
+	if err != nil {
+		t.Fatalf("Recordings: %v", err)
+	}
+	if len(recs) != 1 || recs[0].Preserved {
+		t.Fatalf("before preserve: got %+v, want one row with Preserved=false", recs)
+	}
+	// After preserve: Preserved=true.
+	if err := r.SetPreserved(name, "operator", true); err != nil {
+		t.Fatalf("preserve: %v", err)
+	}
+	recs, err = r.Recordings()
+	if err != nil {
+		t.Fatalf("Recordings: %v", err)
+	}
+	if len(recs) != 1 || !recs[0].Preserved {
+		t.Fatalf("after preserve: got %+v, want one row with Preserved=true", recs)
 	}
 }

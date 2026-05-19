@@ -23,6 +23,7 @@ Flat list of decisions that should not be re-litigated without explicit reason. 
 - Two VFDs (`vfd.0` and `vfd.1`) on the front panel: both Noritake CU20025ECPB-W1J, both driven by the Mega via HD44780 4-bit. Originally specced as one; doubled for status density (different categories on each).
 - 128x64 ST7920 graphic LCD on the Mega panel (alongside the VFDs) renders an artificial horizon HUD. Cool-factor display only: telemetry is already complete on the kiosk HUDs. Loss of the GLCD never blocks flight.
 - INAV autolaunch is not tracked by ZeroTX: CRSF telemetry's FlightMode frame doesn't expose autolaunch state distinctly from the regular flight mode (during autolaunch the FC still reports `ANGL` or whatever's active), and the launch-mode switch isn't a reliable signal either since autolaunch is commonly enabled full-time on the FC. Real-time detection would require adding MSP-over-CRSF, which is disproportionate effort for the operational value. Considered and dropped.
+- Recording preserve sidecar reason vocabulary is closed: `failsafe` (recovery view auto-triggered by FC failsafe), `manual` (recovery view triggered explicitly by the operator), `operator` (post-flight preserve toggle on the recordings list, no recovery view involved). Downstream tools (`zerotx-replay`, `zerotx-export`) and the GUI may discriminate behaviour on these values; new reasons require an entry here before they ship.
 
 ## Mechanical and case
 

@@ -33,7 +33,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -531,6 +533,49 @@ func (r *Recorder) cleanupOldRecordings() {
 // <recording>.db.preserve. The sidecar's content is a one-line reason.
 const preserveSuffix = ".preserve"
 
+// SetPreserved adds or removes a .preserve sidecar for an already-
+// rotated recording. Different code path from PreserveCurrentSession,
+// which stages the flag on the active recorder so the sidecar lands
+// at the next save-and-rotate; SetPreserved manipulates an existing
+// saved file directly and is the post-flight operator action.
+//
+// preserve=true writes <name>.preserve with the reason on a single
+// line. Overwrites any existing sidecar, which makes the call
+// idempotent (calling twice yields one sidecar with the most recent
+// reason). preserve=false removes the sidecar; an absent sidecar is
+// not an error.
+//
+// Name validation rejects path traversal attempts: the name must be
+// a bare basename ending in .db with no separators or "..". Returns
+// fs.ErrNotExist if the named recording does not exist (so the API
+// layer can return 404 cleanly).
+func (r *Recorder) SetPreserved(name, reason string, preserve bool) error {
+	if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return fmt.Errorf("recorder: invalid recording name %q", name)
+	}
+	if !strings.HasSuffix(name, ".db") {
+		return fmt.Errorf("recorder: recording name %q must end in .db", name)
+	}
+	dbPath := filepath.Join(r.cfg.RecordingsDir, name)
+	if _, err := os.Stat(dbPath); err != nil {
+		return err
+	}
+	sidecar := dbPath + preserveSuffix
+	if preserve {
+		content := []byte(reason + "\n")
+		if err := os.WriteFile(sidecar, content, 0o644); err != nil {
+			return fmt.Errorf("recorder: write preserve sidecar %s: %w", sidecar, err)
+		}
+		log.Printf("recorder: preserved %s (reason=%q)", name, reason)
+		return nil
+	}
+	if err := os.Remove(sidecar); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("recorder: remove preserve sidecar %s: %w", sidecar, err)
+	}
+	log.Printf("recorder: unpreserved %s", name)
+	return nil
+}
+
 // PreserveCurrentSession marks the active recording so the saved file
 // survives the post-disarm cleanup-on-rotate sweep. The reason is
 // written to a <recording>.db.preserve sidecar file alongside the
@@ -588,11 +633,20 @@ func (r *Recorder) Recordings() ([]Recording, error) {
 		if err != nil {
 			continue
 		}
+		// Sidecar lookup is one extra stat per recording. Cheap
+		// (the directory is typically <50 files) and keeps the GUI
+		// from having to round-trip a second query just to learn
+		// which rows are pinned.
+		preserved := false
+		if _, err := os.Stat(filepath.Join(r.cfg.RecordingsDir, f.Name()+preserveSuffix)); err == nil {
+			preserved = true
+		}
 		out = append(out, Recording{
-			Name:    f.Name(),
-			Path:    filepath.Join(r.cfg.RecordingsDir, f.Name()),
-			Size:    info.Size(),
-			ModTime: info.ModTime().UTC().Format(time.RFC3339),
+			Name:      f.Name(),
+			Path:      filepath.Join(r.cfg.RecordingsDir, f.Name()),
+			Size:      info.Size(),
+			ModTime:   info.ModTime().UTC().Format(time.RFC3339),
+			Preserved: preserved,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ModTime > out[j].ModTime })
@@ -605,6 +659,13 @@ type Recording struct {
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`
 	ModTime string `json:"modTime"`
+	// Preserved reports whether a <Name>.preserve sidecar file
+	// exists; preserved recordings are skipped by cleanupOldRecordings
+	// regardless of their age and don't count toward the Keep limit.
+	// Sidecars are written either automatically (recovery view trigger,
+	// see PreserveCurrentSession) or explicitly by the operator
+	// (SetPreserved).
+	Preserved bool `json:"preserved"`
 }
 
 // Event is one row from the events table, in the shape callers want
@@ -1161,6 +1222,7 @@ func (NoOpRecorder) LogTelemetry(TelemetrySample) {}
 func (NoOpRecorder) Recordings() ([]Recording, error) { return nil, nil }
 func (NoOpRecorder) CurrentSessionEvents() ([]Event, error) { return nil, nil }
 func (NoOpRecorder) PreserveCurrentSession(string) {}
+func (NoOpRecorder) SetPreserved(string, string, bool) error { return nil }
 func (NoOpRecorder) Close()                   {}
 
 // Interface is the surface used by the daemon. Recorder and NoOpRecorder
@@ -1177,6 +1239,12 @@ type Interface interface {
 	// saved file survives the post-disarm cleanup sweep. Mechanism:
 	// a <recording>.db.preserve sidecar file written at SaveAndRotate.
 	PreserveCurrentSession(reason string)
+	// SetPreserved adds or removes a .preserve sidecar on an
+	// already-rotated recording. preserve=true creates the sidecar
+	// (idempotent: overwrites existing); preserve=false removes it
+	// (idempotent: absent sidecar is not an error). The post-flight
+	// counterpart to PreserveCurrentSession.
+	SetPreserved(name, reason string, preserve bool) error
 	Close()
 }
 

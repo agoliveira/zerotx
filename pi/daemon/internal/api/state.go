@@ -72,10 +72,11 @@ type AudioInfo struct {
 // Recording is a saved-recording summary for the GUI's Recordings tab.
 // Mirrors recorder.Recording without an import cycle.
 type Recording struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	ModTime string `json:"modTime"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	ModTime   string `json:"modTime"`
+	Preserved bool   `json:"preserved"`
 }
 
 // JoystickSnapshot exposes normalized axis values and button states. nil
@@ -420,6 +421,15 @@ type Providers struct {
 	// Recordings returns the saved flight recordings on disk
 	// (newest first). Empty when recording is disabled.
 	Recordings func() ([]Recording, error)
+
+	// RecordingPreserve and RecordingUnpreserve mark or unmark a
+	// saved recording for preservation. Sidecar file mechanics live
+	// in the recorder package; the provider is just a thin wrapper.
+	// Both are idempotent. Returns a non-nil error if the named
+	// recording does not exist or the name fails validation; the
+	// API layer translates that to 404 / 400.
+	RecordingPreserve   func(name string) error
+	RecordingUnpreserve func(name string) error
 
 	// Summarize opens a saved recording (by file basename) and
 	// returns aggregate stats. Returns an error if the file is

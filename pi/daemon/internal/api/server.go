@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -88,6 +89,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/recordings", s.handleRecordings)
 	mux.HandleFunc("/api/v1/recordings/summary", s.handleRecordingSummary)
 	mux.HandleFunc("/api/v1/recordings/detail", s.handleRecordingDetail)
+	mux.HandleFunc("/api/v1/recordings/preserve", s.handleRecordingPreserve)
+	mux.HandleFunc("/api/v1/recordings/unpreserve", s.handleRecordingUnpreserve)
 	mux.HandleFunc("/api/v1/replay/status", s.handleReplayStatus)
 	mux.HandleFunc("/api/v1/replay/start", s.handleReplayStart)
 	mux.HandleFunc("/api/v1/replay/stop", s.handleReplayStop)
@@ -544,6 +547,68 @@ func (s *Server) handleRecordingDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleRecordingPreserve marks a saved recording so the cleanup
+// sweep skips it. Body: {"name": "<basename>"}. POST only.
+// Idempotent: preserving an already-preserved recording overwrites
+// the sidecar (effectively a no-op for the cleanup sweep). Returns
+// 404 if the named recording does not exist, 400 if the name fails
+// validation, 503 if the provider was not configured (recorder is
+// the NoOpRecorder).
+func (s *Server) handleRecordingPreserve(w http.ResponseWriter, r *http.Request) {
+	s.handleRecordingPreserveSet(w, r, true)
+}
+
+// handleRecordingUnpreserve removes the .preserve sidecar from a
+// saved recording. Body: {"name": "<basename>"}. POST only.
+// Idempotent: unpreserving a non-preserved recording is a quiet
+// success. Same error codes as handleRecordingPreserve.
+func (s *Server) handleRecordingUnpreserve(w http.ResponseWriter, r *http.Request) {
+	s.handleRecordingPreserveSet(w, r, false)
+}
+
+// handleRecordingPreserveSet is the shared body of the preserve /
+// unpreserve handlers; the only behavioural difference is the
+// preserve bool the provider gets passed.
+func (s *Server) handleRecordingPreserveSet(w http.ResponseWriter, r *http.Request, preserve bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	prov := s.providers.RecordingPreserve
+	if !preserve {
+		prov = s.providers.RecordingUnpreserve
+	}
+	if prov == nil {
+		http.Error(w, "recording preservation not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.Name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	if err := prov(body.Name); err != nil {
+		// fs.ErrNotExist from the recorder maps to 404; everything
+		// else (name validation, write/remove I/O failure) is a 400
+		// because the caller can usually fix it (wrong name, etc.).
+		// Validation errors carry the name in the message so the
+		// operator sees what got rejected.
+		if errors.Is(err, fs.ErrNotExist) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"preserved": preserve})
 }
 
 // handleReplayStatus returns the current replay session state.

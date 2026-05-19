@@ -382,9 +382,15 @@ Recordings flush to disk as the daemon runs, but the final finalization (closing
 
 Default location: `~/zerotx/recordings/flight-<timestamp>.db`. Override with `-recordings-dir` flag (see Builder's Manual Appendix C). Disable entirely with `-no-recordings`.
 
-Retention: the 10 most-recent recordings by default (`-keep-recordings N`). Older recordings auto-delete on save. If you want to preserve a specific flight, copy it off the Pi before the next flight.
+Retention: the 10 most-recent recordings by default (`-keep-recordings N`). Older recordings auto-delete on save. If you want to keep a specific flight indefinitely, the simplest path is the preserve toggle on the recordings list (see Recordings tab); copying the `.db` off the Pi is also an option.
 
-**Preserve sidecars:** when the daemon's lost-aircraft recovery view auto-triggers on a failsafe (see Section 7.2), the recorder writes a `<recording>.db.preserve` marker file alongside the saved `.db`. Recordings with a `.preserve` sidecar are skipped by the auto-cleanup sweep, so failsafe flights survive rotation indefinitely (and don't count toward the `-keep-recordings` limit). The sidecar's content is a one-line reason string. To release a preserved recording back to normal cleanup, delete the sidecar file; the next save-and-rotate may then delete the recording in due course. Manual recovery triggers (operator-fired from the kiosk button or Ctrl+Alt+R) do NOT write a sidecar — the operator chose to enter the recovery view, but the flight isn't necessarily lost.
+**Preserve sidecars:** the daemon protects a recording from the auto-cleanup sweep via a sibling `<recording>.db.preserve` marker file. Recordings with a `.preserve` sidecar are skipped by cleanup indefinitely and don't count toward the `-keep-recordings` limit. The sidecar's content is a one-line reason string from a closed vocabulary (see DECISIONS.md):
+
+- `failsafe` — recovery view auto-triggered by an FC failsafe transition.
+- `manual` — recovery view triggered explicitly by the operator (LOST AIRCRAFT button, Ctrl+Alt+R, or `POST /api/v1/recovery/trigger`).
+- `operator` — post-flight preserve toggle on the recordings list (no recovery view involved).
+
+To release a preserved recording back to normal cleanup, click the same toggle on the recordings list to unpreserve it, or delete the sidecar file by hand. Either path is reversible: re-preserving rewrites the sidecar with the latest reason.
 
 **Important:** pulling power before the daemon shuts down cleanly can leave the recording file in an inconsistent state. SQLite is resilient but not bulletproof. Use the shutdown sequence in Section 6.6.
 

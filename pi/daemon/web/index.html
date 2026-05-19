@@ -1065,6 +1065,17 @@ table.data-table {
   font-size: 11px;
   flex-shrink: 0;
 }
+.recordings-list .rec-preserve {
+  /* Inherits .action.small sizing. Visual state mirrors the
+     sidecar truth: 'pinned' (preserved) vs 'pin' (free).
+     Tooltip explains the click behaviour. */
+  flex-shrink: 0;
+  font-family: var(--mono);
+}
+.recordings-list .rec-preserve.is-preserved {
+  border-color: var(--warn);
+  color: var(--warn);
+}
 
 /* === Modal overlay === */
 .modal-backdrop {
@@ -2794,10 +2805,19 @@ const App = {
     list.innerHTML = recs.map(r => {
       const sizeKB = (r.size / 1024).toFixed(1);
       const time = r.modTime ? new Date(r.modTime).toLocaleString() : '-';
+      // Preserve toggle: pinned-glyph + "preserved" tooltip when set,
+      // empty-glyph + "preserve" tooltip when not. Click toggles via
+      // /api/v1/recordings/preserve or /unpreserve.
+      const pinClass = r.preserved ? 'rec-preserve is-preserved' : 'rec-preserve';
+      const pinLabel = r.preserved ? 'unpin' : 'pin';
+      const pinTitle = r.preserved
+        ? 'Preserved: this recording survives cleanup. Click to release.'
+        : 'Click to preserve this recording from rotation cleanup.';
       return `<div class="rec-row">
         <span class="rec-name">${escapeHtml(r.name)}</span>
         <span class="rec-size">${sizeKB} KB</span>
         <span class="rec-time">${escapeHtml(time)}</span>
+        <button class="action small ${pinClass}" data-rec-preserve="${escapeHtml(r.name)}" data-rec-preserved="${r.preserved ? '1' : '0'}" title="${pinTitle}">${pinLabel}</button>
         <button class="action small" data-rec-summary="${escapeHtml(r.name)}">Summary</button>
         <button class="action small" data-rec-replay="${escapeHtml(r.name)}">Replay</button>
       </div>`;
@@ -2815,6 +2835,55 @@ const App = {
         this.startReplay(name);
       });
     });
+    list.querySelectorAll('[data-rec-preserve]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const el = e.currentTarget;
+        const name = el.dataset.recPreserve;
+        const wasPreserved = el.dataset.recPreserved === '1';
+        this.toggleRecordingPreserved(name, !wasPreserved);
+      });
+    });
+  },
+
+  // toggleRecordingPreserved POSTs to /api/v1/recordings/preserve or
+  // /unpreserve depending on the desired end state, then refreshes
+  // the list so the UI reflects the actual sidecar state. Errors
+  // surface via modal.alert -- the most common failure (file gone
+  // between the list fetch and the click) is the 404 path.
+  async toggleRecordingPreserved(name, preserve) {
+    if (this.state.connection !== 'connected') {
+      this.modal.alert('Preserve unavailable', 'Connect to the daemon first.');
+      return;
+    }
+    const route = preserve
+      ? '/api/v1/recordings/preserve'
+      : '/api/v1/recordings/unpreserve';
+    try {
+      const r = await fetch(
+        `http://${this.state.address}${route}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+      if (!r.ok) {
+        let msg = `${r.status} ${r.statusText}`;
+        try {
+          const body = await r.json();
+          if (body && body.error) msg = body.error;
+        } catch (e) { /* non-JSON body, fall back to status text */ }
+        this.modal.alert(preserve ? 'Preserve failed' : 'Unpreserve failed', msg);
+        return;
+      }
+    } catch (e) {
+      this.modal.alert(preserve ? 'Preserve failed' : 'Unpreserve failed', String(e));
+      return;
+    }
+    // Refresh so the row reflects the new sidecar state without
+    // assuming optimistically (the recorder might have returned a
+    // different state than expected; refreshing is the source of
+    // truth).
+    await this.refreshRecordings();
   },
 
   // startReplay POSTs to the daemon's /api/v1/replay/start.

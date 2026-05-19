@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -766,5 +767,180 @@ func minimalSnapshotProviders() *Providers {
 		Panel:    func() panel.Snapshot { return panel.Snapshot{} },
 		Joystick: func() *JoystickSnapshot { return nil },
 		Link:     func() LinkSnapshot { return LinkSnapshot{} },
+	}
+}
+
+// === recordings preserve / unpreserve handlers ===
+
+// fakePreserver is the provider stand-in. Records the names it
+// receives and replays canned errors. The same struct serves both
+// the preserve and unpreserve routes via the Preserve / Unpreserve
+// providers.
+type fakePreserver struct {
+	preserveCalls   []string
+	unpreserveCalls []string
+	// err is returned from whichever closure was called.
+	// fs.ErrNotExist triggers the 404 branch in the handler; anything
+	// else falls into the 400 branch. nil = success path.
+	err error
+}
+
+func (f *fakePreserver) onPreserve(name string) error {
+	f.preserveCalls = append(f.preserveCalls, name)
+	return f.err
+}
+
+func (f *fakePreserver) onUnpreserve(name string) error {
+	f.unpreserveCalls = append(f.unpreserveCalls, name)
+	return f.err
+}
+
+func newPreserveTestServer(t *testing.T, fp *fakePreserver) *Server {
+	t.Helper()
+	p := minimalSnapshotProviders()
+	p.RecordingPreserve = fp.onPreserve
+	p.RecordingUnpreserve = fp.onUnpreserve
+	return NewServer("", p)
+}
+
+func postJSON(t *testing.T, srv *Server, path string, body interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			t.Fatalf("encode body: %v", err)
+		}
+	}
+	req := httptest.NewRequest("POST", path, &buf)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	switch path {
+	case "/api/v1/recordings/preserve":
+		srv.handleRecordingPreserve(rr, req)
+	case "/api/v1/recordings/unpreserve":
+		srv.handleRecordingUnpreserve(rr, req)
+	default:
+		t.Fatalf("postJSON: unknown route %q", path)
+	}
+	return rr
+}
+
+func TestHandleRecordingPreserve_HappyPath(t *testing.T) {
+	fp := &fakePreserver{}
+	srv := newPreserveTestServer(t, fp)
+	rr := postJSON(t, srv, "/api/v1/recordings/preserve",
+		map[string]string{"name": "flight-001.db"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(fp.preserveCalls) != 1 || fp.preserveCalls[0] != "flight-001.db" {
+		t.Errorf("preserve calls = %v, want [flight-001.db]", fp.preserveCalls)
+	}
+	var body map[string]bool
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body["preserved"] {
+		t.Errorf("response body preserved=true expected; got %v", body)
+	}
+}
+
+func TestHandleRecordingUnpreserve_HappyPath(t *testing.T) {
+	fp := &fakePreserver{}
+	srv := newPreserveTestServer(t, fp)
+	rr := postJSON(t, srv, "/api/v1/recordings/unpreserve",
+		map[string]string{"name": "flight-001.db"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(fp.unpreserveCalls) != 1 || fp.unpreserveCalls[0] != "flight-001.db" {
+		t.Errorf("unpreserve calls = %v, want [flight-001.db]", fp.unpreserveCalls)
+	}
+	// Routing isolation: preserve provider must not have been called.
+	if len(fp.preserveCalls) != 0 {
+		t.Errorf("preserve provider should not be called by /unpreserve; got %v", fp.preserveCalls)
+	}
+	var body map[string]bool
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["preserved"] {
+		t.Errorf("response body preserved=false expected on /unpreserve; got %v", body)
+	}
+}
+
+func TestHandleRecordingPreserve_NotFound(t *testing.T) {
+	fp := &fakePreserver{err: fs.ErrNotExist}
+	srv := newPreserveTestServer(t, fp)
+	rr := postJSON(t, srv, "/api/v1/recordings/preserve",
+		map[string]string{"name": "missing.db"})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleRecordingPreserve_ValidationError(t *testing.T) {
+	// Non-fs.ErrNotExist provider error -> 400, not 500. Covers the
+	// "invalid name" recorder validator path.
+	fp := &fakePreserver{err: fmt.Errorf("recorder: invalid recording name %q", "../etc/passwd")}
+	srv := newPreserveTestServer(t, fp)
+	rr := postJSON(t, srv, "/api/v1/recordings/preserve",
+		map[string]string{"name": "../etc/passwd"})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleRecordingPreserve_RejectsEmptyName(t *testing.T) {
+	fp := &fakePreserver{}
+	srv := newPreserveTestServer(t, fp)
+	rr := postJSON(t, srv, "/api/v1/recordings/preserve",
+		map[string]string{"name": ""})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	// Provider must not have been called: the empty-name check is
+	// upstream of any provider invocation.
+	if len(fp.preserveCalls) != 0 {
+		t.Errorf("provider should not be called with empty name; got %v", fp.preserveCalls)
+	}
+}
+
+func TestHandleRecordingPreserve_RejectsGET(t *testing.T) {
+	fp := &fakePreserver{}
+	srv := newPreserveTestServer(t, fp)
+	req := httptest.NewRequest("GET", "/api/v1/recordings/preserve", nil)
+	rr := httptest.NewRecorder()
+	srv.handleRecordingPreserve(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rr.Code)
+	}
+}
+
+func TestHandleRecordingPreserve_RejectsInvalidJSON(t *testing.T) {
+	fp := &fakePreserver{}
+	srv := newPreserveTestServer(t, fp)
+	req := httptest.NewRequest("POST", "/api/v1/recordings/preserve",
+		strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.handleRecordingPreserve(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleRecordingPreserve_ServiceUnavailableWhenProviderNil(t *testing.T) {
+	// Daemon running with -no-recordings would still wire the
+	// provider (recorder is the NoOpRecorder, which satisfies the
+	// SetPreserved contract). The nil-provider branch tested here
+	// is the deliberate-unwiring case: explicit unwiring should
+	// produce 503, not panic.
+	p := minimalSnapshotProviders()
+	srv := NewServer("", p)
+	rr := postJSON(t, srv, "/api/v1/recordings/preserve",
+		map[string]string{"name": "flight-001.db"})
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 }

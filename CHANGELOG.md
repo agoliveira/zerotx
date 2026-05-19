@@ -6,6 +6,14 @@ than here. Append new entries at the top as they land.
 
 ## Unreleased
 
+### Post-flight preserve toggle on the recordings list
+
+The recordings tab on the legacy index UI grows a per-row preserve toggle. Click it to write a `<recording>.db.preserve` sidecar (reason `operator`) and pin the recording against auto-cleanup; click it again to remove the sidecar and let the recording age out normally. Idempotent in both directions.
+
+Backed by two new endpoints, `POST /api/v1/recordings/preserve` and `POST /api/v1/recordings/unpreserve`, both taking `{"name": "<basename>"}`. 404 when the named recording does not exist, 400 on name validation failure, 503 if the daemon is running with `-no-recordings`. `GET /api/v1/recordings` now includes a `preserved` boolean per row so the UI never needs a follow-up query to know which recordings are pinned.
+
+Reason-string vocabulary for the sidecar is closed and documented in DECISIONS.md: `failsafe`, `manual`, `operator`. Downstream tools may discriminate on it; new reasons require an explicit decision before shipping.
+
 ### Flight log GPX/KML exporter (`zerotx-export`)
 
 New CLI tool under `tools/zerotx-export/`. Reads a `.db` recording produced by the daemon's recorder and emits GPX 1.1 or KML 2.2 for Google Earth, qgroundcontrol, or any other post-flight analyzer. Self-contained module, builds into `/bin/zerotx-export` via `make tools`.
