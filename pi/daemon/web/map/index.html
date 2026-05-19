@@ -277,6 +277,126 @@
     .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
       filter: invert(0.85) sepia(0.5) saturate(2) hue-rotate(-10deg);
     }
+
+    /* === Recovery (lost-aircraft) overlay === */
+
+    /* Manual-trigger button: top-right, always visible while
+       recovery is idle; hidden when active (the panel replaces
+       it). Benign: manual triggers do NOT preserve the recording,
+       so an accidental tap costs nothing more than dismissing. */
+    .btn-recovery-trigger {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: var(--bg-panel);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      z-index: 999;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .btn-recovery-trigger:hover {
+      color: var(--bad);
+      border-color: var(--bad);
+    }
+
+    /* Side panel: top-right, fixed. Active when recovery state is
+       non-idle. Pulsing red border draws attention; we don't dim
+       the trail / aircraft / station -- the recovery marker on
+       the map is large and red enough to dominate visually. */
+    .recovery-panel {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 260px;
+      background: var(--bg-panel-strong);
+      border: 2px solid var(--bad);
+      box-shadow: 0 0 24px rgba(255, 64, 48, 0.5);
+      padding: 12px 14px;
+      font-family: 'Orbitron', sans-serif;
+      z-index: 1000;
+      animation: recovery-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes recovery-pulse {
+      0%, 100% { box-shadow: 0 0 24px rgba(255, 64, 48, 0.5); }
+      50%      { box-shadow: 0 0 36px rgba(255, 64, 48, 0.85); }
+    }
+    .recovery-panel .recovery-title {
+      color: var(--bad);
+      font-weight: 700;
+      font-size: 0.95rem;
+      letter-spacing: 0.18em;
+      text-align: center;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .recovery-panel .recovery-reason {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-align: center;
+      margin-top: -4px;
+      margin-bottom: 8px;
+    }
+    .recovery-panel .recovery-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 0.78rem;
+      padding: 3px 0;
+      line-height: 1.3;
+    }
+    .recovery-panel .recovery-row .label {
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+    }
+    .recovery-panel .recovery-row .value {
+      color: var(--text-pri);
+      font-family: var(--mono);
+      font-weight: 600;
+    }
+    /* Bearing + distance: the actionable values, larger. */
+    .recovery-panel .recovery-row.primary .value {
+      color: var(--amber-bright);
+      font-size: 1.05rem;
+    }
+    .recovery-panel .recovery-warning {
+      margin-top: 8px;
+      padding: 6px 8px;
+      background: rgba(255, 215, 0, 0.08);
+      border: 1px solid var(--warn);
+      color: var(--warn);
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      line-height: 1.4;
+    }
+    .recovery-panel .recovery-dismiss {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 0.15em;
+      cursor: pointer;
+      font-size: 0.78rem;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .recovery-panel .recovery-dismiss:hover {
+      color: var(--text-pri);
+      border-color: var(--text-pri);
+    }
+    .recovery-panel .recovery-dismiss[disabled] {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -292,6 +412,47 @@
   <div class="wx-chip panel" id="wx-chip" aria-live="polite">
     <span class="wx-chip-label" id="wx-chip-label">WX</span>
     <span class="wx-chip-count" id="wx-chip-count">—</span>
+  </div>
+
+  <!-- Recovery (lost-aircraft) UI. Mutually exclusive:
+       - When state.recovery is absent or idle: trigger button shown.
+       - When state.recovery is active:         panel shown.
+       The recovery map marker + bearing line live as MapLibre
+       layers (setupRecoveryLayers + updateRecoveryOverlay below). -->
+  <button class="btn-recovery-trigger" id="btn-recovery-trigger" hidden>LOST AIRCRAFT</button>
+  <div class="recovery-panel" id="recovery-panel" hidden>
+    <div class="recovery-title">LOST AIRCRAFT</div>
+    <div class="recovery-reason" id="recovery-reason"></div>
+    <div class="recovery-row primary">
+      <span class="label">BEARING</span>
+      <span class="value" id="recovery-bearing">—</span>
+    </div>
+    <div class="recovery-row primary">
+      <span class="label">DISTANCE</span>
+      <span class="value" id="recovery-distance">—</span>
+    </div>
+    <div class="recovery-row">
+      <span class="label">LAST POS</span>
+      <span class="value" id="recovery-coords">—</span>
+    </div>
+    <div class="recovery-row">
+      <span class="label">ALT</span>
+      <span class="value" id="recovery-alt">—</span>
+    </div>
+    <div class="recovery-row">
+      <span class="label">SPEED</span>
+      <span class="value" id="recovery-spd">—</span>
+    </div>
+    <div class="recovery-row">
+      <span class="label">HDG</span>
+      <span class="value" id="recovery-hdg">—</span>
+    </div>
+    <div class="recovery-row">
+      <span class="label">FROZEN</span>
+      <span class="value" id="recovery-frozenAt">—</span>
+    </div>
+    <div class="recovery-warning" id="recovery-warning" hidden></div>
+    <button class="recovery-dismiss" id="recovery-dismiss" disabled>DISMISS</button>
   </div>
 
   <div class="status-pill panel disarmed" id="status-pill">DISARMED</div>
@@ -1032,6 +1193,69 @@
     }
   }
 
+  // Recovery view layers: bearing line (operator → last-known) and
+  // a large red marker at the last-known aircraft position. Both
+  // empty by default; updateRecoveryOverlay populates them when
+  // state.recovery.active. Bearing layer is added BEFORE the marker
+  // so the marker draws on top.
+  function setupRecoveryLayers() {
+    if (!map.getSource('recovery-bearing')) {
+      map.addSource('recovery-bearing', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('recovery-bearing-layer')) {
+      map.addLayer({
+        id: 'recovery-bearing-layer',
+        type: 'line',
+        source: 'recovery-bearing',
+        paint: {
+          'line-color': '#ff4030',
+          'line-width': 2.5,
+          'line-opacity': 0.85,
+          'line-dasharray': [3, 2]
+        }
+      });
+    }
+    if (!map.getSource('recovery-marker')) {
+      map.addSource('recovery-marker', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('recovery-marker-halo')) {
+      // Outer pulse halo: large soft circle.
+      map.addLayer({
+        id: 'recovery-marker-halo',
+        type: 'circle',
+        source: 'recovery-marker',
+        paint: {
+          'circle-radius': 22,
+          'circle-color': '#ff4030',
+          'circle-opacity': 0.18,
+          'circle-stroke-color': '#ff4030',
+          'circle-stroke-opacity': 0.5,
+          'circle-stroke-width': 2
+        }
+      });
+    }
+    if (!map.getLayer('recovery-marker-layer')) {
+      // Inner dot: solid red, white stroke for contrast on any base.
+      map.addLayer({
+        id: 'recovery-marker-layer',
+        type: 'circle',
+        source: 'recovery-marker',
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#ff4030',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2
+        }
+      });
+    }
+  }
+
   function setupRangeRingsLayer() {
     if (!map.getSource('range-rings')) {
       map.addSource('range-rings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -1057,6 +1281,7 @@
     setupHomeLayer();
     setupStationLayer();
     setupRangeRingsLayer();
+    setupRecoveryLayers();
     updateAircraft();
     updateHome();
     updateTrail();
@@ -1135,7 +1360,255 @@
     }
   }
 
+  // === Recovery overlay state ===
+
+  // Tracks whether the panel is currently visible. Used to detect
+  // the idle→active edge so we can record recoveryShownAt for the
+  // 5-second dismiss-button delay.
+  let recoveryActive = false;
+  // performance.now() at which the panel first became visible.
+  // Reset when the panel goes idle. The dismiss button enables
+  // 5000ms after this timestamp.
+  let recoveryShownAt = 0;
+
+  // bearingFromTo returns the initial-course bearing in degrees true
+  // from (lat1,lon1) to (lat2,lon2). Standard great-circle formula
+  // (Williams's "Aviation Formulary" / Veness "Movable Type Scripts").
+  function bearingFromTo(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
+    const f1 = toRad(lat1), f2 = toRad(lat2);
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(f2);
+    const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  // haversineMeters returns the great-circle distance in metres.
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const f1 = toRad(lat1), f2 = toRad(lat2);
+    const df = toRad(lat2 - lat1);
+    const dl = toRad(lon2 - lon1);
+    const a = Math.sin(df/2)**2 + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function fmtDistance(meters) {
+    if (!Number.isFinite(meters) || meters < 0) return '—';
+    if (meters >= 1000) return (meters / 1000).toFixed(2) + ' km';
+    return Math.round(meters) + ' m';
+  }
+
+  // updateRecoveryOverlay is called from handleStateMessage. It
+  // diffs the WS-streamed recovery state against the local
+  // visibility flags and drives both the panel DOM and the
+  // MapLibre layers.
+  function updateRecoveryOverlay(state) {
+    const r = state?.recovery;
+    const triggerBtn = document.getElementById('btn-recovery-trigger');
+    const panel = document.getElementById('recovery-panel');
+    if (!triggerBtn || !panel) return;
+
+    // Subsystem absent (Providers.Recovery == nil): hide everything.
+    if (!r) {
+      triggerBtn.hidden = true;
+      panel.hidden = true;
+      clearRecoveryMapLayers();
+      recoveryActive = false;
+      return;
+    }
+
+    if (!r.active) {
+      // Idle: show the trigger button, hide the panel.
+      triggerBtn.hidden = false;
+      panel.hidden = true;
+      clearRecoveryMapLayers();
+      if (recoveryActive) {
+        recoveryActive = false;
+        recoveryShownAt = 0;
+      }
+      return;
+    }
+
+    // Active: hide trigger button, show the panel.
+    triggerBtn.hidden = true;
+    panel.hidden = false;
+
+    if (!recoveryActive) {
+      // Idle → active edge: record the shown-at timestamp so the
+      // dismiss button can become clickable after 5 seconds.
+      recoveryActive = true;
+      recoveryShownAt = performance.now();
+      // Optional: pan the map to the last-known position so the
+      // operator's first view of the recovery state is centered.
+      const lk = r.lastKnown || (r.frozen && r.frozen.hasGPS ? r.frozen : null);
+      if (lk) {
+        map.flyTo({ center: [lk.lonDeg, lk.latDeg], zoom: 16, speed: 1.2 });
+      }
+    }
+
+    fillRecoveryPanel(r);
+    updateRecoveryMapLayers(r);
+    updateDismissButtonState();
+  }
+
+  // Compute and render all the side-panel values + warnings.
+  function fillRecoveryPanel(r) {
+    const reasonEl = document.getElementById('recovery-reason');
+    if (reasonEl) {
+      reasonEl.textContent = r.reason === 'manual'
+        ? 'Operator-triggered'
+        : 'Failsafe (auto-triggered)';
+    }
+
+    // The position to walk toward: prefer the live last-known (it
+    // updates as fresh GPS arrives during recovery) over the frozen
+    // snapshot (captured once at trigger). Falls back to frozen
+    // when last-known is absent (trigger fired with no GPS, no
+    // recovery GPS has arrived since).
+    const lk = r.lastKnown
+      ? { latDeg: r.lastKnown.latDeg, lonDeg: r.lastKnown.lonDeg }
+      : (r.frozen && r.frozen.hasGPS
+          ? { latDeg: r.frozen.latDeg, lonDeg: r.frozen.lonDeg }
+          : null);
+
+    const op = r.operator;
+    const haveOp = op && op.source && op.source !== 'none'
+      && Number.isFinite(op.latDeg) && Number.isFinite(op.lonDeg);
+
+    if (lk && haveOp) {
+      const brg = bearingFromTo(op.latDeg, op.lonDeg, lk.latDeg, lk.lonDeg);
+      const dist = haversineMeters(op.latDeg, op.lonDeg, lk.latDeg, lk.lonDeg);
+      document.getElementById('recovery-bearing').textContent = Math.round(brg) + '° T';
+      document.getElementById('recovery-distance').textContent = fmtDistance(dist);
+    } else {
+      document.getElementById('recovery-bearing').textContent = '—';
+      document.getElementById('recovery-distance').textContent = '—';
+    }
+
+    if (lk) {
+      document.getElementById('recovery-coords').textContent =
+        lk.latDeg.toFixed(5) + ', ' + lk.lonDeg.toFixed(5);
+    } else {
+      document.getElementById('recovery-coords').textContent = 'no GPS data';
+    }
+
+    // Frozen-snapshot diagnostics: aircraft state at the moment of
+    // trigger. These never change during the recovery session;
+    // useful for post-flight analysis ("aircraft was at 180m descending").
+    const f = r.frozen || {};
+    document.getElementById('recovery-alt').textContent =
+      Number.isFinite(f.altMeters) && f.hasGPS ? Math.round(f.altMeters) + ' m' : '—';
+    document.getElementById('recovery-spd').textContent =
+      Number.isFinite(f.groundKmh) && f.hasGPS ? Math.round(f.groundKmh) + ' km/h' : '—';
+    document.getElementById('recovery-hdg').textContent =
+      Number.isFinite(f.headingDeg) && f.hasGPS ? Math.round(f.headingDeg) + '° T' : '—';
+
+    if (r.triggeredAt) {
+      const t = new Date(r.triggeredAt);
+      if (!Number.isNaN(t.valueOf())) {
+        document.getElementById('recovery-frozenAt').textContent =
+          t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+    }
+
+    // Operator-position fallback warning.
+    const warnEl = document.getElementById('recovery-warning');
+    if (op && op.source === 'site') {
+      warnEl.hidden = false;
+      warnEl.textContent = 'NO GPS FIX. Using configured site as operator position.';
+    } else if (!haveOp) {
+      warnEl.hidden = false;
+      warnEl.textContent = 'No operator position. Bearing/distance unavailable.';
+    } else {
+      warnEl.hidden = true;
+    }
+  }
+
+  // Render the marker + bearing line on the map.
+  function updateRecoveryMapLayers(r) {
+    if (!map.getSource('recovery-marker') || !map.getSource('recovery-bearing')) return;
+
+    const lk = r.lastKnown
+      ? { latDeg: r.lastKnown.latDeg, lonDeg: r.lastKnown.lonDeg }
+      : (r.frozen && r.frozen.hasGPS
+          ? { latDeg: r.frozen.latDeg, lonDeg: r.frozen.lonDeg }
+          : null);
+
+    if (lk) {
+      map.getSource('recovery-marker').setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [lk.lonDeg, lk.latDeg] }
+        }]
+      });
+    } else {
+      map.getSource('recovery-marker').setData({ type: 'FeatureCollection', features: [] });
+    }
+
+    const op = r.operator;
+    const haveOp = op && op.source && op.source !== 'none'
+      && Number.isFinite(op.latDeg) && Number.isFinite(op.lonDeg);
+    if (lk && haveOp) {
+      map.getSource('recovery-bearing').setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [[op.lonDeg, op.latDeg], [lk.lonDeg, lk.latDeg]]
+          }
+        }]
+      });
+    } else {
+      map.getSource('recovery-bearing').setData({ type: 'FeatureCollection', features: [] });
+    }
+  }
+
+  function clearRecoveryMapLayers() {
+    if (map.getSource('recovery-marker')) {
+      map.getSource('recovery-marker').setData({ type: 'FeatureCollection', features: [] });
+    }
+    if (map.getSource('recovery-bearing')) {
+      map.getSource('recovery-bearing').setData({ type: 'FeatureCollection', features: [] });
+    }
+  }
+
+  function updateDismissButtonState() {
+    const btn = document.getElementById('recovery-dismiss');
+    if (!btn) return;
+    const elapsed = performance.now() - recoveryShownAt;
+    if (elapsed >= 5000) {
+      btn.disabled = false;
+    } else {
+      btn.disabled = true;
+      // Re-check shortly so we enable as soon as the timer expires.
+      setTimeout(updateDismissButtonState, 5000 - elapsed + 50);
+    }
+  }
+
+  async function postRecoveryAction(path) {
+    try {
+      const res = await fetch(path, { method: 'POST' });
+      if (!res.ok) {
+        console.error('recovery POST', path, res.status);
+      }
+    } catch (e) {
+      console.error('recovery POST', path, e);
+    }
+    // No need to manually refresh state — WS stream will deliver
+    // the new state within ~100ms and updateRecoveryOverlay will
+    // pick it up.
+  }
+
   function handleStateMessage(state) {
+    // Recovery overlay first: it modifies layer visibility we don't
+    // want to be overwritten by the regular state updates below.
+    updateRecoveryOverlay(state);
+
     const arm  = state?.arm?.state || 'DISARMED';
     const mode = state?.telemetry?.flightMode?.data?.mode || '';
     const gps  = state?.telemetry?.gps?.data;
@@ -1423,6 +1896,15 @@
 
     document.getElementById('btn-sat').addEventListener('click', () => setTileset('satellite'));
     document.getElementById('btn-osm').addEventListener('click', () => setTileset('osm'));
+
+    // Recovery buttons. The dismiss button starts disabled and is
+    // enabled by updateDismissButtonState after the 5-second guard
+    // window elapses (prevents accidental click during the initial
+    // attention-grabbing flash of the panel).
+    document.getElementById('btn-recovery-trigger')
+      .addEventListener('click', () => postRecoveryAction('/api/v1/recovery/trigger'));
+    document.getElementById('recovery-dismiss')
+      .addEventListener('click', () => postRecoveryAction('/api/v1/recovery/dismiss'));
 
     setupToggle('toggle-follow',
       () => followAircraft,
