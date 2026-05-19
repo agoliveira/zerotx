@@ -154,10 +154,16 @@ func openMBTiles(path string, b bbox, minZoom, maxZoom int) (*sql.DB, error) {
 	}
 
 	// WAL + larger cache: long-running writes plus concurrent reads.
+	// busy_timeout=5000 lets SQLite block up to 5 s on a lock instead
+	// of returning SQLITE_BUSY immediately, which a long download
+	// otherwise hits when the WAL checkpointer and the INSERT loop
+	// briefly collide; 5 s is well below the rate-limiter's per-tile
+	// budget so a stalled write doesn't slow throughput perceptibly.
 	for _, pragma := range []string{
 		`PRAGMA journal_mode=WAL`,
 		`PRAGMA synchronous=NORMAL`,
 		`PRAGMA cache_size=-65536`, // ~64MB
+		`PRAGMA busy_timeout=5000`,
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			return nil, fmt.Errorf("pragma %q: %w", pragma, err)
