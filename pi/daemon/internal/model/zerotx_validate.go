@@ -25,6 +25,16 @@ func (m *ZeroTXMeta) Validate() error {
 		return fmt.Errorf("zerotx.airframe: invalid value %q (want one of: quad, wing, plane, heli, or empty)", m.Airframe)
 	}
 
+	// ArmChannel must address one of the 16 CRSF channel slots when
+	// set. Nil opts into the daemon's compile-time default and is
+	// accepted; explicit values outside [0, 15] are a config bug, not
+	// something the RP2040 firmware can interpret meaningfully.
+	if m.ArmChannel != nil {
+		if v := *m.ArmChannel; v < 0 || v > 15 {
+			return fmt.Errorf("zerotx.arm_channel: %d out of range (want 0..15)", v)
+		}
+	}
+
 	if m.Thresholds == nil {
 		return nil
 	}

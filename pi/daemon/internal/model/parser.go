@@ -41,13 +41,20 @@ func LoadZeroTX(path string) (*ZeroTXModel, error) {
 	return DecodeZeroTX(f)
 }
 
-// DecodeZeroTX reads from r.
+// DecodeZeroTX reads from r. Returns an error if the file fails to
+// parse OR if the resulting zerotx metadata fails Validate(). Failing
+// validation at load time means malformed config never reaches the
+// running daemon: a bogus airframe or out-of-range arm_channel is a
+// hard load failure, not a silent runtime surprise.
 func DecodeZeroTX(r io.Reader) (*ZeroTXModel, error) {
 	dec := yaml.NewDecoder(r)
 	dec.KnownFields(false)
 	var m ZeroTXModel
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("model: decode zerotx: %w", err)
+	}
+	if err := m.ZeroTX.Validate(); err != nil {
+		return nil, fmt.Errorf("model: validate zerotx: %w", err)
 	}
 	return &m, nil
 }

@@ -1646,13 +1646,14 @@ func buildAPIProviders(
 				}
 				dispMgr.SetMode(display.ModePreflight)
 			}
-			// Push the new model's throttle channel index to the RP2040
-			// so the firmware-level disarm safety net uses the right
-			// channel slot. No-op in SITL mode (link == nil) and
-			// before handshake completes (SendArmConfig gates).
-			var m *model.EdgeTXModel
+			// Push the new model's channel indices (throttle from
+			// EdgeTX mix data, arm from ZeroTX meta) to the RP2040
+			// so the firmware-level disarm safety net uses the
+			// right channel slots. No-op in SITL mode (link == nil)
+			// and before handshake completes (SendArmConfig gates).
+			var m *model.ZeroTXModel
 			if s := holder.Load(); s != nil && s.Model != nil {
-				m = &s.Model.EdgeTX
+				m = s.Model
 			}
 			pushArmConfigToFirmware(link, armConfigFromModel(m), "model-change")
 			return nil
@@ -2427,29 +2428,37 @@ func modelThresholdsToDisplay(t *model.Thresholds) *display.Thresholds {
 
 // armConfigFromModel returns the ArmConfig to push to the RP2040 for
 // the current model. Throttle channel index is resolved per-model
-// (TAER -> 0, AETR -> 2, etc.); arm channel index is hardcoded to 4
-// today because the model file doesn't expose a typed "arm channel"
-// binding the way it does for throttle. If a future operator maps
-// arm elsewhere on a different model, this is where to add the
-// resolver -- the firmware accepts any index 0..15.
+// from the EdgeTX mix table (TAER -> 0, AETR -> 2, etc.). Arm channel
+// index is resolved from the ZeroTX-side metadata (zerotx.arm_channel
+// in the model file). When the operator has not set arm_channel the
+// daemon falls back to the compile-time default of channel 4, which
+// matches both the firmware's own boot default and the primary
+// aircraft's TAER layout.
 //
-// m == nil (no model loaded yet) returns conservative TAER defaults
-// matching the project's primary aircraft. The firmware will boot
-// with these as compile-time defaults too, so this path produces
-// behavior identical to "config push was missed entirely".
-func armConfigFromModel(m *model.EdgeTXModel) ipc.ArmConfig {
-	const armIdx uint8 = 4 // TODO: resolve from the model when it grows a typed arm binding.
+// m == nil (no model loaded yet) returns conservative TAER defaults.
+// The firmware will boot with these as compile-time defaults too, so
+// this path produces behavior identical to "config push was missed
+// entirely".
+func armConfigFromModel(m *model.ZeroTXModel) ipc.ArmConfig {
+	const armIdxDefault uint8 = 4 // matches the firmware compile-time default.
 	c := ipc.ArmConfig{
 		ThrIdx:         0, // TAER default
-		ArmIdx:         armIdx,
+		ArmIdx:         armIdxDefault,
 		ThrThreshold:   200,
 		ArmDisarmValue: ipc.CrsfChMin,
 	}
 	if m == nil {
 		return c
 	}
-	if idx := m.ThrottleChannel(); idx >= 0 && idx < ipc.Channels {
+	if idx := m.EdgeTX.ThrottleChannel(); idx >= 0 && idx < ipc.Channels {
 		c.ThrIdx = uint8(idx)
+	}
+	// ArmChannel is operator-set in the ZeroTX meta. Validation at
+	// load time rejects values outside [0, 15]; the bounds check
+	// here is a defensive belt-and-braces (a programmer constructing
+	// a ZeroTXModel in code could still skip Decode).
+	if a := m.ZeroTX.ArmChannel; a != nil && *a >= 0 && *a < ipc.Channels {
+		c.ArmIdx = uint8(*a)
 	}
 	return c
 }
@@ -2495,9 +2504,9 @@ func waitHandshakeAndPushArmConfig(ctx context.Context, link *ipc.Link, holder *
 			return
 		case <-t.C:
 			if ok, legacy, _ := link.HandshakeComplete(); ok || legacy {
-				var m *model.EdgeTXModel
+				var m *model.ZeroTXModel
 				if s := holder.Load(); s != nil && s.Model != nil {
-					m = &s.Model.EdgeTX
+					m = s.Model
 				}
 				pushArmConfigToFirmware(link, armConfigFromModel(m), "boot")
 				return

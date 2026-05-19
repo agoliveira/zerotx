@@ -304,3 +304,71 @@ func TestThrottleChannel_NegativeWeightUsedByAbs(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// DecodeZeroTX wires the meta Validate() into the load path so
+// malformed config never reaches the running daemon. These tests
+// pin the happy path and the two validation failure modes that
+// matter today (out-of-range arm_channel, unknown airframe).
+
+func TestDecodeZeroTX_AcceptsValidMinimum(t *testing.T) {
+	// Smallest legitimate file: an empty zerotx section and an
+	// edgetx semver. Validate has nothing to complain about.
+	const y = `
+zerotx: {}
+edgetx:
+  semver: 2.9.1
+`
+	if _, err := DecodeZeroTX(bytes.NewReader([]byte(y))); err != nil {
+		t.Fatalf("minimum valid file failed to decode: %v", err)
+	}
+}
+
+func TestDecodeZeroTX_AcceptsArmChannelInRange(t *testing.T) {
+	const y = `
+zerotx:
+  arm_channel: 4
+edgetx:
+  semver: 2.9.1
+`
+	m, err := DecodeZeroTX(bytes.NewReader([]byte(y)))
+	if err != nil {
+		t.Fatalf("arm_channel=4 should decode, got: %v", err)
+	}
+	if m.ZeroTX.ArmChannel == nil || *m.ZeroTX.ArmChannel != 4 {
+		t.Errorf("arm_channel: got %v, want 4", m.ZeroTX.ArmChannel)
+	}
+}
+
+func TestDecodeZeroTX_RejectsArmChannelOutOfRange(t *testing.T) {
+	const y = `
+zerotx:
+  arm_channel: 99
+edgetx:
+  semver: 2.9.1
+`
+	_, err := DecodeZeroTX(bytes.NewReader([]byte(y)))
+	if err == nil {
+		t.Fatal("arm_channel=99 should fail validate, got nil")
+	}
+	if !strings.Contains(err.Error(), "arm_channel") {
+		t.Errorf("error %q should mention arm_channel", err.Error())
+	}
+}
+
+func TestDecodeZeroTX_RejectsBadAirframe(t *testing.T) {
+	// Sanity check that the validator hook works for fields other
+	// than the one this commit adds.
+	const y = `
+zerotx:
+  airframe: submarine
+edgetx:
+  semver: 2.9.1
+`
+	_, err := DecodeZeroTX(bytes.NewReader([]byte(y)))
+	if err == nil {
+		t.Fatal("airframe=submarine should fail validate, got nil")
+	}
+	if !strings.Contains(err.Error(), "airframe") {
+		t.Errorf("error %q should mention airframe", err.Error())
+	}
+}

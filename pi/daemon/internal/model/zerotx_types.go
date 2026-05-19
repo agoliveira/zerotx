@@ -43,6 +43,19 @@ type ZeroTXMeta struct {
 	// device, narrator, and HUD. Nil means "no thresholds configured" and
 	// consumers fall back to neutral display.
 	Thresholds *Thresholds `yaml:"thresholds,omitempty"`
+
+	// ArmChannel is the 0-indexed CRSF channel slot that the operator's
+	// arm switch (typically SF) feeds. The daemon pushes this index to
+	// the RP2040 so its firmware-level disarm safety net inspects the
+	// right channel value. Nil means "use the project's compile-time
+	// default" (channel 4, matching the firmware's own boot default and
+	// the primary aircraft's TAER layout). Must be in [0, 15] when set;
+	// the value matches the firmware's 16-channel CRSF frame. Throttle
+	// channel is derived from the EdgeTX mix table (see
+	// EdgeTXModel.ThrottleChannel); arm channel is NOT derivable from
+	// mix data because the SF/SH switches are switches not source
+	// names, so it requires an explicit operator binding here.
+	ArmChannel *int `yaml:"arm_channel,omitempty"`
 }
 
 // Thresholds groups alarm bands by domain. Each sub-section is optional;

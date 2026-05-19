@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -255,6 +256,56 @@ func TestHasXxxThresholds(t *testing.T) {
 		!full.HasLinkThresholds() || !full.HasFlightTimeThresholds() {
 		t.Error("fully-populated meta should report thresholds for all domains")
 	}
+}
+
+// === arm_channel ===
+
+func TestValidate_ArmChannel_Nil(t *testing.T) {
+	// Absent arm_channel is the legacy / typical case: daemon falls
+	// back to its compile-time default (channel 4). Validation must
+	// accept this without complaint.
+	m := &ZeroTXMeta{}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("nil arm_channel should validate, got: %v", err)
+	}
+}
+
+func TestValidate_ArmChannel_InRange(t *testing.T) {
+	// All boundary values plus an interior point. 0 and 15 are the
+	// edges of a 16-channel CRSF frame.
+	for _, v := range []int{0, 1, 4, 7, 14, 15} {
+		t.Run(formatArmCh(v), func(t *testing.T) {
+			m := &ZeroTXMeta{ArmChannel: ptrInt(v)}
+			if err := m.Validate(); err != nil {
+				t.Errorf("arm_channel=%d should validate, got: %v", v, err)
+			}
+		})
+	}
+}
+
+func TestValidate_ArmChannel_OutOfRange(t *testing.T) {
+	// Negative (parsed as a typo for the wrong default) and >=16 (off
+	// the end of the CRSF frame) both have to fail loudly: the RP2040
+	// would ignore the push silently otherwise.
+	for _, v := range []int{-1, -100, 16, 17, 32, 99} {
+		t.Run(formatArmCh(v), func(t *testing.T) {
+			m := &ZeroTXMeta{ArmChannel: ptrInt(v)}
+			err := m.Validate()
+			if err == nil {
+				t.Fatalf("arm_channel=%d should fail, got nil", v)
+			}
+			if !strings.Contains(err.Error(), "arm_channel") {
+				t.Errorf("error %q should mention arm_channel", err.Error())
+			}
+		})
+	}
+}
+
+func formatArmCh(v int) string {
+	if v < 0 {
+		return "neg" + strconv.Itoa(-v)
+	}
+	return strconv.Itoa(v)
 }
 
 // === helpers ===
