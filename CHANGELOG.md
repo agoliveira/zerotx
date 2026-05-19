@@ -6,6 +6,36 @@ than here. Append new entries at the top as they land.
 
 ## Unreleased
 
+### Flight log GPX/KML exporter (`zerotx-export`)
+
+New CLI tool under `tools/zerotx-export/`. Reads a `.db` recording produced by the daemon's recorder and emits GPX 1.1 or KML 2.2 for Google Earth, qgroundcontrol, or any other post-flight analyzer. Self-contained module, builds into `/bin/zerotx-export` via `make tools`.
+
+Default altitude is relative to the takeoff point (first valid GPS sample's altitude is the ground reference; KML uses `altitudeMode=relativeToGround`). Pass `-altitude msl` for raw GPS altitude (KML uses `altitudeMode=absolute`). Timestamps are emitted in the local timezone of the export host.
+
+Exports include the full GPS track plus waypoints for arm (labelled "Takeoff"), disarm ("Landing"), failsafe, RTH transitions, home-set ("Home"), peak-altitude, and peak-distance. Peak waypoints surface their value as a parenthetical (e.g. "Peak altitude (210 m)"). See USER.md §5.4 for usage.
+
+### Lost-aircraft recovery view
+
+The daemon now has a recovery state machine that auto-activates on FC failsafe (`FS`, `!FS`, `!ERR`) and can also be triggered manually from either kiosk. Both kiosks present a recovery-focused view while active.
+
+- **Map kiosk**: top-right panel with pulsing red border, bearing and distance from operator to last-known, frozen-at-trigger snapshot (alt, speed, heading), warning when operator position is from `-site-lat`/`-site-lon` fallback. A big red marker with halo on the map at the last-known position, dashed red bearing line from operator. Dismiss button disabled for the first 5 seconds to prevent reflexive clearing.
+- **HUD kiosk**: full-screen red-flashing takeover, "LOST AIRCRAFT / SEE MAP" headline, big amber bearing/distance readouts. Read-only (no dismiss); pointer-events pass through so HUD widgets behind it remain interactive.
+- **Manual trigger**: "LOST AIRCRAFT" button on the map kiosk; Ctrl+Alt+R on the HUD; or `POST /api/v1/recovery/trigger`.
+- **Dismiss**: map kiosk button after the 5s guard; or `POST /api/v1/recovery/dismiss`.
+
+The state machine exposes `state.recovery` in the WebSocket stream and `/api/v1/recovery` for direct query. While active, fresh GPS samples flow into `state.recovery.lastKnown` so the operator's map view tracks the aircraft if it's drifting back into range.
+
+Auto-triggered (failsafe) recovery also tells the recorder to preserve the in-progress session: a `<recording>.db.preserve` sidecar marker file is written on save-and-rotate, and the cleanup sweep skips any `.db` whose sidecar exists. Manual triggers do NOT preserve. See USER.md §7.2 for the full operator procedure.
+
+### HUD pre-flight banner: sunset countdown + wind summary
+
+While disarmed, the HUD's pre-flight banner now surfaces two glanceable readouts from the daemon's cached weather data:
+
+- **SUNSET**: clock time + daylight remaining, or "Xm past" once the sun has set (amber after sunset). Handles polar edge cases ("always up today" / "always down today").
+- **WIND**: speed, 8-point compass direction (N/NE/E/SE/S/SW/W/NW), gusts when >= wind speed + 2 km/h, freshness age when cached data is more than 10 minutes old.
+
+Both are decision aids, not gates: the arm sequence is unchanged. Silent when no weather data has been cached yet (typical first-boot-at-field with no internet). Reuses the existing `/api/v1/weather` endpoint; no daemon-side change.
+
 ### Repo layout: binaries consolidated
 
 Compiled outputs and downloaded third-party tools now live in two

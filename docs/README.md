@@ -38,6 +38,8 @@ Documentation for the ZeroTX ground control station. Each top-level doc has a si
 
 ## Tools
 
+- `tools/zerotx-bench/`: hardware bench diagnostic web UI; exports the baseline file the daemon's self-check compares against
+- `tools/zerotx-export/`: flight log GPX/KML exporter for Google Earth, qgroundcontrol, etc.
 - `tools/zerotx-iohal-config/`: HAL pin and flag configurator for Mega IO
 - `tools/maps/`: satellite tile downloader, OSM tile builder, regional download wrappers
 - `tools/zerotx-replay/`: log replay tool

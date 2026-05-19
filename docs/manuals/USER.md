@@ -249,6 +249,8 @@ All three must be present at the same instant. Releasing any input after arming 
 
 If arming fails, the audio narrator announces the specific failure ("throttle not low", "arm key not down", "not ready"). The HUD shows the current arm state and which precondition is missing. Fix the missing input and try the press again.
 
+**Pre-arm at-a-glance signals on the HUD:** while disarmed, the HUD's pre-flight banner shows two glanceable readouts if weather data is in cache: **SUNSET** (clock time + daylight remaining, or "Xm past" once the sun has set; the readout switches to amber colouring after sunset) and **WIND** (speed, 8-point compass direction, gusts if significantly above sustained, and a freshness age if the cached data is more than 10 minutes old). The readouts are silent if no weather has been cached yet (typical first-boot-at-field with no internet; fetch once on home Wi-Fi, the cache persists). Both are decision aids, not gates: the arm sequence is unchanged.
+
 ## 4. In-flight
 
 After arming, the system is mostly hands-off. The daemon narrates mode transitions, alarms, and weather alerts via audio. The HUB75 panel reflects FLIGHT, ALARM, or RTH state at a glance. Map updates with the aircraft track. Recorder runs continuously.
@@ -382,6 +384,8 @@ Default location: `~/zerotx/recordings/flight-<timestamp>.db`. Override with `-r
 
 Retention: the 10 most-recent recordings by default (`-keep-recordings N`). Older recordings auto-delete on save. If you want to preserve a specific flight, copy it off the Pi before the next flight.
 
+**Preserve sidecars:** when the daemon's lost-aircraft recovery view auto-triggers on a failsafe (see Section 7.2), the recorder writes a `<recording>.db.preserve` marker file alongside the saved `.db`. Recordings with a `.preserve` sidecar are skipped by the auto-cleanup sweep, so failsafe flights survive rotation indefinitely (and don't count toward the `-keep-recordings` limit). The sidecar's content is a one-line reason string. To release a preserved recording back to normal cleanup, delete the sidecar file; the next save-and-rotate may then delete the recording in due course. Manual recovery triggers (operator-fired from the kiosk button or Ctrl+Alt+R) do NOT write a sidecar — the operator chose to enter the recovery view, but the flight isn't necessarily lost.
+
 **Important:** pulling power before the daemon shuts down cleanly can leave the recording file in an inconsistent state. SQLite is resilient but not bulletproof. Use the shutdown sequence in Section 6.6.
 
 ### 5.3 Recording review with zerotx-replay
@@ -410,7 +414,31 @@ What the summary tells you:
 
 This is your post-flight debrief data. Useful for: confirming the planned flight matched the actual flight, spotting issues you didn't notice in flight, retrospective analysis of failures.
 
-### 5.4 Geographic enrichment
+### 5.4 Flight log export (GPX, KML)
+
+The `zerotx-export` tool converts a recording's GPS track into GPX 1.1 or KML 2.2 for use in Google Earth, qgroundcontrol, or any other post-flight analyzer.
+
+```
+$ zerotx-export -in ~/zerotx/recordings/flight-<timestamp>.db
+```
+
+Defaults: emits `flight-<timestamp>.gpx` next to the input. Altitude is relative to the takeoff point (first valid GPS sample's altitude is the ground reference). Timestamps in the operator's local timezone.
+
+Flags:
+
+- `-format gpx|kml`: explicit format. If unset, inferred from `-out` extension; gpx if both unset.
+- `-out PATH`: output path. `-` writes to stdout. Empty + non-tty also writes to stdout.
+- `-altitude relative|msl`: altitude reference. `relative` (default) subtracts the ground reference, good for Google Earth visualization where the terrain mesh handles ground elevation. `msl` emits raw GPS altitude (meters above mean sea level), good for terrain-clearance analysis. KML's `<altitudeMode>` is set accordingly (`relativeToGround` vs `absolute`).
+
+What's in the export:
+
+- **Track:** every telemetry sample with a valid GPS fix, ordered by time. Points include lat, lon, altitude, timestamp.
+- **Waypoints:** arm (labelled "Takeoff"), disarm ("Landing"), failsafe, rth-active ("RTH"), home-set ("Home"), peak-altitude, peak-distance. Peak waypoints surface their value as a parenthetical (e.g. "Peak altitude (210 m)").
+- **Metadata:** model name, session start time, altitude-mode description.
+
+Like `zerotx-replay`, this is a standalone tool — runs on any desktop or server without the daemon's hardware dependencies. SCP the `.db` files off the Pi to a workstation if you'd prefer to do post-flight analysis there.
+
+### 5.5 Geographic enrichment
 
 If the daemon was launched with `-geo-db <path>` (an offline place-name database built by `tools/build-geo.sh`), post-flight narration enriches the flight summary with place names: "Flew over Itu, peak altitude 850m AMSL at 14:23." This happens during POSTFLIGHT phase, before the recording is finalized.
 
@@ -565,22 +593,44 @@ If the trigger was the ground station (#3 or #4 above), don't fly again until yo
 
 No telemetry, no visual. The aircraft is somewhere out there and you don't know where.
 
-**Last known position:** the Map kiosk's track line ends at the last received GPS frame. That's your search starting point.
+The daemon has a **recovery view** designed for this situation. It activates automatically when the FC reports failsafe (mode `FS`, `!FS`, or `!ERR`), and can also be triggered manually from either kiosk if you decide you need it. While active, both kiosks pivot to a recovery-focused presentation: last-known aircraft position, bearing and distance from your standing position, frozen telemetry snapshot at the moment of loss.
 
-**Heading and altitude trend:** the HUD's last-known values give you a vector. If the aircraft was descending when telemetry died, the search radius is smaller than if it was cruising.
+**When it auto-triggers:** the FC's mode transitions to failsafe. The daemon's flight-events detector picks this up at the next telemetry tick (~200ms cadence) and activates the state machine. At the same moment, the in-progress recording is marked for preservation (sidecar file, see Section 5.2).
 
-**Time since last contact:** the longer it's been, the larger the search area. Aircraft tend to keep moving in a roughly straight line until something interrupts them (battery, terrain, structural failure).
+**Manual trigger options:**
 
-**Recovery steps:**
+- Map kiosk: tap the "LOST AIRCRAFT" button (top-right corner when idle).
+- HUD kiosk: press **Ctrl+Alt+R**.
+- Direct API: `POST /api/v1/recovery/trigger`.
 
-1. Note the time. Glance at your watch or phone.
-2. Note last-known position from the Map kiosk before anything else changes.
-3. Note last-known altitude, heading, and battery from the HUD.
-4. If your model has GPS-based RTH and there's still battery, the aircraft *may* still be RTH'ing without telemetry coming back. Wait 30-60 seconds at the home position before assuming lost.
-5. If clearly lost, mark the last-known position on a paper map or phone GPS. Plan a search pattern based on heading, time, terrain.
-6. **Don't power down the ground station yet** — if the aircraft comes back into range, telemetry resumes and you'll see it instantly.
+Manual triggers do NOT write a preserve sidecar — they're benign UI state changes, not declarations that the flight is lost.
 
-This is an operational concern, not a ZeroTX failure mode. The system can't recover a lost aircraft for you; it can only give you the last data it had.
+**What you see while active:**
+
+- **HUD:** full-screen red-flashing overlay with "LOST AIRCRAFT" / "SEE MAP" headline. Big readouts for **BEARING** (true, from your position to the aircraft) and **DISTANCE**. Last-known lat/lon below. Trigger reason ("Failsafe (auto-triggered)" or "Operator-triggered") in small text. Pointer events pass through the overlay so HUD widgets behind it remain interactive — the overlay is read-only.
+- **Map kiosk:** side panel top-right with pulsing red border. Same bearing and distance, plus the frozen-at-trigger snapshot (altitude, ground speed, heading). A large red marker with a halo appears at the last-known position; a dashed red line is drawn from your standing position to the marker. The map auto-pans to centre on the last-known position when the view activates.
+
+**Operator position:** the daemon resolves this in priority order: Pi-side GPS fix (if a u-blox or similar is connected and locked), then the `-site-lat` / `-site-lon` flag values, then "none". The panel surfaces a warning row when only the configured site fallback is available; without any operator position, bearing and distance are unavailable and the kiosk shows coords only (so you can type them into a phone).
+
+**Dismiss:**
+
+- Map kiosk's panel has a "DISMISS" button that's disabled for the first 5 seconds (prevents reflexive clearing during the initial attention-grabbing flash) and enables after. Click it to return both kiosks to normal flight view.
+- Direct API: `POST /api/v1/recovery/dismiss`.
+- The HUD overlay has no dismiss control by design — clearing has to go through the map kiosk (whose 5-second guard you want).
+
+**Recovery steps in the field:**
+
+1. The kiosks already grabbed your attention; note the time on your watch or phone.
+2. Read **BEARING** and **DISTANCE** off either kiosk. The HUD's overlay shows both in large amber digits.
+3. The map kiosk's panel adds context: frozen altitude, speed, heading. Useful for assessing whether the aircraft was descending (smaller search radius) or cruising (larger one).
+4. If your model has GPS-based RTH and there was still battery, the aircraft may still be RTH'ing without telemetry — wait 30-60 seconds at the home position. If it comes back into range, the daemon's `lastKnown` will update as fresh GPS arrives, and the map marker moves with it.
+5. If clearly lost, the lat/lon shown on either kiosk is your starting point. Type it into a phone GPS or paper map.
+6. **Don't power down the ground station yet** — if the aircraft comes back into range, telemetry resumes and the kiosks show it instantly. The recovery view stays active until you dismiss it.
+7. After the search (recovered or abandoned), dismiss the recovery view from the map kiosk.
+
+**Recording side:** the failsafe-triggered recovery view also preserves the in-progress recording from auto-cleanup (Section 5.2). Even if you fly a dozen more flights and never come back to this one, the preserved `.db` won't be deleted by the rotation sweep. Run `zerotx-export` on it later for the full GPS track to the last known position (Section 5.4).
+
+This is an operational aid, not a magic recovery system. The daemon can't tell you where the aircraft drifted to after the last GPS frame; it can only present the last data it had and put it in front of you fast.
 
 ### 7.3 Daemon dies mid-flight (Pi up, kiosks dark)
 
